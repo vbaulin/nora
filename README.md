@@ -1,6 +1,6 @@
 # 🌌 nora — Universal Hardware Orchestrator for LicheeRV Nano
 
-**nora** (Nano-OS Research Agent) is a powerful, Go-native hardware orchestration engine designed for the **LicheeRV Nano** (SG2002). It transforms low-level hardware interactions into a high-level, deterministic "Brain-Body" interface for AI Agents.
+**nora** (Nano-OS Research Agent) is a powerful, Go-native hardware orchestration engine designed for the **LicheeRV Nano** (SG2002) nanoboard equipped with Neuro Processing Unit (NPU) and running picoClaw for AI agent framework. It transforms low-level hardware interactions into a high-level, deterministic "Brain-Body" interface for AI Agents.  
 
 ## 🚀 The Vision: "Brain-Body" Split
 
@@ -33,7 +33,10 @@ Every vision task returns a list of `atoms`. Example:
       "centroid": {"x": 0.45, "y": 0.62},
       "area": 0.12,
       "intensity": 142.5,
-      "color": {"r": 120, "g": 90, "b": 150},
+      "color": {
+        "rgb": {"r": 120, "g": 90, "b": 150},
+        "hsv": {"h": 270, "s": 0.4, "v": 0.59}
+      },
       "displacement": {"dx": 0.05, "dy": -0.02}
     }
   ]

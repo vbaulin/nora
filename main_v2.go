@@ -192,8 +192,25 @@ type PerceptionAtom struct {
 	Area         float64             `json:"area"`
 	Perimeter    float64             `json:"perimeter"`
 	Intensity    float64             `json:"intensity"`
-	Color        map[string]float64  `json:"color"`
+	Color        ColorInfo           `json:"color"`
 	Displacement Delta               `json:"displacement,omitempty"`
+}
+
+type ColorInfo struct {
+	RGB RGBInfo `json:"rgb"`
+	HSV HSVInfo `json:"hsv"`
+}
+
+type RGBInfo struct {
+	R float64 `json:"r"`
+	G float64 `json:"g"`
+	B float64 `json:"b"`
+}
+
+type HSVInfo struct {
+	H float64 `json:"h"`
+	S float64 `json:"s"`
+	V float64 `json:"v"`
 }
 
 type Point struct {
@@ -751,7 +768,7 @@ func (e *Engine) readAndAnalyzeImage(imagePath string, detections []RawDetection
 	return atoms
 }
 
-func analyzeRegion(img image.Image, x1, y1, x2, y2 int) (float64, map[string]float64) {
+func analyzeRegion(img image.Image, x1, y1, x2, y2 int) (float64, ColorInfo) {
 	bounds := img.Bounds()
 	if x1 < bounds.Min.X { x1 = bounds.Min.X }
 	if y1 < bounds.Min.Y { y1 = bounds.Min.Y }
@@ -775,14 +792,50 @@ func analyzeRegion(img image.Image, x1, y1, x2, y2 int) (float64, map[string]flo
 	}
 
 	if count == 0 {
-		return 0, map[string]float64{"r": 0, "g": 0, "b": 0}
+		return 0, ColorInfo{}
 	}
 
-	return float64(totalI) / float64(count), map[string]float64{
-		"r": float64(totalR) / float64(count),
-		"g": float64(totalG) / float64(count),
-		"b": float64(totalB) / float64(count),
+	avgR := float64(totalR) / float64(count)
+	avgG := float64(totalG) / float64(count)
+	avgB := float64(totalB) / float64(count)
+	
+	h, s, v := rgbToHsv(avgR, avgG, avgB)
+
+	return float64(totalI) / float64(count), ColorInfo{
+		RGB: RGBInfo{R: avgR, G: avgG, B: avgB},
+		HSV: HSVInfo{H: h, S: s, V: v},
 	}
+}
+
+func rgbToHsv(r, g, b float64) (h, s, v float64) {
+	min := math.Min(math.Min(r, g), b)
+	max := math.Max(math.Max(r, g), b)
+	v = max / 255.0
+	delta := max - min
+
+	if max > 0 {
+		s = delta / max
+	} else {
+		return 0, 0, 0
+	}
+
+	if delta == 0 {
+		return 0, s, v
+	}
+
+	if r == max {
+		h = (g - b) / delta
+	} else if g == max {
+		h = 2 + (b-r)/delta
+	} else {
+		h = 4 + (r-g)/delta
+	}
+
+	h *= 60
+	if h < 0 {
+		h += 360
+	}
+	return h, s, v
 }
 
 func nativeNPUInspect(e *Engine, params map[string]interface{}) (map[string]interface{}, error) {

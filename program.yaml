@@ -1,0 +1,208 @@
+# ════════════════════════════════════════════════════════════════
+# program.yaml — Autonomous Research Engine for LicheeRV Nano
+# ════════════════════════════════════════════════════════════════
+# Inspired by Karpathy's autoresearch program.md
+# The nano-os-agent reads this at startup and on every idle cycle.
+# Humans edit this file. The agent edits tasks/ and skills/.
+# ════════════════════════════════════════════════════════════════
+
+metadata:
+  name: "nano-os-agent"
+  version: "6.0"
+  created: "2026-04-15"
+  owner: "pico"
+  board: "LicheeRV Nano"
+  soc: "SG2002"
+  arch: "riscv64"
+  ram_mb: 256
+  npu_tops: 1
+
+# ════════════════════════════════════════════════════════════════
+# GOALS: What the agent is trying to achieve
+# ════════════════════════════════════════════════════════════════
+goals:
+  primary: "Build a fully autonomous hardware research station on LicheeRV Nano"
+  secondary:
+    - "Get the CSI camera sensor working and streaming"
+    - "Benchmark NPU performance with YOLO inference"
+    - "Discover and catalog all I2C/SPI devices"
+    - "Create reusable skills for every hardware capability"
+    - "Deploy a live dashboard via here.now"
+    - "Build an MMF-based video capture pipeline"
+
+# ════════════════════════════════════════════════════════════════
+# RESEARCH AGENDA: Hypotheses the agent tests autonomously
+# ════════════════════════════════════════════════════════════════
+# Each hypothesis is a testable claim about the hardware.
+# The agent picks untested hypotheses, designs experiments,
+# runs them, and marks the result (confirmed/refuted/inconclusive).
+research_agenda:
+  hypotheses:
+    - id: h001
+      claim: "Camera sensor can be detected via I2C bus scan"
+      experiment: "Scan I2C buses 0-3 and look for addresses 0x30-0x3f (typical sensor range)"
+      metric: sensor_i2c_found
+      status: untested
+      priority: 1
+
+    - id: h002
+      claim: "Camera sensor can be initialized via sensor_test binary"
+      experiment: "Run /root/sensor_test or equivalent, check /proc/cvitek/vi for DevID"
+      metric: sensor_bound
+      status: untested
+      priority: 1
+
+    - id: h003
+      claim: "/dev/video0 becomes available after camera initialization"
+      experiment: "After sensor init, check for /dev/video0 existence"
+      metric: camera_working
+      status: untested
+      priority: 2
+
+    - id: h004
+      claim: "NPU can run YOLO inference on a 640x640 image in under 100ms"
+      experiment: "Run cvimodel YOLO on test image, measure wall-clock time"
+      metric: npu_latency_ms
+      status: untested
+      priority: 3
+
+    - id: h005
+      claim: "GPIO pins can be toggled via sysfs without pinmux reconfiguration"
+      experiment: "Export pin 504 (A24), set output, toggle, read back"
+      metric: gpio_working
+      status: untested
+      priority: 4
+
+    - id: h006
+      claim: "FreeRTOS mailbox is reachable from Linux side"
+      experiment: "Check /dev/cvi-ctl or /dev/rtos_cmdqu for IPC channel"
+      metric: rtos_ipc_available
+      status: untested
+      priority: 5
+
+    - id: h007
+      claim: "Board can stream MJPEG over HTTP to external clients"
+      experiment: "Start MJPEG server on port 7777, curl from localhost"
+      metric: mjpeg_streaming
+      status: untested
+      priority: 3
+
+# ════════════════════════════════════════════════════════════════
+# CONSTRAINTS: What the agent CANNOT do
+# ════════════════════════════════════════════════════════════════
+constraints:
+  readonly:
+    - "/proc/cvitek/*"
+    - "/proc/cpuinfo"
+    - "/proc/meminfo"
+    - "/sys/class/thermal/*"
+  requires_approval:
+    - "reboot"
+    - "flash"
+    - "dd if="
+    - "mkfs"
+    - "fdisk"
+  max_timeout_seconds: 300
+  max_memory_mb: 64
+
+# ════════════════════════════════════════════════════════════════
+# METRICS: How we measure success
+# ════════════════════════════════════════════════════════════════
+# Each metric has a shell check command and a target value.
+# The engine runs these every iteration and stores results.
+metrics:
+  camera_working:
+    check: "test -e /dev/video0 && echo true || echo false"
+    target: "true"
+  sensor_bound:
+    check: "grep -c 'DevID' /proc/cvitek/vi 2>/dev/null || echo 0"
+    target: ">=1"
+  npu_available:
+    check: "test -e /dev/cvitpu0 && echo true || echo false"
+    target: "true"
+  i2c_devices:
+    check: "i2cdetect -y 1 2>/dev/null | grep -v '^$' | tail -n +2 | grep -oE '[0-9a-f]{2}' | grep -v -- '--' | wc -l"
+    target: ">=1"
+  ram_free_mb:
+    check: "awk '/MemAvailable/{printf \"%d\", $2/1024}' /proc/meminfo"
+    target: ">=20"
+  cpu_temp_c:
+    check: "cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null | awk '{printf \"%d\", $1/1000}'"
+    target: "<=80"
+  uptime_seconds:
+    check: "awk '{printf \"%d\", $1}' /proc/uptime"
+    target: ">=0"
+  skills_count:
+    check: "ls -d /root/.picoclaw/workspace/skills/*/SKILL.md 2>/dev/null | wc -l"
+    target: ">=3"
+
+# ════════════════════════════════════════════════════════════════
+# STRATEGY: How the agent should approach problems
+# ════════════════════════════════════════════════════════════════
+strategy:
+  max_retries: 3
+  recovery:
+    - "system_info"
+    - "i2c_scan"
+    - "dmesg_watch"
+    - "list_skills"
+  simplicity_bias: true
+  use_llm: true
+
+# ════════════════════════════════════════════════════════════════
+# EXPERIMENT JOURNAL: Track what works and what doesn't
+# ════════════════════════════════════════════════════════════════
+# Like autoresearch's val_bpb tracking, every task execution
+# is wrapped in a before/after metrics snapshot.
+experiments:
+  # Transient journal on tmpfs (fast, no SD wear)
+  journal_path: "/tmp/experiments.jsonl"
+  # Persistent archive on SD card (survives reboot)
+  archive_path: "/root/.picoclaw/workspace/experiments/archive.jsonl"
+  archive_interval: 10  # flush to archive every N experiments
+  max_journal_entries: 200
+  max_archive_entries: 5000
+  keep_policy: "top_10_per_metric"
+
+# ════════════════════════════════════════════════════════════════
+# SELF-IMPROVEMENT: Rules for autonomous evolution
+# ════════════════════════════════════════════════════════════════
+self_improvement:
+  enabled: true
+  evolve_program: false     # SAFETY: never auto-edit program.yaml
+  evolve_tasks: true        # agent can generate new task YAMLs
+  evolve_skills: true       # agent can create SKILL.md for discovered capabilities
+  evolve_research: true     # agent can add hypotheses to research agenda
+  skill_template: |
+    ---
+    name: {name}
+    exec_type: shell
+    command: ./run.sh
+    input_format: env
+    output_format: json
+    timeout: 30
+    ---
+    # {name}
+    {description}
+
+# ════════════════════════════════════════════════════════════════
+# SUB-AGENTS: Parallel exploration
+# ════════════════════════════════════════════════════════════════
+sub_agents:
+  max_concurrent: 2
+  spawn_on:
+    - "blocked_task"
+    - "parallel_hypothesis"
+  communication: "file"
+  result_dir: "/tmp/subagent_results"
+  timeout_seconds: 120
+
+# ════════════════════════════════════════════════════════════════
+# LOOP BEHAVIOR
+# ════════════════════════════════════════════════════════════════
+loop:
+  never_stop: true
+  poll_interval: 5
+  context_window: 20
+  idle_backoff_max: 300
+  metrics_every_n: 3

@@ -1,0 +1,25 @@
+# Binaries
+nora
+nano-os-agent
+main_v2
+vision_npu
+probe_cvitek
+cvimodel_tool
+sensor_test
+yolo_detect
+
+# Models & Data
+*.cvimodel
+*.jsonl
+*.tsv
+results.tsv
+experiments.jsonl
+state.json
+/tmp/*
+
+# Logs & OS
+*.log
+.DS_Store
+
+# Go
+vendor/

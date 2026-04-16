@@ -1,0 +1,16 @@
+- id: vis_001
+  name: "Visual Truth Loop"
+  priority: 5
+  status: pending
+  success_criteria: []
+  loops:
+    max_iterations: 0
+    interval_sec: 60
+  steps:
+    - id: sync_truth
+      action: call_skill
+      parameters:
+        skill_name: "vision_state_sync"
+      expect: {}
+      timeout: 60
+      max_retries: 3

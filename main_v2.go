@@ -762,6 +762,18 @@ func (e *Engine) readAndAnalyzeImage(imagePath string, detections []RawDetection
 		intensity, colors := analyzeRegion(img, x1, y1, x2, y2)
 		atom.Intensity = intensity
 		atom.Color = colors
+
+		// Calculate displacement (motion vector)
+		e.mu.Lock()
+		if last, ok := e.lastCentroids[d.Class]; ok {
+			atom.Displacement = Delta{
+				DX: atom.Centroid.X - last.X,
+				DY: atom.Centroid.Y - last.Y,
+			}
+		}
+		// Update memory for next frame
+		e.lastCentroids[d.Class] = atom.Centroid
+		e.mu.Unlock()
 		
 		atoms = append(atoms, atom)
 	}
@@ -904,6 +916,7 @@ type Engine struct {
 	State         State
 	shutdownFlag  int32
 	skillCache    map[string]*SkillConfig
+	lastCentroids map[string]Point
 	stateDirty    bool
 	flushCounter  int
 	flushInterval int
@@ -915,6 +928,7 @@ type Engine struct {
 func NewEngine() *Engine {
 	e := &Engine{
 		skillCache:    make(map[string]*SkillConfig),
+		lastCentroids: make(map[string]Point),
 		flushInterval: DefaultFlushInterval,
 		subAgentPIDs:  make(map[int]string),
 	}

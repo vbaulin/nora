@@ -1,23 +1,23 @@
-- id: npu_001
-  name: "NPU YOLO Benchmark"
+- hypothesis_ref: h004
+  id: npu_001
+  name: NPU YOLO Benchmark
   priority: 3
   status: pending
-  hypothesis_ref: h004
   steps:
-    - id: check_npu
-      action: npu_inspect
-      parameters:
-        model_path: "/root/models/yolov8n.cvimodel"
+    - action: npu_inspect
       expect:
-        status: "ok"
-      timeout: 10
+        status: success
+      id: check_npu
       max_retries: 0
-    - id: benchmark
-      action: run_yolo
       parameters:
-        model_path: "/root/models/yolov8n.cvimodel"
-        image_path: "/tmp/test_capture.jpg"
+        model_path: /root/models_for_benchmark/yolov8n_coco_320.cvimodel
+      timeout: 10
+    - action: run_yolo
       expect:
-        status: "ok"
-      timeout: 60
+        status: success
+      id: benchmark
       max_retries: 1
+      parameters:
+        image_path: /tmp/test_capture.jpg
+        model_path: /root/models_for_benchmark/yolov8n_coco_320.cvimodel
+      timeout: 60

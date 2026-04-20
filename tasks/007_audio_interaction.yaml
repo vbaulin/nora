@@ -1,0 +1,24 @@
+- id: audio_test_001
+  name: Microphone Probe & Interaction
+  priority: 5
+  status: pending
+  steps:
+    - action: shell_cmd
+      expect:
+        output_contains: ADC Capture Volume
+      id: check_mic
+      parameters:
+        cmd: amixer -Dhw:0 contents | grep 'ADC Capture Volume'
+    - action: capture_audio_maix
+      expect:
+        status: success
+      id: record_3s
+      parameters:
+        duration: 3
+        output_path: /tmp/test_mic.wav
+    - action: shell_cmd
+      expect:
+        output_contains: test_mic.wav
+      id: verify_file
+      parameters:
+        cmd: ls -lh /tmp/test_mic.wav

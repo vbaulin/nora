@@ -1,14 +1,14 @@
 - id: test_autoskill
-  name: "Auto-Skill Generation Verification"
+  name: Auto-Skill Generation Verification
   priority: 1
   status: pending
   steps:
-    - id: generate_dummy
-      action: call_skill
-      parameters:
-        skill_name: "dummy_led_verify"
-        pin: "42"
+    - action: call_skill
       expect:
-        status: "generated"
-      timeout: 120
+        status: ok
+      id: generate_dummy
       on_fail: block
+      parameters:
+        pin: "42"
+        skill_name: dummy_led_verify
+      timeout: 120

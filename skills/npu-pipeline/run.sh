@@ -8,7 +8,7 @@ MODEL="${SKILL_MODEL_PATH:-/root/models/yolov8n.cvimodel}"
 
 # Hardened Library Environment
 export SDK_PATCH=/root/libs_patch
-export LD_LIBRARY_PATH=$SDK_PATCH/lib:$SDK_PATCH/middleware_v2:$SDK_PATCH/middleware_v2_3rd:$SDK_PATCH/tpu_sdk_libs:$SDK_PATCH:$SDK_PATCH/opencv
+export LD_LIBRARY_PATH=/root/libs_patch/tpu_sdk_libs:/root/libs_patch/lib:/root/libs_patch/middleware_v2:/root/libs_patch/middleware_v2_3rd:/root/libs_patch:/root/libs_patch/opencv:/lib:/lib64
 
 if [ ! -x "$BIN" ]; then
     echo "{\"status\":\"error\", \"message\":\"Hardware pipeline binary not found at $BIN.\"}"

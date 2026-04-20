@@ -1,25 +1,16 @@
-- id: cam_001
-  name: "Camera Sensor Init + Capture"
+- hypothesis_ref: h002
+  id: cam_001
+  name: Camera Sensor Init + Capture
   priority: 2
   status: pending
-  hypothesis_ref: h002
   steps:
-    - id: check_sensor
-      action: probe_cvitek
-      parameters: {}
+    - action: capture_image
       expect:
-        sensor_bound: "true"
-      timeout: 10
-      max_retries: 0
-      on_fail: continue
-    - id: capture_frame
-      action: capture_image
-      parameters:
-        output_path: "/tmp/test_capture.jpg"
-        mode: "none"
-      expect:
-        captured: "true"
-      timeout: 30
+        status: success
+      id: capture_frame
       max_retries: 2
+      parameters:
+        output_path: /tmp/test_capture.jpg
+      timeout: 30
   success_criteria:
-    - "test -f /tmp/test_capture.jpg"
+    - test -f /tmp/test_capture.jpg

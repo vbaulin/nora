@@ -1,21 +1,15 @@
 - id: survey_001
-  name: "Universal Visual Survey"
+  name: Universal Visual Survey
   priority: 5
   status: pending
   steps:
-    - id: initialize
-      action: probe_cvitek
-      parameters: {}
+    - action: run_yolo
       expect:
-        sensor_bound: true
-      timeout: 10
-    - id: perception_loop
-      action: run_yolo
-      parameters:
-        model_path: "/root/models/yolov8n.cvimodel"
-        image_path: "/tmp/survey_frame.jpg"
-        threshold: "0.6"
-      expect:
-        status: "ok"
-      timeout: 60
+        status: success
+      id: perception_loop
       max_retries: 2
+      parameters:
+        image_path: /tmp/survey_frame.jpg
+        model_path: /root/models_for_benchmark/yolov8n_coco_320.cvimodel
+        threshold: "0.6"
+      timeout: 60

@@ -1,0 +1,25 @@
+- id: multimedia_test
+  name: Multimedia Capture Test
+  priority: 1
+  status: pending
+  steps:
+    - action: capture_image
+      expect:
+        status: success
+      id: photo
+      parameters:
+        output_path: /tmp/test_photo.jpg
+    - action: capture_audio
+      expect:
+        status: success
+      id: audio
+      parameters:
+        duration: 2
+        output_path: /tmp/test_audio.wav
+    - action: capture_video
+      expect:
+        status: success
+      id: video
+      parameters:
+        duration: 3
+        output_path: /tmp/test_video.mp4

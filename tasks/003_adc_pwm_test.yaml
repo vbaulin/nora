@@ -1,25 +1,25 @@
 - id: hw_001
-  name: "ADC & PWM Verification"
+  name: ADC & PWM Verification
   priority: 4
   status: pending
   steps:
-    - id: read_adc
-      action: call_skill
-      parameters:
-        skill_name: "adc_read"
-        channel: "0"
+    - action: call_skill
       expect:
-        status: "success"
-      timeout: 10
+        status: success
+      id: read_adc
       max_retries: 1
-    - id: test_pwm
-      action: call_skill
       parameters:
-        skill_name: "pwm_control"
+        channel: "0"
+        skill_name: adc_read
+      timeout: 10
+    - action: call_skill
+      expect:
+        status: success
+      id: test_pwm
+      max_retries: 1
+      parameters:
         channel: "0"
         enable: "1"
-      expect:
-        status: "success"
+        skill_name: pwm_control
       timeout: 10
-      max_retries: 1
   success_criteria: []

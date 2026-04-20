@@ -1,7 +1,8 @@
 # 🌌 Nano-os-agent — The Universal Hardware Orchestrator for AI Agents
-![Nano-os-agent](images/Nano-os-agent.jpg)
+![Nano-os-agent](images/Nano-os-Agent.jpg)
 
 **Nora** (Nano-OS-Agent) is a high-fidelity, Go-native hardware orchestration engine designed for the **LicheeRV Nano** (SG2002). It transforms the non-deterministic world of low-level drivers and precompiled SDKs into a deterministic, high-level "Brain-Body" interface for AI Agents.
+
 ---
 
 

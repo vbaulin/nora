@@ -1,7 +1,7 @@
 ---
 name: run_yolo
 exec_type: shell
-command: python3 ./run.py
+command: ./run.sh
 input_format: stdin
 output_format: json
 timeout: 60

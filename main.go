@@ -1,8 +1,8 @@
 package main
 
 // ════════════════════════════════════════════════════════════════════════
-// nano-os-agent v6.8.23 — Self-Improving Autonomous Research Engine
-// Build: 2026-04-20T03:35:00Z
+// nano-os-agent v6.8.29 — Self-Improving Autonomous Research Engine
+// Build: 2026-04-21T10:15:00Z
 // Target: SG2002 (LicheeRV Nano, RISC-V C906, NPU 1TOPS)
 // ════════════════════════════════════════════════════════════════════════
 // Relationship to picoClaw:
@@ -502,21 +502,10 @@ func init() {
 		"adc_read":          nativeADCRead,
 		"pwm_control":       nativePWMControl,
 		"npu_inspect":       nativeNPUInspect,
-		"run_yolo":          nativeRunYolo,
-		"vision_capture":    nativeRunYolo,
 		"dummy_led_verify":  nativeDummyVerify,
 		"vision_state_sync": nativeVisionSync,
 		"ls_models":         nativeListModels,
-		"capture_image": func(e *Engine, params map[string]interface{}) (map[string]interface{}, error) {
-			return e.captureImage(params, 30)
-		},
-		"capture_audio": func(e *Engine, params map[string]interface{}) (map[string]interface{}, error) {
-			return e.executeExternalSkill("capture_audio", params, 30)
-		},
-		"capture_video": func(e *Engine, params map[string]interface{}) (map[string]interface{}, error) {
-			return e.executeExternalSkill("capture_video", params, 60)
-		},
-		"edit_program":   nativeEditProgram,
+		"edit_program":      nativeEditProgram,
 	}
 }
 
@@ -677,102 +666,6 @@ func nativeI2CScan(e *Engine, params map[string]interface{}) (map[string]interfa
 	return map[string]interface{}{"count": count, "addresses": addrs, "raw": out}, err
 }
 
-func nativeRunYolo(e *Engine, params map[string]interface{}) (map[string]interface{}, error) {
-	requestedModel := paramString(params, "model_path", "/root/models/yolov8n_coco_320.cvimodel")
-	modelPath := e.resolveModelPath(requestedModel)
-	imagePath := paramString(params, "image_path", "/tmp/capture.jpg")
-	
-	searchPaths := []string{
-		"/usr/bin/cvi_tdl_yolo",
-		"/root/libs_patch/bin/cvi_tdl_yolo",
-		"/usr/bin/sample_yolov8",
-		"/root/libs_patch/bin/sample_yolov8",
-		"/usr/bin/yolo_test",
-		"/root/libs_patch/bin/yolo_test",
-		"/usr/bin/sample_vi_od",
-		"/root/libs_patch/bin/sample_vi_od",
-		"/mnt/system/usr/bin/cvi_tdl_yolo",
-		"/opt/bin/cvi_tdl_yolo",
-		"/root/yolo_detect",
-		e.resolveBinaryPath("cvi_tdl_yolo"),
-		e.resolveBinaryPath("sample_yolov8"),
-	}
-	
-	e.mu.Lock()
-	binPath, _ := e.State.SkillResults["npu_yolo_preferred_bin"].(string)
-	e.mu.Unlock()
-
-	if binPath == "" {
-		for _, p := range searchPaths {
-			if p == "" { continue }
-			if _, err := os.Stat(p); err == nil {
-				binPath = p
-				break
-			}
-		}
-	}
-	
-	if binPath == "" {
-		log.Printf("⚠️  Native SDK Binary not found (checked %d paths).", len(searchPaths))
-		log.Printf("💡 Use the 'native_compile' skill to build a high-performance C++ detector locally.")
-		log.Printf("🔄 Falling back to Python maix-python skill...")
-		return e.executeExternalSkill("run_yolo", params, 90)
-	}
-
-
-	// Model Validation (Safe)
-	if info, err := os.Stat(modelPath); err != nil {
-		return nil, fmt.Errorf("NPU model file %s not found. Check your board installation.", modelPath)
-	} else if info.Size() < 100 {
-		return nil, fmt.Errorf("NPU model file %s is invalid/too small (size: %d bytes)", modelPath, info.Size())
-	}
-
-	threshold := paramString(params, "threshold", "0.5")
-
-	// Hardened SDK Environment (Universal)
-	cmd := exec.Command(binPath, modelPath, imagePath, threshold)
-	cmd.Env = append(os.Environ(), 
-		"LD_LIBRARY_PATH=/root/libs_patch/tpu_sdk_libs:/root/libs_patch/lib:/root/libs_patch/middleware_v2:/root/libs_patch/middleware_v2_3rd:/root/libs_patch:/root/libs_patch/opencv:/lib:/lib64",
-	)
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	
-	err := cmd.Run()
-	if err != nil {
-		return nil, fmt.Errorf("%s failed: %v (stderr: %s)", binPath, err, stderr.String())
-	}
-
-	// Lock working binary preference
-	e.mu.Lock()
-	if e.State.SkillResults["npu_yolo_preferred_bin"] != binPath {
-		e.State.SkillResults["npu_yolo_preferred_bin"] = binPath
-		e.mu.Unlock()
-		e.markStateDirty()
-	} else {
-		e.mu.Unlock()
-	}
-
-	// Try to parse JSON from stdout
-	var rawDets []RawDetection
-	if err := json.Unmarshal(stdout.Bytes(), &rawDets); err != nil {
-		// Fallback to raw output if not valid JSON
-		return map[string]interface{}{
-			"status": "ok",
-			"raw_detections": stdout.String(),
-			"bin": binPath,
-		}, nil
-	}
-
-	atoms := e.readAndAnalyzeImage(imagePath, rawDets, paramInt(params, "sampling_step", 4))
-
-	return map[string]interface{}{
-		"status": "ok",
-		"atoms":  atoms,
-		"bin":    binPath,
-	}, nil
-}
 
 func (e *Engine) readAndAnalyzeImage(imagePath string, detections []RawDetection, samplingStep int) []PerceptionAtom {
 	stat, err := os.Stat(imagePath)
@@ -987,6 +880,26 @@ func nativeProbeCvitek(e *Engine, params map[string]interface{}) (map[string]int
 		}
 	}
 
+	// 3. Check TDL SDK / Native NPU Bins (v6.8.29 Dynamic Search)
+	candidateBins := []string{"cvi_tdl_yolo", "sample_yolov8", "yolo_detect", "sensor_test"}
+	foundBins := make(map[string]string)
+	
+	for _, b := range candidateBins {
+		path := e.resolveBinaryPath(b)
+		if path != "" {
+			foundBins[b] = path
+		}
+	}
+
+	if len(foundBins) > 0 {
+		result["tdl_installed"] = true
+		result["tdl_bins"] = foundBins
+		log.Printf("🔎 Discovered Native SDK Bins: %v", foundBins)
+	} else {
+		result["tdl_installed"] = false
+		log.Printf("⚠️ No native NPU binaries found (checked SDK paths & PATH).")
+	}
+
 	return result, nil
 }
 
@@ -995,7 +908,7 @@ func nativeVisionSync(e *Engine, params map[string]interface{}) (map[string]inte
 	imagePath := paramString(params, "image_path", "/tmp/sync_frame.jpg")
 	
 	// 1. Capture Frame FIRST
-	_, err := e.captureImage(map[string]interface{}{"output_path": imagePath}, 30)
+	_, err := e.executeExternalSkill("capture_image", map[string]interface{}{"output_path": imagePath}, 30)
 	if err != nil {
 		return nil, fmt.Errorf("sync_truth capture failed: %v", err)
 	}
@@ -1194,6 +1107,25 @@ type Engine struct {
 	subAgentPIDs  map[int]string // pid → task file
 	mu            sync.Mutex
 	actingHypothesis string // ID of hypothesis currently being researched
+	workingShell string // Validated path to busybox or sh
+}
+
+func findWorkingShell() string {
+	// Priority order: LicheeRV standard BusyBox, then system sh
+	candidates := []string{"/bin/busybox", "/usr/bin/busybox", "/bin/sh", "sh"}
+	for _, c := range candidates {
+		var cmd *exec.Cmd
+		if strings.Contains(c, "busybox") {
+			cmd = exec.Command(c, "sh", "-c", "echo OK")
+		} else {
+			cmd = exec.Command(c, "-c", "echo OK")
+		}
+
+		if out, err := cmd.CombinedOutput(); err == nil && strings.TrimSpace(string(out)) == "OK" {
+			return c
+		}
+	}
+	return "sh" // Final fallback
 }
 
 func NewEngine() *Engine {
@@ -1202,6 +1134,7 @@ func NewEngine() *Engine {
 		lastCentroids: make(map[string]Point),
 		flushInterval: DefaultFlushInterval,
 		subAgentPIDs:  make(map[int]string),
+		workingShell:  findWorkingShell(),
 	}
 	e.loadEnv()
 	e.loadProgram()
@@ -1285,12 +1218,12 @@ func NewEngine() *Engine {
 	log.Printf("🤖 nano-os-agent v6.8.19 — Vision Force Active")
 	log.Printf("   Build Timestamp: 2026-04-20T03:15:00Z")
 	
-	// BusyBox Direct Probe (v6.8.19)
-	testCmd := exec.Command("/bin/busybox", "sh", "-c", "echo 'OK'")
-	if out, err := testCmd.CombinedOutput(); err == nil && strings.TrimSpace(string(out)) == "OK" {
-		log.Printf("✅ Shell Pre-Flight Check: Passed (/bin/busybox sh is working)")
+	// Shell Path Discovery (v6.8.24)
+	if e.workingShell != "" {
+		log.Printf("✅ Shell Pre-Flight Check: Passed (using %s)", e.workingShell)
 	} else {
-		log.Printf("⚠️  Shell Pre-Flight Check: FAILED. Trying fallback...")
+		log.Printf("⚠️  Shell Pre-Flight Check: FAILED. Using system default sh")
+		e.workingShell = "sh"
 	}
 	
 	log.Printf("🧠 Mode: Passive Evolution (Path A)")
@@ -1880,7 +1813,7 @@ func (e *Engine) executeMCPTool(name string, args map[string]interface{}) (map[s
 
 	switch name {
 	case "capture_image":
-		return e.captureImage(args, resolveTimeout(30))
+		return e.executeExternalSkill("capture_image", args, resolveTimeout(30))
 	case "run_yolo":
 		return e.callSkill("run_yolo", args, resolveTimeout(30))
 	case "scan_i2c":
@@ -1947,85 +1880,6 @@ func (e *Engine) readMCPResource(uri string) interface{} {
 // [Gateway functionality removed for Path A - File-driven mode only]
 
 
-// ════════════════════════════════════════════════════════════════════════
-// VISION SYSTEM
-// ════════════════════════════════════════════════════════════════════════
-
-func (e *Engine) captureImage(params map[string]interface{}, timeout int) (map[string]interface{}, error) {
-	outputPath := paramString(params, "output_path", DefaultCapturePath)
-
-	e.mu.Lock()
-	preferredMethod, _ := e.State.SkillResults["capture_image_preferred_method"].(string)
-	e.mu.Unlock()
-
-	tryMethod := func(method string, verbose bool) (bool, map[string]interface{}) {
-		switch method {
-		case "maix-python-skill":
-			if verbose { log.Printf("   Trying Maix-Python Skill: capture_image...") }
-			res, err := e.executeExternalSkill("capture_image", params, timeout)
-			if err == nil && fileExistsAndNotEmpty(outputPath) {
-				return true, map[string]interface{}{
-					"status":     "success",
-					"captured":   true,
-					"method":     "maix-python-skill",
-					"image_path": outputPath,
-					"details":    res,
-				}
-			}
-		case "v4l2-ctl":
-			v4l2 := e.resolveBinaryPath("v4l2-ctl")
-			if _, err := os.Stat("/dev/video0"); err == nil {
-				if verbose { log.Printf("   Trying V4L2-CTL on /dev/video0...") }
-				out, err := runCommandWithTimeout(timeout, v4l2, "--device", "/dev/video0", "--stream-mmap", "--stream-to="+outputPath, "--stream-count=1")
-				if err == nil && fileExistsAndNotEmpty(outputPath) {
-					return true, map[string]interface{}{"status": "success", "captured": true, "method": "v4l2-ctl", "image_path": outputPath}
-				}
-				if verbose && strings.Contains(out, "vb_ioctl_init NG") {
-					log.Printf("   ⚠️ V4L2 detected VB Error (NG).")
-				}
-			}
-		case "ffmpeg":
-			ffmpeg := e.resolveBinaryPath("ffmpeg")
-			if _, err := os.Stat("/dev/video0"); err == nil {
-				if verbose { log.Printf("   Trying FFMPEG on /dev/video0...") }
-				out, err := runCommandWithTimeout(timeout, ffmpeg, "-y", "-f", "v4l2", "-i", "/dev/video0", "-frames:v", "1", outputPath)
-				if err == nil && fileExistsAndNotEmpty(outputPath) {
-					return true, map[string]interface{}{"status": "success", "captured": true, "method": "ffmpeg", "image_path": outputPath}
-				}
-				if verbose && strings.Contains(out, "vb_ioctl_init NG") {
-					log.Printf("   ⚠️ FFMPEG detected VB Error (NG).")
-				}
-			}
-		}
-		return false, nil
-	}
-
-	if preferredMethod != "" {
-		if ok, res := tryMethod(preferredMethod, false); ok {
-			return res, nil
-		}
-		log.Printf("⚠️ Learned method %s failed, falling back to full scan", preferredMethod)
-	} else {
-		log.Printf("📸 Capturing → %s (Waterfall Selection - Prioritizing Maix-Python)", outputPath)
-	}
-
-	methods := []string{"maix-python-skill", "v4l2-ctl", "ffmpeg"}
-	for _, m := range methods {
-		if m == preferredMethod {
-			continue // Already tried
-		}
-		if ok, res := tryMethod(m, true); ok {
-			log.Printf("🧠 Learned working capture method: %s", m)
-			e.mu.Lock()
-			e.State.SkillResults["capture_image_preferred_method"] = m
-			e.mu.Unlock()
-			e.markStateDirty()
-			return res, nil
-		}
-	}
-
-	return nil, fmt.Errorf("camera capture failed: all methods exhausted. check dmesg for VB pool errors")
-}
 
 func (e *Engine) checkVideoDevs() {
 	matches, _ := filepath.Glob("/dev/video*")
@@ -2041,32 +1895,11 @@ func (e *Engine) checkVideoDevs() {
 }
 
 func (e *Engine) checkMemoryResource() {
-	// Sophgo/SG2002 Memory Diagnostics (v6.7.5)
-	cmaFound := false
 	if data, err := os.ReadFile("/proc/meminfo"); err == nil {
 		lines := strings.Split(string(data), "\n")
 		for _, line := range lines {
-			if strings.HasPrefix(line, "CmaTotal:") {
-				if !strings.Contains(line, "0 kB") {
-					cmaFound = true
-				}
-			}
 			if strings.HasPrefix(line, "MemTotal:") || strings.HasPrefix(line, "MemAvailable:") || strings.HasPrefix(line, "CmaTotal:") || strings.HasPrefix(line, "CmaFree:") {
 				log.Printf("🧠 Memory: %s", strings.TrimSpace(line))
-			}
-		}
-	}
-
-	if !cmaFound {
-		log.Printf("ℹ️ CMA memory is 0 kB. Using ION heap for multimedia (v6.8.13)")
-		
-		out, err := exec.Command("dmesg").CombinedOutput()
-		if err == nil {
-			for _, line := range strings.Split(string(out), "\n") {
-				lower := strings.ToLower(line)
-				if strings.Contains(lower, "cma") && (strings.Contains(lower, "fail") || strings.Contains(lower, "error") || strings.Contains(lower, "reserve")) {
-					log.Printf("  [dmesg] %s", line)
-				}
 			}
 		}
 	}
@@ -2142,6 +1975,13 @@ func (e *Engine) directCaptureFallback(outputPath string, timeout int) error {
 // ════════════════════════════════════════════════════════════════════════
 
 func (e *Engine) callSkill(name string, params map[string]interface{}, timeout int) (map[string]interface{}, error) {
+	// 1. Try External Skill FIRST (v6.8.26 — Skill-Led Architecture)
+	// If a skill exists in the filesystem, it ALWAYS overrides native code.
+	if _, err := e.loadSkillConfig(name); err == nil {
+		return e.executeExternalSkill(name, params, timeout)
+	}
+
+	// 2. Fallback to Native Skill
 	if handler, ok := nativeSkills[name]; ok {
 		result, err := handler(e, params)
 		if result != nil {
@@ -2152,7 +1992,7 @@ func (e *Engine) callSkill(name string, params map[string]interface{}, timeout i
 		}
 		return result, err
 	}
-	return e.executeExternalSkill(name, params, timeout)
+	return nil, fmt.Errorf("skill %q not found", name)
 }
 
 // [Duplicate removed]
@@ -2292,10 +2132,9 @@ func (e *Engine) executeShellSkill(config *SkillConfig, params map[string]interf
 
 	// ulimit removed to allow full board RAM for tools like ffmpeg and python
 
-	shBin := "sh"
+	shBin := e.workingShell
 	shArgs := []string{"-c", cmdStr}
-	if _, err := os.Stat("/bin/busybox"); err == nil {
-		shBin = "/bin/busybox"
+	if strings.Contains(shBin, "busybox") {
 		shArgs = []string{"sh", "-c", cmdStr}
 	}
 	cmd := exec.Command(shBin, shArgs...)
@@ -2346,10 +2185,9 @@ func (e *Engine) executePythonSkill(config *SkillConfig, params map[string]inter
 	cmdStr := fmt.Sprintf("python3 %s", config.Command)
 	// ulimit removed to allow python to import large ML/hardware libraries
 
-	shBin := "sh"
+	shBin := e.workingShell
 	shArgs := []string{"-c", cmdStr}
-	if _, err := os.Stat("/bin/busybox"); err == nil {
-		shBin = "/bin/busybox"
+	if strings.Contains(shBin, "busybox") {
 		shArgs = []string{"sh", "-c", cmdStr}
 	}
 	cmd := exec.Command(shBin, shArgs...)
@@ -2483,7 +2321,7 @@ func (e *Engine) dispatchAction(action string, params map[string]interface{}, ti
 		}
 		return e.callSkillWithAutoGenerate(skillName, skillParams, t)
 	case "capture_image":
-		return e.captureImage(params, t)
+		return e.executeExternalSkill("capture_image", params, t)
 	case "audio_record":
 		return e.callSkillWithAutoGenerate("capture_audio_maix", params, t)
 	case "audio_stop":
@@ -2749,6 +2587,17 @@ func compareNumeric(actualStr, targetStr string, cmp func(float64, float64) bool
 
 
 func (e *Engine) executeTask(t *Task) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("🔥 CRITICAL ERROR in task [%s]: %v", t.ID, r)
+			log.Printf("🛡️  Recovery triggered. Skipping task and continuing loop...")
+			e.appendResult(t.ID, "engine", "error", fmt.Sprintf("Panic recovered: %v", r))
+			e.mu.Lock()
+			e.State.CurrentTaskID = ""
+			e.mu.Unlock()
+		}
+	}()
+
 	log.Printf("🚀 Task [%s] %s (priority %d)", t.ID, t.Name, t.Priority)
 	startTime := time.Now()
 
@@ -3260,10 +3109,12 @@ func (e *Engine) resolveBinaryPath(name string) string {
 
 	priorities := []string{
 		filepath.Join(exeDir, name),
+		"/root/libs_patch/bin/" + name,
 		"/root/" + name,
-		"/mnt/data/" + name,
 		"/usr/bin/" + name,
 		"/usr/local/bin/" + name,
+		"/mnt/system/usr/bin/" + name,
+		"/opt/bin/" + name,
 	}
 
 	for _, p := range priorities {

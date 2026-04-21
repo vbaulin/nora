@@ -1,8 +1,7 @@
 package main
 
 // ════════════════════════════════════════════════════════════════════════
-// nano-os-agent v6.8.29 — Self-Improving Autonomous Research Engine
-// Build: 2026-04-21T10:15:00Z
+// nano-os-agent — Self-Improving Autonomous Research Engine
 // Target: SG2002 (LicheeRV Nano, RISC-V C906, NPU 1TOPS)
 // ════════════════════════════════════════════════════════════════════════
 // Relationship to picoClaw:
@@ -37,6 +36,11 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+)
+
+const (
+	AgentVersion   = "6.8.30"
+	BuildTimestamp = "2026-04-21T23:50:00Z"
 )
 
 // ════════════════════════════════════════════════════════════════════════
@@ -329,8 +333,8 @@ var obfuscationPatterns = []string{
 
 // engineFiles are strictly off-limits for mutation by generated tasks/skills
 var engineFiles = []string{
-	"main_v2.go", "program.yaml", "state.json", "experiments.jsonl",
-	"nano-os-agent", "nora_riscv",
+	"main.go", "program.yaml", "state.json", "experiments.jsonl",
+	"nano-os-agent",
 }
 var protectedEnvVars = map[string]bool{
 	"PATH": true, "LD_PRELOAD": true, "IFS": true,
@@ -614,7 +618,7 @@ func (e *Engine) handleFederatedPush(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(405)
 		return
 	}
-	body, _ := io.ReadAll(r.Body)
+	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20)) // 1MB safety limit
 	storeDir := "/tmp/federated_incoming"
 	os.MkdirAll(storeDir, 0755)
 	filename := filepath.Join(storeDir, fmt.Sprintf("push_%d.json", time.Now().UnixNano()))
@@ -639,7 +643,7 @@ func (e *Engine) handleContagionAlert(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(405)
 		return
 	}
-	body, _ := io.ReadAll(r.Body)
+	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20)) // 1MB safety limit
 	alertsDir := "/tmp/contagion_alerts"
 	os.MkdirAll(alertsDir, 0755)
 	filename := filepath.Join(alertsDir, fmt.Sprintf("alert_%d.json", time.Now().UnixNano()))
@@ -1069,23 +1073,32 @@ func nativeEditProgram(e *Engine, params map[string]interface{}) (map[string]int
 	if path == "" || content == "" {
 		return nil, fmt.Errorf("missing path or content")
 	}
-	// Safety: only allow certain files
+	// Security: resolve to absolute and verify it's within SkillsDir
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("invalid path: %v", err)
+	}
+	absSkills, _ := filepath.Abs(SkillsDir)
+	if !strings.HasPrefix(absPath, absSkills+string(filepath.Separator)) {
+		return nil, fmt.Errorf("edit_program: path %s is outside skills directory %s", absPath, absSkills)
+	}
+	// Safety: only allow certain file extensions
 	allowed := false
-	for _, a := range []string{"program.yaml", "SKILL.md", ".sh", ".py"} {
-		if strings.Contains(path, a) {
+	for _, ext := range []string{".md", ".sh", ".py", ".yaml"} {
+		if strings.HasSuffix(absPath, ext) {
 			allowed = true
 			break
 		}
 	}
 	if !allowed {
-		return nil, fmt.Errorf("file type not allowed for editing: %s", path)
+		return nil, fmt.Errorf("file type not allowed for editing: %s", absPath)
 	}
 
-	err := os.WriteFile(path, []byte(content), 0644)
+	err = os.WriteFile(absPath, []byte(content), 0644)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]interface{}{"status": "success", "file": path}, nil
+	return map[string]interface{}{"status": "success", "file": absPath}, nil
 }
 
 
@@ -1099,6 +1112,7 @@ type Engine struct {
 	State         State
 	shutdownFlag  int32
 	skillCache    map[string]*SkillConfig
+	skillMtime    map[string]time.Time // mtime of cached SKILL.md files
 	lastCentroids map[string]Point
 	stateDirty    bool
 	flushCounter  int
@@ -1108,6 +1122,7 @@ type Engine struct {
 	mu            sync.Mutex
 	actingHypothesis string // ID of hypothesis currently being researched
 	workingShell string // Validated path to busybox or sh
+	startTime    time.Time
 }
 
 func findWorkingShell() string {
@@ -1131,10 +1146,12 @@ func findWorkingShell() string {
 func NewEngine() *Engine {
 	e := &Engine{
 		skillCache:    make(map[string]*SkillConfig),
+		skillMtime:    make(map[string]time.Time),
 		lastCentroids: make(map[string]Point),
 		flushInterval: DefaultFlushInterval,
 		subAgentPIDs:  make(map[int]string),
 		workingShell:  findWorkingShell(),
+		startTime:     time.Now(),
 	}
 	e.loadEnv()
 	e.loadProgram()
@@ -1215,18 +1232,15 @@ func NewEngine() *Engine {
 	os.MkdirAll(filepath.Dir(e.Program.Experiments.ArchivePath), 0755)
 	os.MkdirAll(e.Program.SubAgents.ResultDir, 0755)
 
-	log.Printf("🤖 nano-os-agent v6.8.19 — Vision Force Active")
-	log.Printf("   Build Timestamp: 2026-04-20T03:15:00Z")
-	
-	// Shell Path Discovery (v6.8.24)
+	// ═══ Structured Boot Fingerprint (v6.8.30) ═══
+	log.Printf("═══ nano-os-agent v%s ═══", AgentVersion)
+	log.Printf("   Build:  %s", BuildTimestamp)
 	if e.workingShell != "" {
-		log.Printf("✅ Shell Pre-Flight Check: Passed (using %s)", e.workingShell)
+		log.Printf("   Shell:  %s", e.workingShell)
 	} else {
-		log.Printf("⚠️  Shell Pre-Flight Check: FAILED. Using system default sh")
+		log.Printf("⚠️  Shell:  FAILED — using system default sh")
 		e.workingShell = "sh"
 	}
-	
-	log.Printf("🧠 Mode: Passive Evolution (Path A)")
 
 	e.checkVideoDevs()
 	e.checkMemoryResource()
@@ -1334,6 +1348,8 @@ func (e *Engine) loadState() {
 func (e *Engine) saveState() {
 	e.mu.Lock()
 	data, err := json.MarshalIndent(e.State, "", "  ")
+	e.stateDirty = false
+	e.flushCounter = 0
 	e.mu.Unlock()
 	if err != nil {
 		log.Printf("⚠️ marshal state: %v", err)
@@ -1347,17 +1363,23 @@ func (e *Engine) saveState() {
 	if err := os.Rename(tmpPath, "state.json"); err != nil {
 		os.Remove(tmpPath)
 	}
-	e.stateDirty = false
-	e.flushCounter = 0
 }
 
-func (e *Engine) markStateDirty()    { e.stateDirty = true }
+func (e *Engine) markStateDirty() {
+	e.mu.Lock()
+	e.stateDirty = true
+	e.mu.Unlock()
+}
 func (e *Engine) flushStateIfNeeded() {
+	e.mu.Lock()
 	if !e.stateDirty {
+		e.mu.Unlock()
 		return
 	}
 	e.flushCounter++
-	if e.flushCounter >= e.flushInterval {
+	should := e.flushCounter >= e.flushInterval
+	e.mu.Unlock()
+	if should {
 		e.saveState()
 	}
 }
@@ -1370,6 +1392,18 @@ func (e *Engine) appendResult(taskID, stepID, status, description string) {
 	defer f.Close()
 	ts := time.Now().Format("15:04:05")
 	f.WriteString(fmt.Sprintf("%s\t%s\t%s\t%s\t%s\n", ts, taskID, stepID, status, description))
+}
+
+// writeHeartbeat writes a lightweight status file for external monitoring (v6.8.30)
+func (e *Engine) writeHeartbeat(lastTaskID string) {
+	e.mu.Lock()
+	iter := e.State.Iteration
+	e.mu.Unlock()
+	hb := fmt.Sprintf(`{"pid":%d,"version":"%s","iteration":%d,"last_task":"%s","uptime_s":%d,"ts":"%s"}`,
+		os.Getpid(), AgentVersion, iter, lastTaskID,
+		int(time.Since(e.startTime).Seconds()),
+		time.Now().Format(time.RFC3339))
+	os.WriteFile("/tmp/nano-os-agent.heartbeat", []byte(hb+"\n"), 0644)
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -1406,11 +1440,10 @@ func (e *Engine) appendExperiment(entry ExperimentEntry) {
 
 	// Periodic archive to SD card
 	e.mu.Lock()
-	e.State.ExperimentNum++
 	num := e.State.ExperimentNum
 	e.mu.Unlock()
 
-	if num%e.Program.Experiments.ArchiveInterval == 0 {
+	if num > 0 && num%e.Program.Experiments.ArchiveInterval == 0 {
 		e.archiveExperiments()
 	}
 }
@@ -1849,13 +1882,12 @@ func (e *Engine) executeMCPTool(name string, args map[string]interface{}) (map[s
 }
 
 func (e *Engine) readMCPResource(uri string) interface{} {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
 	var text string
 	switch uri {
 	case "nano://state":
+		e.mu.Lock()
 		data, _ := json.MarshalIndent(e.State, "", "  ")
+		e.mu.Unlock()
 		text = string(data)
 	case "nano://experiments":
 		entries := e.loadRecentExperiments(20)
@@ -1865,7 +1897,9 @@ func (e *Engine) readMCPResource(uri string) interface{} {
 		data, _ := json.MarshalIndent(e.Program.ResearchAgenda.Hypotheses, "", "  ")
 		text = string(data)
 	case "nano://metrics":
+		e.mu.Lock()
 		data, _ := json.MarshalIndent(e.State.Metrics, "", "  ")
+		e.mu.Unlock()
 		text = string(data)
 	default:
 		text = "unknown resource"
@@ -1877,7 +1911,6 @@ func (e *Engine) readMCPResource(uri string) interface{} {
 	}
 }
 
-// [Gateway functionality removed for Path A - File-driven mode only]
 
 
 
@@ -1948,27 +1981,6 @@ func fileExistsAndNotEmpty(path string) bool {
 	return err == nil && info.Size() > 0
 }
 
-func (e *Engine) directCaptureFallback(outputPath string, timeout int) error {
-	log.Printf("📸 Direct capture fallback using sensor_test...")
-	captureBin := e.resolveBinaryPath("sensor_test")
-	// On LicheeRV Nano, we prioritize sensor_test (official SDK utility)
-	_, err := runCommandWithTimeout(timeout, captureBin, "capture", outputPath)
-	if err == nil {
-		if info, e := os.Stat(outputPath); e == nil && info.Size() > 0 {
-			return nil
-		}
-	}
-
-	// Secondary fallback: manual sample capture if sensor_test fails
-	_, err = runCommandWithTimeout(timeout, captureBin, "-c", "1", "-o", outputPath)
-	if err == nil {
-		if info, e := os.Stat(outputPath); e == nil && info.Size() > 0 {
-			return nil
-		}
-	}
-
-	return fmt.Errorf("all capture methods failed (tried %s)", captureBin)
-}
 
 // ════════════════════════════════════════════════════════════════════════
 // SKILL SYSTEM
@@ -1995,8 +2007,6 @@ func (e *Engine) callSkill(name string, params map[string]interface{}, timeout i
 	return nil, fmt.Errorf("skill %q not found", name)
 }
 
-// [Duplicate removed]
-
 
 func (e *Engine) applySkillDefaults(config *SkillConfig, params map[string]interface{}) map[string]interface{} {
 	merged := make(map[string]interface{})
@@ -2012,8 +2022,24 @@ func (e *Engine) applySkillDefaults(config *SkillConfig, params map[string]inter
 }
 
 func (e *Engine) loadSkillConfig(name string) (*SkillConfig, error) {
+	// Check cache with mtime validation (v6.8.30 — hot-reload)
 	if config, ok := e.skillCache[name]; ok {
-		return config, nil
+		if cachedTime, hasMtime := e.skillMtime[name]; hasMtime {
+			// Find the SKILL.md file path from config command directory
+			skillMdPath := filepath.Join(SkillsDir, name, "SKILL.md")
+			if info, err := os.Stat(skillMdPath); err == nil {
+				if !info.ModTime().After(cachedTime) {
+					return config, nil // Cache is still fresh
+				}
+				log.Printf("🔄 Skill %q changed on disk — reloading...", name)
+				delete(e.skillCache, name)
+				delete(e.skillMtime, name)
+			} else {
+				return config, nil // File gone but cache is fine
+			}
+		} else {
+			return config, nil // Legacy cache entry, serve as-is
+		}
 	}
 	searchPaths := []string{
 		filepath.Join("skills", name, "SKILL.md"),
@@ -2064,6 +2090,10 @@ func (e *Engine) loadSkillConfig(name string) (*SkillConfig, error) {
 		}
 
 		e.skillCache[name] = &config
+		// Store mtime for hot-reload detection
+		if info, err := os.Stat(abs); err == nil {
+			e.skillMtime[name] = info.ModTime()
+		}
 		return &config, nil
 	}
 
@@ -2183,7 +2213,6 @@ func (e *Engine) executePythonSkill(config *SkillConfig, params map[string]inter
 		return nil, fmt.Errorf("skill %s: no command", config.Name)
 	}
 	cmdStr := fmt.Sprintf("python3 %s", config.Command)
-	// ulimit removed to allow python to import large ML/hardware libraries
 
 	shBin := e.workingShell
 	shArgs := []string{"-c", cmdStr}
@@ -2192,6 +2221,19 @@ func (e *Engine) executePythonSkill(config *SkillConfig, params map[string]inter
 	}
 	cmd := exec.Command(shBin, shArgs...)
 	cmd.Env = os.Environ()
+	// Inject SDK libraries for native extensions (maix, cv2, etc.)
+	sdkLibs := "/root/libs_patch/tpu_sdk_libs:/root/libs_patch/lib:/root/libs_patch/middleware_v2:/root/libs_patch/middleware_v2_3rd:/root/libs_patch:/root/libs_patch/opencv:/lib:/lib64"
+	hasLD := false
+	for i, ev := range cmd.Env {
+		if strings.HasPrefix(ev, "LD_LIBRARY_PATH=") {
+			cmd.Env[i] = "LD_LIBRARY_PATH=" + sdkLibs + ":" + strings.TrimPrefix(ev, "LD_LIBRARY_PATH=")
+			hasLD = true
+			break
+		}
+	}
+	if !hasLD {
+		cmd.Env = append(cmd.Env, "LD_LIBRARY_PATH="+sdkLibs)
+	}
 	cmd.Dir = filepath.Dir(config.Command)
 	stdinData, _ := json.Marshal(params)
 	cmd.Stdin = bytes.NewReader(stdinData)
@@ -2417,69 +2459,6 @@ func (e *Engine) runShellCommand(params map[string]interface{}, timeout int) (ma
 	return map[string]interface{}{"output": out}, err
 }
 
-func (e *Engine) nativeAudioRecord(params map[string]interface{}, timeout int) (map[string]interface{}, error) {
-	duration := paramString(params, "duration", "3")
-	outputPath := paramString(params, "output_path", "/tmp/record.wav")
-	sampleRate := paramString(params, "sample_rate", "48000")
-	volume := paramString(params, "volume", "24") // 0-24 range for SG2002
-
-	// 1. Set ADC Capture Volume (Onboard Mic)
-	volCmd := fmt.Sprintf("amixer -Dhw:0 cset name='ADC Capture Volume' %s", volume)
-	_, _ = exec.Command("sh", "-c", volCmd).Output() // Best effort
-
-	// 2. Build arecord command
-	// -Dhw:0,0 = Card 0, Device 0 (Onboard Mic)
-	// -f S16_LE = Signed 16-bit Little Endian
-	cmdArgs := []string{"-Dhw:0,0", "-r", sampleRate, "-f", "S16_LE", "-t", "wav"}
-	
-	if duration != "0" {
-		cmdArgs = append(cmdArgs, "-d", duration)
-	}
-	cmdArgs = append(cmdArgs, outputPath)
-
-	log.Printf("🎙️ Recording audio (%ss) to %s...", duration, outputPath)
-	
-	var out bytes.Buffer
-	cmd := exec.Command("arecord", cmdArgs...)
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	
-	// If duration is 0, run in background
-	if duration == "0" {
-		err := cmd.Start()
-		if err != nil {
-			return nil, fmt.Errorf("failed to start background recording: %v", err)
-		}
-		return map[string]interface{}{
-			"status": "recording_background",
-			"path":   outputPath,
-			"pid":    cmd.Process.Pid,
-		}, nil
-	}
-
-	// Wait for completion (with timeout)
-	done := make(chan error, 1)
-	go func() {
-		done <- cmd.Run()
-	}()
-
-	select {
-	case <-time.After(time.Duration(timeout) * time.Second):
-		_ = cmd.Process.Kill()
-		return nil, fmt.Errorf("audio recording timed out")
-	case err := <-done:
-		if err != nil {
-			return nil, fmt.Errorf("arecord failed: %v (output: %s)", err, out.String())
-		}
-	}
-
-	return map[string]interface{}{
-		"status":      "completed",
-		"path":        outputPath,
-		"duration":    duration,
-		"sample_rate": sampleRate,
-	}, nil
-}
 
 func (e *Engine) nativeAudioStop(_ map[string]interface{}, _ int) (map[string]interface{}, error) {
 	log.Printf("🎙️ Stopping all audio recording processes...")
@@ -2813,15 +2792,9 @@ func (e *Engine) checkSuccessCriteria(t *Task) bool {
 			parts := strings.SplitN(strings.TrimPrefix(crit, "grep "), " ", 2)
 			if len(parts) == 2 {
 				pattern, path := parts[0], parts[1]
-				out, _ := runCommandWithTimeout(10, "grep", "-q", pattern, path)
-				// grep -q returns exit status 0 if found
-				if !strings.Contains(crit, "-v") && out != "" {
-					// wait, runCommandWithTimeout doesn't return exit code easily
-					// let's use a shell check
-					_, err := runCommandWithTimeout(10, "sh", "-c", "grep -q "+shellEscape(pattern)+" "+shellEscape(path))
-					if err != nil {
-						return false
-					}
+				_, err := runCommandWithTimeout(10, "sh", "-c", "grep -q "+shellEscape(pattern)+" "+shellEscape(path))
+				if err != nil {
+					return false
 				}
 			}
 		} else if crit == "successful_exit" {
@@ -3010,6 +2983,7 @@ func (e *Engine) Run() {
 
 		e.executeTask(task)
 		e.flushStateIfNeeded()
+		e.writeHeartbeat(task.ID)
 
 		if !e.Program.Loop.NeverStop {
 			break
@@ -3128,7 +3102,7 @@ func (e *Engine) resolveBinaryPath(name string) string {
 		return p
 	}
 
-	return "/root/" + name // Fallback to old behavior
+	return "" // Not found — callers must handle absence
 }
 
 // findIIODevice searches /sys/bus/iio/devices/ for a device matching the name (e.g., "adc")
@@ -3149,15 +3123,10 @@ func (e *Engine) findIIODevice(match string) string {
 	return ""
 }
 
-// [Gateway handlers removed]
-
 
 
 func main() {
 	engine := NewEngine()
-	log.Println("═══════════════════════════════════════════")
-	log.Println("  nano-os-agent v6.8.23")
-	log.Println("  Absolute Truth Active (Build: 2026-04-20T03:35:00Z)")
-	log.Println("═══════════════════════════════════════════")
+	log.Printf("═══ nano-os-agent v%s ═══", AgentVersion)
 	engine.Run()
 }

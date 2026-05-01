@@ -70,10 +70,16 @@ def main():
         # Format results
         detections = []
         for obj in objs:
+            x1 = obj.x
+            y1 = obj.y
+            x2 = obj.x + obj.w
+            y2 = obj.y + obj.h
             detections.append({
                 "class": obj.class_id,
+                "confidence": obj.score,
                 "score": obj.score,
-                "box": [obj.x, obj.y, obj.w, obj.h]
+                "box": [x1, y1, x2, y2],
+                "box_format": "xyxy"
             })
             
         print(json.dumps({

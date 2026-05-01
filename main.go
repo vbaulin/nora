@@ -62,9 +62,9 @@ const (
 	ModelInputResolution = 640             // Standard YOLOv8n resolution
 	MaxExperimentContext = 5               // last N experiments to include in LLM prompt
 
-	MCPListenAddr        = "0.0.0.0:9600"
-	FederatedListenAddr  = ":9601"
-	MaxExperiments       = 1000
+	MCPListenAddr       = "0.0.0.0:9600"
+	FederatedListenAddr = ":9601"
+	MaxExperiments      = 1000
 )
 
 // ════════════════════════════════════════════════════════════════════════
@@ -170,6 +170,16 @@ type Step struct {
 	Expect     map[string]interface{} `yaml:"expect"`
 	OnFail     string                 `yaml:"on_fail"`
 	MaxRetries int                    `yaml:"max_retries"`
+	SaveAs     string                 `yaml:"save_as,omitempty"`
+	Repeat     *RepeatConfig          `yaml:"repeat,omitempty"`
+}
+
+type RepeatConfig struct {
+	IntervalSec    int    `yaml:"interval_sec"`
+	MaxIterations  int    `yaml:"max_iterations"`
+	DurationSec    int    `yaml:"duration_sec"`
+	JournalPath    string `yaml:"journal_path"`
+	ContinueOnFail bool   `yaml:"continue_on_fail"`
 }
 
 type Subtask struct {
@@ -183,15 +193,15 @@ type Subtask struct {
 // ════════════════════════════════════════════════════════════════════════
 
 type PerceptionAtom struct {
-	ID           int                 `json:"id"`
-	Class        string              `json:"class"`
-	Confidence   float64             `json:"confidence"`
-	Centroid     Point               `json:"centroid"`
-	Area         float64             `json:"area"`
-	Perimeter    float64             `json:"perimeter"`
-	Intensity    float64             `json:"intensity"`
-	Color        ColorInfo           `json:"color"`
-	Displacement Delta               `json:"displacement,omitempty"`
+	ID           int       `json:"id"`
+	Class        string    `json:"class"`
+	Confidence   float64   `json:"confidence"`
+	Centroid     Point     `json:"centroid"`
+	Area         float64   `json:"area"`
+	Perimeter    float64   `json:"perimeter"`
+	Intensity    float64   `json:"intensity"`
+	Color        ColorInfo `json:"color"`
+	Displacement Delta     `json:"displacement,omitempty"`
 }
 
 type ColorInfo struct {
@@ -490,6 +500,25 @@ func truncateString(s string, n int) string {
 	return s[:n] + "..."
 }
 
+func normalizeSkillResult(result map[string]interface{}, err error) map[string]interface{} {
+	if result == nil {
+		result = make(map[string]interface{})
+	}
+	if _, ok := result["status"]; !ok {
+		if err != nil {
+			result["status"] = "error"
+		} else {
+			result["status"] = "success"
+		}
+	}
+	if err != nil {
+		if _, ok := result["message"]; !ok {
+			result["message"] = err.Error()
+		}
+	}
+	return result
+}
+
 // ════════════════════════════════════════════════════════════════════════
 // NATIVE SKILLS
 // ════════════════════════════════════════════════════════════════════════
@@ -552,9 +581,20 @@ func (e *Engine) executeExternalSkill(name string, params map[string]interface{}
 		result, err = e.executePythonSkill(config, params, t)
 	case "api":
 		result, err = e.executeAPISkill(config, params, t)
+	case "native":
+		handlerName := config.Command
+		if handlerName == "" {
+			handlerName = config.Name
+		}
+		handler, ok := nativeSkills[handlerName]
+		if !ok {
+			return nil, fmt.Errorf("native skill %q not found for %s", handlerName, name)
+		}
+		result, err = handler(e, params)
 	default:
 		return nil, fmt.Errorf("unknown exec_type %q for skill %s", config.ExecType, name)
 	}
+	result = normalizeSkillResult(result, err)
 	if result != nil {
 		e.mu.Lock()
 		e.State.SkillResults[name] = result
@@ -563,8 +603,6 @@ func (e *Engine) executeExternalSkill(name string, params map[string]interface{}
 	}
 	return result, err
 }
-
-
 
 func (e *Engine) verifyGeneratedSkill(script string) bool {
 	lower := strings.ToLower(script)
@@ -670,7 +708,6 @@ func nativeI2CScan(e *Engine, params map[string]interface{}) (map[string]interfa
 	return map[string]interface{}{"count": count, "addresses": addrs, "raw": out}, err
 }
 
-
 func (e *Engine) readAndAnalyzeImage(imagePath string, detections []RawDetection, samplingStep int) []PerceptionAtom {
 	stat, err := os.Stat(imagePath)
 	if err != nil {
@@ -708,9 +745,9 @@ func (e *Engine) readAndAnalyzeImage(imagePath string, detections []RawDetection
 			log.Printf("⚠️ Malformed box in detection %d: %v", i, d.Box)
 			continue
 		}
-		
+
 		x1, y1, x2, y2 := int(d.Box[0]), int(d.Box[1]), int(d.Box[2]), int(d.Box[3])
-		
+
 		atom := PerceptionAtom{
 			ID:         i + 1,
 			Class:      d.Class,
@@ -719,7 +756,7 @@ func (e *Engine) readAndAnalyzeImage(imagePath string, detections []RawDetection
 				X: (d.Box[0] + d.Box[2]) / 2 / float64(ModelInputResolution),
 				Y: (d.Box[1] + d.Box[3]) / 2 / float64(ModelInputResolution),
 			},
-			Area:      math.Abs((d.Box[2] - d.Box[0]) * (d.Box[3] - d.Box[1])) / float64(ModelInputResolution*ModelInputResolution),
+			Area:      math.Abs((d.Box[2]-d.Box[0])*(d.Box[3]-d.Box[1])) / float64(ModelInputResolution*ModelInputResolution),
 			Perimeter: 2 * (math.Abs(d.Box[2]-d.Box[0]) + math.Abs(d.Box[3]-d.Box[1])) / float64(ModelInputResolution),
 		}
 
@@ -738,7 +775,7 @@ func (e *Engine) readAndAnalyzeImage(imagePath string, detections []RawDetection
 		// Update memory for next frame
 		e.lastCentroids[d.Class] = atom.Centroid
 		e.mu.Unlock()
-		
+
 		atoms = append(atoms, atom)
 	}
 	return atoms
@@ -746,10 +783,18 @@ func (e *Engine) readAndAnalyzeImage(imagePath string, detections []RawDetection
 
 func analyzeRegion(img image.Image, x1, y1, x2, y2, step int) (float64, ColorInfo) {
 	bounds := img.Bounds()
-	if x1 < bounds.Min.X { x1 = bounds.Min.X }
-	if y1 < bounds.Min.Y { y1 = bounds.Min.Y }
-	if x2 > bounds.Max.X { x2 = bounds.Max.X }
-	if y2 > bounds.Max.Y { y2 = bounds.Max.Y }
+	if x1 < bounds.Min.X {
+		x1 = bounds.Min.X
+	}
+	if y1 < bounds.Min.Y {
+		y1 = bounds.Min.Y
+	}
+	if x2 > bounds.Max.X {
+		x2 = bounds.Max.X
+	}
+	if y2 > bounds.Max.Y {
+		y2 = bounds.Max.Y
+	}
 
 	var totalI, totalR, totalG, totalB uint64
 	var count uint64
@@ -762,7 +807,7 @@ func analyzeRegion(img image.Image, x1, y1, x2, y2, step int) (float64, ColorInf
 		for x := x1; x < x2; x += step {
 			r, g, b, _ := img.At(x, y).RGBA()
 			r8, g8, b8 := uint8(r>>8), uint8(g>>8), uint8(b>>8)
-			
+
 			totalR += uint64(r8)
 			totalG += uint64(g8)
 			totalB += uint64(b8)
@@ -778,7 +823,7 @@ func analyzeRegion(img image.Image, x1, y1, x2, y2, step int) (float64, ColorInf
 	avgR := float64(totalR) / float64(count)
 	avgG := float64(totalG) / float64(count)
 	avgB := float64(totalB) / float64(count)
-	
+
 	h, s, v := rgbToHsv(avgR, avgG, avgB)
 
 	return float64(totalI) / float64(count), ColorInfo{
@@ -822,7 +867,7 @@ func nativeNPUInspect(e *Engine, params map[string]interface{}) (map[string]inte
 	requestedModel := paramString(params, "model_path", "/root/models/yolov8n_coco_320.cvimodel")
 	modelPath := e.resolveModelPath(requestedModel)
 	binPath := e.resolveBinaryPath("cvimodel_tool")
-	
+
 	// Format: cvimodel_tool --action <ACTION> --input <INPUT_FILE>
 	args := []string{"--action", "info", "--input"}
 	if modelPath != "" {
@@ -840,7 +885,7 @@ func nativeNPUInspect(e *Engine, params map[string]interface{}) (map[string]inte
 
 	cmd := exec.Command(binPath, args...)
 	sdkPatch := "/root/libs_patch"
-	cmd.Env = append(os.Environ(), 
+	cmd.Env = append(os.Environ(),
 		"LD_LIBRARY_PATH="+sdkPatch+"/lib:"+sdkPatch+"/middleware_v2:"+sdkPatch+"/middleware_v2_3rd:"+sdkPatch+"/tpu_sdk_libs:"+sdkPatch+":"+sdkPatch+"/opencv",
 	)
 
@@ -851,13 +896,13 @@ func nativeNPUInspect(e *Engine, params map[string]interface{}) (map[string]inte
 
 	return map[string]interface{}{
 		"info": string(out),
-		"bin": binPath,
+		"bin":  binPath,
 	}, nil
 }
 
 func nativeProbeCvitek(e *Engine, params map[string]interface{}) (map[string]interface{}, error) {
 	result := make(map[string]interface{})
-	
+
 	// 1. Check VI (Video Input) - Try multiple vendor paths
 	viPaths := []string{"/proc/cvitek/vi", "/proc/soph/vi", "/proc/vi"}
 	for _, path := range viPaths {
@@ -887,7 +932,7 @@ func nativeProbeCvitek(e *Engine, params map[string]interface{}) (map[string]int
 	// 3. Check TDL SDK / Native NPU Bins (v6.8.29 Dynamic Search)
 	candidateBins := []string{"cvi_tdl_yolo", "sample_yolov8", "yolo_detect", "sensor_test"}
 	foundBins := make(map[string]string)
-	
+
 	for _, b := range candidateBins {
 		path := e.resolveBinaryPath(b)
 		if path != "" {
@@ -910,7 +955,7 @@ func nativeProbeCvitek(e *Engine, params map[string]interface{}) (map[string]int
 func nativeVisionSync(e *Engine, params map[string]interface{}) (map[string]interface{}, error) {
 	// Native implementation of vision truth loop (Search/Rescue + Vision Force)
 	imagePath := paramString(params, "image_path", "/tmp/sync_frame.jpg")
-	
+
 	// 1. Capture Frame FIRST
 	_, err := e.executeExternalSkill("capture_image", map[string]interface{}{"output_path": imagePath}, 30)
 	if err != nil {
@@ -969,7 +1014,7 @@ func (e *Engine) findADCPath(channel string) string {
 func nativeADCRead(e *Engine, params map[string]interface{}) (map[string]interface{}, error) {
 	channel := paramString(params, "channel", "0")
 	path := e.findADCPath(channel)
-	
+
 	// Check if this is the special cvi-saradc device that requires the "Echo-Read" protocol
 	if strings.Contains(path, "cv_saradc") {
 		// Protocol: Open R/W -> Write Channel -> Sleep -> Read Value
@@ -998,12 +1043,12 @@ func nativeADCRead(e *Engine, params map[string]interface{}) (map[string]interfa
 		if err != nil {
 			return nil, fmt.Errorf("ADC fetch failed: could not read value from %s: %v", path, err)
 		}
-		
+
 		val := strings.TrimSpace(string(data))
 		return map[string]interface{}{
-			"channel": channel,
-			"raw":     val,
-			"path":    path,
+			"channel":  channel,
+			"raw":      val,
+			"path":     path,
 			"protocol": "echo-read-locked",
 		}, nil
 	}
@@ -1013,24 +1058,24 @@ func nativeADCRead(e *Engine, params map[string]interface{}) (map[string]interfa
 	if err != nil {
 		return nil, fmt.Errorf("failed to read ADC channel %s (probed %s): %v", channel, path, err)
 	}
-	
+
 	val := strings.TrimSpace(string(data))
 	return map[string]interface{}{
-		"channel": channel,
-		"raw":     val,
-		"path":    path,
+		"channel":  channel,
+		"raw":      val,
+		"path":     path,
 		"protocol": "standard",
 	}, nil
 }
 
 func nativePWMControl(e *Engine, params map[string]interface{}) (map[string]interface{}, error) {
 	channel := paramString(params, "channel", "0")
-	duty := paramString(params, "duty", "500000") // 50% of 1ms period
-	period := paramString(params, "period", "1000000") // 1ms
+	duty := paramString(params, "duty", paramString(params, "duty_cycle", "500000")) // 50% of 1ms period
+	period := paramString(params, "period", "1000000")                               // 1ms
 	enable := paramString(params, "enable", "1")
 
 	base := fmt.Sprintf("/sys/class/pwm/pwmchip0/pwm%s", channel)
-	
+
 	// Ensure period is set first
 	_ = os.WriteFile(filepath.Join(base, "period"), []byte(period), 0644)
 	_ = os.WriteFile(filepath.Join(base, "duty_cycle"), []byte(duty), 0644)
@@ -1101,28 +1146,27 @@ func nativeEditProgram(e *Engine, params map[string]interface{}) (map[string]int
 	return map[string]interface{}{"status": "success", "file": absPath}, nil
 }
 
-
-
 // ════════════════════════════════════════════════════════════════════════
 // ENGINE
 // ════════════════════════════════════════════════════════════════════════
 
 type Engine struct {
-	Program       ProgramConfig
-	State         State
-	shutdownFlag  int32
-	skillCache    map[string]*SkillConfig
-	skillMtime    map[string]time.Time // mtime of cached SKILL.md files
-	lastCentroids map[string]Point
-	stateDirty    bool
-	flushCounter  int
-	flushInterval int
-	idleCount     int
-	subAgentPIDs  map[int]string // pid → task file
-	mu            sync.Mutex
+	Program          ProgramConfig
+	State            State
+	shutdownFlag     int32
+	skillCache       map[string]*SkillConfig
+	skillMtime       map[string]time.Time // mtime of cached SKILL.md files
+	lastCentroids    map[string]Point
+	stateDirty       bool
+	flushCounter     int
+	flushInterval    int
+	idleCount        int
+	subAgentPIDs     map[int]string // pid → task file
+	runtimeVars      map[string]map[string]interface{}
+	mu               sync.Mutex
 	actingHypothesis string // ID of hypothesis currently being researched
-	workingShell string // Validated path to busybox or sh
-	startTime    time.Time
+	workingShell     string // Validated path to busybox or sh
+	startTime        time.Time
 }
 
 func findWorkingShell() string {
@@ -1150,6 +1194,7 @@ func NewEngine() *Engine {
 		lastCentroids: make(map[string]Point),
 		flushInterval: DefaultFlushInterval,
 		subAgentPIDs:  make(map[int]string),
+		runtimeVars:   make(map[string]map[string]interface{}),
 		workingShell:  findWorkingShell(),
 		startTime:     time.Now(),
 	}
@@ -1200,7 +1245,7 @@ func NewEngine() *Engine {
 	// Binary-Relative Discovery (Source of Truth)
 	exePath, _ := os.Executable()
 	exeDir := filepath.Dir(exePath)
-	
+
 	// Priority 1: Relative to binary
 	if info, err := os.Stat(filepath.Join(exeDir, "skills")); err == nil && info.IsDir() {
 		SkillsDir = filepath.Join(exeDir, "skills")
@@ -1276,7 +1321,6 @@ func NewEngine() *Engine {
 // ── Loading / Saving ────────────────────────────────────────────────
 
 func (e *Engine) loadEnv() {
-
 
 	for _, p := range []string{".env", "/root/.env"} {
 		if err := parseEnvFile(p); err == nil {
@@ -1776,8 +1820,8 @@ func (e *Engine) getMCPTools() []MCPTool {
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"image_path": map[string]interface{}{"type": "string"},
-					"model_path": map[string]interface{}{"type": "string", "default": "/root/models/yolov8n_coco_640.cvimodel"},
+					"image_path":    map[string]interface{}{"type": "string"},
+					"model_path":    map[string]interface{}{"type": "string", "default": "/root/models/yolov8n_coco_640.cvimodel"},
 					"sampling_step": map[string]interface{}{"type": "integer", "default": 4, "description": "Pixel sampling step for color analysis (1=high precision, 4=high performance)"},
 				},
 				"required": []string{"image_path"},
@@ -1794,9 +1838,78 @@ func (e *Engine) getMCPTools() []MCPTool {
 			},
 		},
 		{
+			Name:        "probe_cvitek",
+			Description: "Run a deeper Cvitek/Sophgo hardware diagnostic probe.",
+			InputSchema: map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+		},
+		{
 			Name:        "probe_sensor",
 			Description: "Check CSI camera sensor status via /proc/cvitek/vi.",
 			InputSchema: map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+		},
+		{
+			Name:        "capture_audio",
+			Description: "Record a short audio clip through the board audio stack.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"duration":    map[string]interface{}{"type": "integer", "default": 2},
+					"output_path": map[string]interface{}{"type": "string", "default": "/tmp/capture.wav"},
+				},
+			},
+		},
+		{
+			Name:        "capture_video",
+			Description: "Record a short video clip from the CSI camera.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"duration":    map[string]interface{}{"type": "integer", "default": 3},
+					"output_path": map[string]interface{}{"type": "string", "default": "/tmp/capture.mp4"},
+				},
+			},
+		},
+		{
+			Name:        "adc_read",
+			Description: "Read a SARADC channel.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"channel": map[string]interface{}{"type": "string", "default": "0"},
+				},
+			},
+		},
+		{
+			Name:        "pwm_control",
+			Description: "Set PWM period, duty cycle, and enable state.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"channel":    map[string]interface{}{"type": "string", "default": "0"},
+					"period":     map[string]interface{}{"type": "string", "default": "1000000"},
+					"duty":       map[string]interface{}{"type": "string", "default": "500000"},
+					"duty_cycle": map[string]interface{}{"type": "string", "default": "500000"},
+					"enable":     map[string]interface{}{"type": "string", "default": "1"},
+				},
+			},
+		},
+		{
+			Name:        "time_sync",
+			Description: "Synchronize or inspect board time through the time_sync skill.",
+			InputSchema: map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+		},
+		{
+			Name:        "analyze_image",
+			Description: "Convert detections for an image into perception atoms.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"image_path":    map[string]interface{}{"type": "string"},
+					"detections":    map[string]interface{}{"type": "array"},
+					"sampling_step": map[string]interface{}{"type": "integer", "default": 4},
+				},
+				"required": []string{"image_path", "detections"},
+			},
 		},
 		{
 			Name:        "run_shell",
@@ -1814,6 +1927,19 @@ func (e *Engine) getMCPTools() []MCPTool {
 			Name:        "list_skills",
 			Description: "List all available skills (native + external).",
 			InputSchema: map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+		},
+		{
+			Name:        "call_skill",
+			Description: "Call any registered skill by name with JSON arguments.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"skill_name": map[string]interface{}{"type": "string"},
+					"arguments":  map[string]interface{}{"type": "object"},
+					"timeout":    map[string]interface{}{"type": "integer", "default": 30},
+				},
+				"required": []string{"skill_name"},
+			},
 		},
 		{
 			Name:        "get_experiments",
@@ -1848,11 +1974,25 @@ func (e *Engine) executeMCPTool(name string, args map[string]interface{}) (map[s
 	case "capture_image":
 		return e.executeExternalSkill("capture_image", args, resolveTimeout(30))
 	case "run_yolo":
-		return e.callSkill("run_yolo", args, resolveTimeout(30))
+		return e.runYoloWithPerception(args, resolveTimeout(30))
 	case "scan_i2c":
 		return e.callSkill("i2c_scan", args, resolveTimeout(10))
+	case "probe_cvitek":
+		return e.callSkill("probe_cvitek", args, resolveTimeout(10))
 	case "probe_sensor":
 		return e.callSkill("probe_cvitek", nil, resolveTimeout(10))
+	case "capture_audio":
+		return e.callSkill("capture_audio", args, resolveTimeout(30))
+	case "capture_video":
+		return e.callSkill("capture_video", args, resolveTimeout(60))
+	case "adc_read":
+		return e.callSkill("adc_read", args, resolveTimeout(10))
+	case "pwm_control":
+		return e.callSkill("pwm_control", args, resolveTimeout(10))
+	case "time_sync":
+		return e.callSkill("time_sync", args, resolveTimeout(30))
+	case "analyze_image":
+		return e.analyzeImageTool(args)
 	case "run_shell":
 		cmdStr := paramString(args, "cmd", "")
 		if !e.isApproved(cmdStr) {
@@ -1861,6 +2001,22 @@ func (e *Engine) executeMCPTool(name string, args map[string]interface{}) (map[s
 		return e.runShellCommand(args, paramInt(args, "timeout", 30))
 	case "list_skills":
 		return nativeListSkills(e, nil)
+	case "call_skill":
+		skillName := paramString(args, "skill_name", "")
+		if skillName == "" {
+			return nil, fmt.Errorf("call_skill requires skill_name")
+		}
+		skillArgs := make(map[string]interface{})
+		if raw, ok := args["arguments"].(map[string]interface{}); ok {
+			skillArgs = raw
+		} else {
+			for k, v := range args {
+				if k != "skill_name" && k != "timeout" {
+					skillArgs[k] = v
+				}
+			}
+		}
+		return e.callSkill(skillName, skillArgs, paramInt(args, "timeout", 30))
 	case "get_experiments":
 		count := paramInt(args, "count", 10)
 		entries := e.loadRecentExperiments(count)
@@ -1878,6 +2034,159 @@ func (e *Engine) executeMCPTool(name string, args map[string]interface{}) (map[s
 		return result, nil
 	default:
 		return nil, fmt.Errorf("unknown MCP tool: %s", name)
+	}
+}
+
+func (e *Engine) runYoloWithPerception(args map[string]interface{}, timeout int) (map[string]interface{}, error) {
+	result, err := e.callSkill("run_yolo", args, timeout)
+	if result == nil {
+		return result, err
+	}
+	e.attachPerceptionAtoms(result, args)
+	return result, err
+}
+
+func (e *Engine) analyzeImageTool(args map[string]interface{}) (map[string]interface{}, error) {
+	imagePath := paramString(args, "image_path", "")
+	if imagePath == "" {
+		return nil, fmt.Errorf("analyze_image requires image_path")
+	}
+	detections, ok := args["detections"]
+	if !ok {
+		return nil, fmt.Errorf("analyze_image requires detections")
+	}
+	atoms := e.perceptionAtomsFromValue(imagePath, detections, paramInt(args, "sampling_step", 4))
+	return map[string]interface{}{
+		"status":           "success",
+		"image_path":       imagePath,
+		"perception_atoms": atoms,
+		"count":            len(atoms),
+	}, nil
+}
+
+func (e *Engine) attachPerceptionAtoms(result, args map[string]interface{}) {
+	imagePath := paramString(result, "image_path", "")
+	if imagePath == "" {
+		imagePath = paramString(result, "path", "")
+	}
+	if imagePath == "" {
+		imagePath = paramString(args, "image_path", "")
+	}
+	if imagePath == "" {
+		return
+	}
+
+	detectionValue, ok := result["detections"]
+	if !ok {
+		detectionValue, ok = result["objects"]
+	}
+	if !ok {
+		return
+	}
+
+	atoms := e.perceptionAtomsFromValue(imagePath, detectionValue, paramInt(args, "sampling_step", 4))
+	if len(atoms) == 0 {
+		return
+	}
+	result["perception_atoms"] = atoms
+	result["perception_count"] = len(atoms)
+
+	if data, err := json.Marshal(atoms); err == nil {
+		e.mu.Lock()
+		e.State.VisualTruth = truncateString(string(data), MaxStateLength)
+		e.mu.Unlock()
+		e.markStateDirty()
+	}
+}
+
+func (e *Engine) perceptionAtomsFromValue(imagePath string, value interface{}, samplingStep int) []PerceptionAtom {
+	detections := parseRawDetections(value)
+	if len(detections) == 0 {
+		return nil
+	}
+	return e.readAndAnalyzeImage(imagePath, detections, samplingStep)
+}
+
+func parseRawDetections(value interface{}) []RawDetection {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	var items []map[string]interface{}
+	if err := json.Unmarshal(data, &items); err != nil {
+		return nil
+	}
+
+	detections := make([]RawDetection, 0, len(items))
+	for _, item := range items {
+		box := floatSlice(item["box"])
+		if len(box) < 4 {
+			box = []float64{
+				floatValue(item["x"]),
+				floatValue(item["y"]),
+				floatValue(item["x2"]),
+				floatValue(item["y2"]),
+			}
+		}
+		if len(box) < 4 {
+			continue
+		}
+
+		className := fmt.Sprintf("%v", item["class"])
+		if className == "" || className == "<nil>" {
+			className = fmt.Sprintf("%v", item["label"])
+		}
+		if className == "" || className == "<nil>" {
+			className = fmt.Sprintf("%v", item["name"])
+		}
+
+		confidence := floatValue(item["confidence"])
+		if confidence == 0 {
+			confidence = floatValue(item["score"])
+		}
+
+		detections = append(detections, RawDetection{
+			Class:      className,
+			Confidence: confidence,
+			Box:        box[:4],
+		})
+	}
+	return detections
+}
+
+func floatSlice(value interface{}) []float64 {
+	switch v := value.(type) {
+	case []float64:
+		return v
+	case []interface{}:
+		out := make([]float64, 0, len(v))
+		for _, item := range v {
+			out = append(out, floatValue(item))
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func floatValue(value interface{}) float64 {
+	switch v := value.(type) {
+	case float64:
+		return v
+	case float32:
+		return float64(v)
+	case int:
+		return float64(v)
+	case int64:
+		return float64(v)
+	case json.Number:
+		f, _ := v.Float64()
+		return f
+	case string:
+		f, _ := strconv.ParseFloat(strings.TrimSpace(v), 64)
+		return f
+	default:
+		return 0
 	}
 }
 
@@ -1910,9 +2219,6 @@ func (e *Engine) readMCPResource(uri string) interface{} {
 		},
 	}
 }
-
-
-
 
 func (e *Engine) checkVideoDevs() {
 	matches, _ := filepath.Glob("/dev/video*")
@@ -1981,7 +2287,6 @@ func fileExistsAndNotEmpty(path string) bool {
 	return err == nil && info.Size() > 0
 }
 
-
 // ════════════════════════════════════════════════════════════════════════
 // SKILL SYSTEM
 // ════════════════════════════════════════════════════════════════════════
@@ -1996,6 +2301,7 @@ func (e *Engine) callSkill(name string, params map[string]interface{}, timeout i
 	// 2. Fallback to Native Skill
 	if handler, ok := nativeSkills[name]; ok {
 		result, err := handler(e, params)
+		result = normalizeSkillResult(result, err)
 		if result != nil {
 			e.mu.Lock()
 			e.State.SkillResults[name] = result
@@ -2006,7 +2312,6 @@ func (e *Engine) callSkill(name string, params map[string]interface{}, timeout i
 	}
 	return nil, fmt.Errorf("skill %q not found", name)
 }
-
 
 func (e *Engine) applySkillDefaults(config *SkillConfig, params map[string]interface{}) map[string]interface{} {
 	merged := make(map[string]interface{})
@@ -2071,7 +2376,7 @@ func (e *Engine) loadSkillConfig(name string) (*SkillConfig, error) {
 		if end == -1 {
 			return nil, fmt.Errorf("no frontmatter end marker in %s", abs)
 		}
-		
+
 		var config SkillConfig
 		if err := yaml.Unmarshal([]byte(rest[:end]), &config); err != nil {
 			return nil, fmt.Errorf("failed to parse yaml in %s: %v", abs, err)
@@ -2079,11 +2384,11 @@ func (e *Engine) loadSkillConfig(name string) (*SkillConfig, error) {
 		if config.Name == "" {
 			config.Name = name
 		}
-		if config.Command != "" && !filepath.IsAbs(config.Command) {
+		if config.Command != "" && config.ExecType != "native" && !filepath.IsAbs(config.Command) {
 			config.Command = filepath.Join(SkillsDir, name, config.Command)
 		}
-		
-		if config.Command != "" {
+
+		if config.Command != "" && config.ExecType != "native" {
 			if _, err := os.Stat(config.Command); err == nil {
 				os.Chmod(config.Command, 0755)
 			}
@@ -2099,14 +2404,14 @@ func (e *Engine) loadSkillConfig(name string) (*SkillConfig, error) {
 
 	// Autonomous Fuzzy Search Solution (v6.7.1)
 	log.Printf("🔍 Skill %q not found — searching for autonomous solution...", name)
-	
+
 	// Map known mismatches
 	mismatches := map[string]string{
 		"npu_inspect":    "npu_inspect",
 		"npu_info":       "npu_inspect",
-		"run_yolo":        "run_yolo",
-		"vision_capture":  "run_yolo",
-		"camera_capture":  "run_yolo",
+		"run_yolo":       "run_yolo",
+		"vision_capture": "run_yolo",
+		"camera_capture": "run_yolo",
 	}
 	if alias, ok := mismatches[name]; ok && alias != name {
 		log.Printf("💡 Fuzzy match found (ALIAS): rerouting %q -> %q", name, alias)
@@ -2120,8 +2425,8 @@ func (e *Engine) loadSkillConfig(name string) (*SkillConfig, error) {
 		for _, ent := range entries {
 			if ent.IsDir() {
 				// Case-insensitive fuzzy match
-				if strings.Contains(strings.ToLower(ent.Name()), strings.ToLower(name)) || 
-				   strings.Contains(strings.ToLower(name), strings.ToLower(ent.Name())) {
+				if strings.Contains(strings.ToLower(ent.Name()), strings.ToLower(name)) ||
+					strings.Contains(strings.ToLower(name), strings.ToLower(ent.Name())) {
 					log.Printf("💡 Fuzzy match found (SCAN): rerouting %q -> %q in %s", name, ent.Name(), sd)
 					return e.loadSkillConfig(ent.Name())
 				}
@@ -2171,7 +2476,7 @@ func (e *Engine) executeShellSkill(config *SkillConfig, params map[string]interf
 	// Environment-Safe Pathing (v6.8.16)
 	cmd.Env = os.Environ()
 	sdkLibs := "/root/libs_patch/tpu_sdk_libs:/root/libs_patch/lib:/root/libs_patch/middleware_v2:/root/libs_patch/middleware_v2_3rd:/root/libs_patch:/root/libs_patch/opencv:/lib:/lib64"
-	
+
 	hasLD := false
 	for i, e := range cmd.Env {
 		if strings.HasPrefix(e, "LD_LIBRARY_PATH=") {
@@ -2183,7 +2488,7 @@ func (e *Engine) executeShellSkill(config *SkillConfig, params map[string]interf
 	if !hasLD {
 		cmd.Env = append(cmd.Env, "LD_LIBRARY_PATH="+sdkLibs)
 	}
-	
+
 	// Prepend SDK Toolchain to PATH
 	sdkPath := "/root/licheerv-toolchain/riscv64-linux-musl-x86_64/bin"
 	hasPath := false
@@ -2364,6 +2669,8 @@ func (e *Engine) dispatchAction(action string, params map[string]interface{}, ti
 		return e.callSkillWithAutoGenerate(skillName, skillParams, t)
 	case "capture_image":
 		return e.executeExternalSkill("capture_image", params, t)
+	case "run_yolo":
+		return e.runYoloWithPerception(params, t)
 	case "audio_record":
 		return e.callSkillWithAutoGenerate("capture_audio_maix", params, t)
 	case "audio_stop":
@@ -2371,7 +2678,7 @@ func (e *Engine) dispatchAction(action string, params map[string]interface{}, ti
 	case "i2c_scan":
 		return e.callSkillWithAutoGenerate("i2c_scan", params, t)
 	case "probe_cvitek":
-		return e.callSkillWithAutoGenerate("camera_init", params, t)
+		return e.callSkillWithAutoGenerate("probe_cvitek", params, t)
 	case "skill_list":
 		return e.callSkillWithAutoGenerate("list_skills", nil, t)
 	case "run_python_code":
@@ -2459,7 +2766,6 @@ func (e *Engine) runShellCommand(params map[string]interface{}, timeout int) (ma
 	return map[string]interface{}{"output": out}, err
 }
 
-
 func (e *Engine) nativeAudioStop(_ map[string]interface{}, _ int) (map[string]interface{}, error) {
 	log.Printf("🎙️ Stopping all audio recording processes...")
 	out, _ := exec.Command("pkill", "arecord").CombinedOutput()
@@ -2482,6 +2788,177 @@ func (e *Engine) executePythonCode(params map[string]interface{}, timeout int) (
 	e.mu.Unlock()
 	e.markStateDirty()
 	return map[string]interface{}{"output": out}, err
+}
+
+func (e *Engine) executeStepWithRetries(step Step) (bool, error, map[string]interface{}) {
+	var success bool
+	var lastErr error
+	var lastResult map[string]interface{}
+
+	maxRetries := step.MaxRetries
+	if maxRetries <= 0 {
+		maxRetries = e.Program.Strategy.MaxRetries
+	}
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		params := e.renderParams(step.Parameters)
+		resultData, err := e.dispatchAction(step.Action, params, step.Timeout)
+		lastResult = resultData
+		if err == nil && e.verifyExpectations(resultData, step.Expect) {
+			success = true
+			break
+		}
+		lastErr = err
+		if attempt < maxRetries {
+			backoff := time.Duration(attempt+1) * 2 * time.Second
+			time.Sleep(backoff)
+		}
+	}
+
+	if lastResult != nil {
+		e.storeStepResult(step, lastResult)
+	}
+	return success, lastErr, lastResult
+}
+
+func (e *Engine) storeStepResult(step Step, result map[string]interface{}) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.runtimeVars[step.ID] = result
+	if step.SaveAs != "" {
+		e.runtimeVars[step.SaveAs] = result
+	}
+}
+
+func (e *Engine) renderParams(params map[string]interface{}) map[string]interface{} {
+	rendered := make(map[string]interface{})
+	for k, v := range params {
+		rendered[k] = e.renderValue(v)
+	}
+	return rendered
+}
+
+func (e *Engine) renderValue(v interface{}) interface{} {
+	switch x := v.(type) {
+	case string:
+		return e.renderString(x)
+	case []interface{}:
+		out := make([]interface{}, 0, len(x))
+		for _, item := range x {
+			out = append(out, e.renderValue(item))
+		}
+		return out
+	case map[string]interface{}:
+		out := make(map[string]interface{})
+		for k, item := range x {
+			out[k] = e.renderValue(item)
+		}
+		return out
+	default:
+		return v
+	}
+}
+
+var templateVarPattern = regexp.MustCompile(`\$\{([^}]+)\}`)
+
+func (e *Engine) renderString(s string) string {
+	now := time.Now()
+	return templateVarPattern.ReplaceAllStringFunc(s, func(match string) string {
+		key := strings.TrimSuffix(strings.TrimPrefix(match, "${"), "}")
+		switch key {
+		case "timestamp":
+			return now.Format("20060102_150405")
+		case "date":
+			return now.Format("2006-01-02")
+		case "unix":
+			return fmt.Sprintf("%d", now.Unix())
+		case "iteration":
+			e.mu.Lock()
+			iter := e.State.Iteration
+			e.mu.Unlock()
+			return fmt.Sprintf("%d", iter)
+		}
+		if v, ok := e.lookupRuntimeVar(key); ok {
+			return fmt.Sprintf("%v", v)
+		}
+		return match
+	})
+}
+
+func (e *Engine) lookupRuntimeVar(expr string) (interface{}, bool) {
+	parts := strings.Split(expr, ".")
+	if len(parts) == 0 {
+		return nil, false
+	}
+	e.mu.Lock()
+	current, ok := e.runtimeVars[parts[0]]
+	e.mu.Unlock()
+	if !ok {
+		return nil, false
+	}
+	var value interface{} = current
+	for _, p := range parts[1:] {
+		m, ok := value.(map[string]interface{})
+		if !ok {
+			return nil, false
+		}
+		value, ok = m[p]
+		if !ok {
+			return nil, false
+		}
+	}
+	return value, true
+}
+
+func (e *Engine) appendMonitorObservation(path string, taskID string, step Step, iteration int, success bool, result map[string]interface{}, err error) {
+	if path == "" {
+		return
+	}
+	entry := map[string]interface{}{
+		"timestamp": time.Now().Format(time.RFC3339),
+		"task_id":   taskID,
+		"step_id":   step.ID,
+		"iteration": iteration,
+		"success":   success,
+		"result":    result,
+	}
+	if err != nil {
+		entry["error"] = err.Error()
+	}
+	data, jsonErr := json.Marshal(entry)
+	if jsonErr != nil {
+		return
+	}
+	data = append(data, '\n')
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	f.Write(data)
+}
+
+func repeatLimit(r *RepeatConfig) int {
+	if r == nil {
+		return 1
+	}
+	if r.MaxIterations <= 0 && r.DurationSec > 0 {
+		return math.MaxInt32
+	}
+	if r.MaxIterations <= 0 {
+		return 1
+	}
+	return r.MaxIterations
+}
+
+func repeatJournalPath(step Step) string {
+	if step.Repeat == nil {
+		return ""
+	}
+	return step.Repeat.JournalPath
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -2563,8 +3040,6 @@ func compareNumeric(actualStr, targetStr string, cmp func(float64, float64) bool
 // TASK MANAGEMENT
 // ════════════════════════════════════════════════════════════════════════
 
-
-
 func (e *Engine) executeTask(t *Task) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -2593,37 +3068,48 @@ func (e *Engine) executeTask(t *Task) {
 	stepsPassed := 0
 
 	for _, step := range t.Steps {
-		stepsRun++
 		e.markStateDirty()
 
-		var success bool
 		var lastErr error
 		var lastResult map[string]interface{}
+		stepSuccesses := 0
+		stepFailures := 0
+		stepStarted := time.Now()
+		iterations := repeatLimit(step.Repeat)
 
-		maxRetries := step.MaxRetries
-		if maxRetries <= 0 {
-			maxRetries = e.Program.Strategy.MaxRetries
-		}
-
-		for attempt := 0; attempt <= maxRetries; attempt++ {
-			resultData, err := e.dispatchAction(step.Action, step.Parameters, step.Timeout)
-			lastResult = resultData
-			if err == nil && e.verifyExpectations(resultData, step.Expect) {
-				success = true
+		for iteration := 1; iteration <= iterations; iteration++ {
+			if step.Repeat != nil && step.Repeat.DurationSec > 0 && time.Since(stepStarted) >= time.Duration(step.Repeat.DurationSec)*time.Second {
 				break
 			}
+
+			stepsRun++
+			success, err, result := e.executeStepWithRetries(step)
 			lastErr = err
-			if attempt < maxRetries {
-				backoff := time.Duration(attempt+1) * 2 * time.Second
-				time.Sleep(backoff)
+			lastResult = result
+			if success {
+				stepSuccesses++
+				stepsPassed++
+				e.appendResult(t.ID, step.ID, "keep", step.Action)
+				log.Printf("  ✅ Step %s succeeded (%d/%d)", step.ID, iteration, iterations)
+			} else {
+				stepFailures++
+				e.appendMonitorObservation(repeatJournalPath(step), t.ID, step, iteration, success, result, err)
+				if step.Repeat == nil || !step.Repeat.ContinueOnFail {
+					break
+				}
+				if step.Repeat != nil && iteration < iterations && step.Repeat.IntervalSec > 0 {
+					time.Sleep(time.Duration(step.Repeat.IntervalSec) * time.Second)
+				}
+				continue
+			}
+
+			e.appendMonitorObservation(repeatJournalPath(step), t.ID, step, iteration, success, result, err)
+			if step.Repeat != nil && iteration < iterations && step.Repeat.IntervalSec > 0 {
+				time.Sleep(time.Duration(step.Repeat.IntervalSec) * time.Second)
 			}
 		}
 
-		if success {
-			stepsPassed++
-			e.appendResult(t.ID, step.ID, "keep", step.Action)
-			log.Printf("  ✅ Step %s succeeded", step.ID)
-		} else {
+		if stepSuccesses == 0 || stepFailures > 0 && (step.Repeat == nil || !step.Repeat.ContinueOnFail) {
 			errMsg := "Expectation verification failed"
 			if lastErr != nil {
 				errMsg = lastErr.Error()
@@ -2685,7 +3171,6 @@ func (e *Engine) executeTask(t *Task) {
 	log.Printf("📊 Experiment #%d: %v [%s]", e.State.Iteration, t.Name, verdict)
 	e.logExperiment(*t, verdict)
 
-
 	// Record experiment
 	summary := fmt.Sprintf("%d/%d steps passed, verdict=%s", stepsPassed, stepsRun, verdict)
 	e.mu.Lock()
@@ -2729,7 +3214,7 @@ func (e *Engine) logExperiment(t Task, verdict string) {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	
+
 	// Ensure hypothesis status is updated in the persistent agenda
 	for i := range e.Program.ResearchAgenda.Hypotheses {
 		h := &e.Program.ResearchAgenda.Hypotheses[i]
@@ -2798,7 +3283,7 @@ func (e *Engine) checkSuccessCriteria(t *Task) bool {
 				}
 			}
 		} else if crit == "successful_exit" {
-			// This is implicitly handled by stepsPassed == stepsRun, 
+			// This is implicitly handled by stepsPassed == stepsRun,
 			// but we can add more logic here if needed.
 		}
 	}
@@ -2969,8 +3454,8 @@ func (e *Engine) Run() {
 			e.idleCount++
 			time.Sleep(time.Duration(e.Program.Loop.PollInterval) * time.Second)
 			continue
-		} 
-		
+		}
+
 		// Work found!
 		e.idleCount = 0
 		e.State.Iteration++
@@ -3122,8 +3607,6 @@ func (e *Engine) findIIODevice(match string) string {
 	}
 	return ""
 }
-
-
 
 func main() {
 	engine := NewEngine()

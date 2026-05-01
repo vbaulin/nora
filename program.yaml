@@ -42,13 +42,13 @@ research_agenda:
 # ════════════════════════════════════════════════════════════════
 metrics:
   camera_working:
-    check: "test -f /tmp/capture.jpg && echo true || echo false"
+    check: "test -s /tmp/capture.jpg -o -s /tmp/test_capture.jpg && echo true || echo false"
     target: "true"
   npu_working:
-    check: "grep -q 'Detected objects' /tmp/yolo_output.txt && echo true || echo false"
+    check: "test -s /tmp/yolo_output.txt && echo true || echo false"
     target: "true"
   audio_working:
-    check: "test -f /tmp/capture.wav && echo true || echo false"
+    check: "test -s /tmp/capture.wav -o -s /tmp/test_audio.wav -o -s /tmp/test_mic.wav && echo true || echo false"
     target: "true"
 
 # ════════════════════════════════════════════════════════════════

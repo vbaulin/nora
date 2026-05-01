@@ -1,4 +1,4 @@
-- hypothesis_ref: h004
+- hypothesis_ref: h002
   id: npu_001
   name: NPU YOLO Benchmark
   priority: 3

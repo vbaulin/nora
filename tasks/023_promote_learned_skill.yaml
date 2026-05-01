@@ -1,0 +1,23 @@
+- id: promote_learned_skill_template
+  name: "Validate and Promote a picoClaw Learned Skill"
+  priority: 10
+  status: template
+  steps:
+    - id: validate_candidate
+      action: call_skill
+      parameters:
+        skill_name: validate_skill
+        candidate_path: /root/.picoclaw/workspace/skills_draft/example_skill
+      expect:
+        status: success
+      timeout: 30
+      on_fail: block
+    - id: promote_candidate
+      action: call_skill
+      parameters:
+        skill_name: promote_skill
+        candidate_path: /root/.picoclaw/workspace/skills_draft/example_skill
+        target_name: example_skill
+      expect:
+        status: success
+      timeout: 30

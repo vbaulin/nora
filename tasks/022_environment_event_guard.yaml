@@ -1,0 +1,39 @@
+- id: environment_event_guard
+  name: "Environmental Event Guard"
+  priority: 7
+  status: template
+  steps:
+    - id: env_snapshot
+      action: call_skill
+      save_as: env
+      parameters:
+        skill_name: sensor_fusion_snapshot
+      expect:
+        status: success
+      timeout: 20
+      repeat:
+        interval_sec: 300
+        max_iterations: 288
+        journal_path: /tmp/monitors/environment_events.jsonl
+        continue_on_fail: true
+    - id: record_audio
+      action: call_skill
+      save_as: audio
+      parameters:
+        skill_name: capture_audio
+        duration: 2
+        output_path: /tmp/environment_event.wav
+      expect:
+        status: success
+      timeout: 20
+    - id: detect_audio_event
+      action: call_skill
+      parameters:
+        skill_name: audio_event_detect
+        audio_path: ${audio.path}
+        threshold_rms: 600
+      expect:
+        status: success
+      timeout: 20
+  success_criteria:
+    - test -f /tmp/monitors/environment_events.jsonl

@@ -16,7 +16,7 @@ program.yaml  →  nano-os-agent (Go binary)  ←→  picoClaw (AI Assistant)
 
 - **program.yaml** — human-editable config. Goals, hypotheses, metrics, constraints. Never auto-modify.
 - **tasks/*.yaml** — experiment definitions. You generate these. Each runs a sequence of steps.
-- **skills/** — reusable capabilities. Shell/Python/API scripts with YAML frontmatter. You create these.
+- **skills/** — reusable capabilities with YAML frontmatter. Prefer compiled Go or native C/C++ helpers for mature long-running skills; use shell wrappers and Python mainly as adapters/prototypes.
 - **experiments.jsonl** — your lab notebook. Every task wraps metrics before/after → keep/discard verdict.
 - **picoClaw Gateway** — the LLM brain. Call `http://127.0.0.1:18790/api/chat` when you need reasoning.
 
@@ -49,11 +49,32 @@ task:
       timeout: 30
       max_retries: 1
       on_fail: continue|block
+      save_as: optional_alias
+      repeat:
+        interval_sec: 3600
+        max_iterations: 24
+        journal_path: /tmp/monitors/my_monitor.jsonl
+        continue_on_fail: true
+```
+
+Use `repeat` for long-running monitoring. The executor sleeps, retries, and appends compact JSONL observations locally, so picoClaw does not need to spend WiFi/LLM tokens on every interval.
+
+Later steps can reference previous outputs with `${step_id.field}` or `${save_as.field}`:
+
+```yaml
+steps:
+  - id: audio
+    action: call_skill
+    save_as: audio
+    parameters: {skill_name: capture_audio, output_path: /tmp/event.wav}
+  - id: classify_sound
+    action: call_skill
+    parameters: {skill_name: audio_event_detect, audio_path: "${audio.path}"}
 ```
 
 ## How to Create a Skill
 
-Write `SKILL.md` + `run.sh` to `skills/<name>/`:
+Write `SKILL.md` + an implementation to `skills/<name>/`. For mature skills, prefer `run.sh` as a thin wrapper around a compiled binary:
 ```yaml
 ---
 name: my_skill
@@ -67,6 +88,24 @@ timeout: 30
 ```
 
 `run.sh` receives params as `SKILL_<UPPER_NAME>` env vars and prints JSON to stdout.
+
+Runtime preference:
+- **Native Go in `main.go`** for tiny deterministic primitives.
+- **C/C++ SDK binaries** for camera, TPU, and zero-copy vision.
+- **Compiled Go helper binaries** for CPU analysis, summaries, validation, and local state.
+- **Python** for Maix SDK access or fast draft skills that picoClaw later rewrites and promotes.
+
+New learned skills should be created in draft space first, then validated with `validate_skill` and promoted with `promote_skill`.
+
+## Automatic Monitoring Tasks
+
+Powerful high-level tasks are chains that run for hours or days without LLM supervision:
+- **Grape growth**: `observe_scene` logs image path, TPU detections, color ratios, ripeness estimate, and stress estimate.
+- **Grass movement/color**: repeated scene observations reveal wind, light, water stress, and day/night color changes.
+- **Environmental events**: audio capture, event detection, camera confirmation, I2C scan, temperature, and system state.
+- **Skill learning**: picoClaw creates a draft skill, the board validates/promotes it, then future tasks use it as a normal capability.
+
+Mark long-running examples as `status: template` until picoClaw intentionally launches them.
 
 ## Experiment Scoring
 

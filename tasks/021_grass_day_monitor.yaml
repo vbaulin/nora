@@ -1,0 +1,32 @@
+- id: grass_day_monitor
+  name: "Grass Movement and Color During the Day"
+  priority: 5
+  status: template
+  steps:
+    - id: observe_grass
+      action: call_skill
+      save_as: grass
+      parameters:
+        skill_name: observe_scene
+        label: grass
+        output_dir: /tmp/observations/grass
+        threshold: "0.35"
+      expect:
+        status: success
+      timeout: 90
+      repeat:
+        interval_sec: 900
+        max_iterations: 64
+        journal_path: /tmp/monitors/grass_day.jsonl
+        continue_on_fail: true
+    - id: summarize_grass
+      action: call_skill
+      parameters:
+        skill_name: monitor_summary
+        journal_path: /tmp/monitors/grass_day.jsonl
+        tail: 100
+      expect:
+        status: success
+      timeout: 30
+  success_criteria:
+    - test -f /tmp/monitors/grass_day.jsonl

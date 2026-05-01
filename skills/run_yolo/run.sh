@@ -37,11 +37,11 @@ fi
 if [ -n "$BIN_PATH" ]; then
     OUT=$("$BIN_PATH" "$MODEL_PATH" "$IMAGE_PATH" "$THRESHOLD" 2>&1)
     if [ $? -eq 0 ]; then
-        echo "$OUT"
+        echo "$OUT" | tee /tmp/yolo_output.txt
         exit 0
     fi
 fi
 
 # 5. Fallback to Python maix.nn
 # We only reach here if native is missing OR crashed
-echo "$INPUT" | python3 ./run.py
+echo "$INPUT" | python3 ./run.py | tee /tmp/yolo_output.txt

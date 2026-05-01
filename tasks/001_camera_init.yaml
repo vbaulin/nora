@@ -1,4 +1,4 @@
-- hypothesis_ref: h002
+- hypothesis_ref: h001
   id: cam_001
   name: Camera Sensor Init + Capture
   priority: 2

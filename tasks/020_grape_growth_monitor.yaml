@@ -1,0 +1,33 @@
+- id: grape_growth_monitor
+  name: "Wine Grape Growth and Ripeness Monitor"
+  priority: 6
+  status: template
+  steps:
+    - id: observe_grapes
+      action: call_skill
+      save_as: grapes
+      parameters:
+        skill_name: observe_scene
+        label: grapes
+        output_dir: /tmp/observations/grapes
+        model_path: /root/models/yolov8n_coco_320.cvimodel
+        threshold: "0.45"
+      expect:
+        status: success
+      timeout: 90
+      repeat:
+        interval_sec: 3600
+        max_iterations: 168
+        journal_path: /tmp/monitors/grape_growth.jsonl
+        continue_on_fail: true
+    - id: summarize_grapes
+      action: call_skill
+      parameters:
+        skill_name: monitor_summary
+        journal_path: /tmp/monitors/grape_growth.jsonl
+        tail: 200
+      expect:
+        status: success
+      timeout: 30
+  success_criteria:
+    - test -f /tmp/monitors/grape_growth.jsonl

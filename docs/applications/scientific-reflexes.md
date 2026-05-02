@@ -1,6 +1,6 @@
 # Scientific Reflexes
 
-Scientific reflexes are small universal skills that make every application smarter. They are not tied to grapes, machines, or labs; they improve how the board decides when to observe, summarize, alert, or act.
+Scientific reflexes are small universal skills that make every application smarter. They are not tied to machines, or labs; they improve how the board decides when to observe, summarize, alert, or act.
 
 ## Core Reflexes
 
@@ -14,6 +14,9 @@ Scientific reflexes are small universal skills that make every application smart
 - `evidence_pack`: bundle image, audio, metrics, and summary.
 - `daily_summary`: compress JSONL into one report.
 - `experiment_outcome_judge`: map raw metrics to keep/discard/partial.
+- `knowledge_graph_update`: convert observations into subject-predicate-object facts.
+- `causal_hypothesis_link`: connect events, interventions, and outcomes.
+- `alert_explainer`: turn threshold alerts into evidence-backed explanations.
 
 ## Why They Are Powerful
 
@@ -34,3 +37,23 @@ observe
 
 A lab experiment is stable for six hours, so `adaptive_interval` slows captures from every minute to every fifteen minutes. When `change_point_detect` sees a color shift, the board returns to high-frequency sampling and captures the reaction endpoint.
 
+## Knowledge Graph Feedback
+
+Raw alerts are noisy. Knowledge graph feedback makes them useful:
+
+```text
+Observation -> belongs_to -> Experiment
+Observation -> has_metric -> bubble_rate
+Metric -> changed_after -> temperature_event
+Batch -> has_risk -> stuck_fermentation_candidate
+Skill -> generated_evidence -> evidence_pack_042
+```
+
+picoClaw can then ask higher-level questions:
+
+- Which intervention improved this batch?
+- Which plates diverged from control?
+- Which sensor drifted before the alert?
+- Which learned skill produced the evidence?
+
+This turns long-running monitoring into accumulated scientific context, not just a stream of JSON rows.

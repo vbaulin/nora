@@ -36,7 +36,9 @@ Each application is a different way to use the same core loop: local sensing, lo
 
 - [Autonomous vineyard and plant research](docs/applications/vineyard-plant-research.md) - phenology, ripeness, leaf stress, wetness, and growth trends.
 - [Grass and field motion intelligence](docs/applications/grass-field-motion.md) - wind proxy, water stress, mowing events, and day/night color changes.
-- [Automatic lab experiment runner](docs/applications/automatic-lab-experiments.md) - timed sample observation, reaction endpoints, liquid levels, germination, and fermentation.
+- [Automatic lab experiment runner](docs/applications/automatic-lab-experiments.md) - timed sample observation, reaction endpoints, liquid levels, germination, and protocol search.
+- [Wine fermentation monitor](docs/applications/wine-fermentation-monitor.md) - alcohol-conversion proxies, pH/temperature trends, bubbling, turbidity, and batch knowledge graphs.
+- [Petri dish colony counting](docs/applications/petri-colony-counting.md) - colony count, growth curves, contamination cues, inhibition zones, and treatment/control comparison.
 - [Closed-loop robot manipulation](docs/applications/robot-manipulation.md) - visual servoing, actuation verification, safe retries, and local reflex loops.
 - [Active inference tasks](docs/applications/active-inference-tasks.md) - belief updates, action scoring, local policy loops, and preferred observations.
 - [Environmental event sentinel](docs/applications/environmental-event-sentinel.md) - audio triggers, visual confirmation, storm cues, I2C/system snapshots, and evidence packs.
@@ -219,7 +221,7 @@ The repository includes long-running templates marked `status: template` so they
 - [tasks/022_environment_event_guard.yaml](tasks/022_environment_event_guard.yaml) - microphone/system/environment event journal.
 - [tasks/023_promote_learned_skill.yaml](tasks/023_promote_learned_skill.yaml) - validate and promote a picoClaw-created skill.
 
-## Why The Deterministic Executor Is The Advance
+## Why The Deterministic Executor Is The Must
 
 An LLM is excellent at asking "what should we try next?" It is poor at being a reliable camera driver, process supervisor, file logger, retry loop, and week-long sensor operator.
 

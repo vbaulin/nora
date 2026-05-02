@@ -111,6 +111,11 @@ This is where the board starts acting like an experimenter, not just a camera.
 - `active_protocol_policy`: chooses the next perturbation from local evidence.
 - `multi_sample_comparator`: compares treatment/control groups.
 
+Specialized lab applications:
+
+- [Wine fermentation monitor](wine-fermentation-monitor.md)
+- [Petri dish colony counting](petri-colony-counting.md)
+
 ## Example Real Change
 
 A color reaction reaches endpoint much earlier than expected. picoClaw updates the next task to sample every minute near the expected transition instead of every ten minutes. The board has changed the experimental protocol from observed kinetics.

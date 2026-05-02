@@ -144,11 +144,11 @@ Imagine the board is installed near a grape row.
 }
 ```
 
-5. After two days, `monitor_summary` reports that `yellow_ratio` and `brown_ratio` are rising quickly while visible cluster count is dropping.
-6. picoClaw asks the LLM once: "This trend may indicate leaf stress or bad framing. What should we test?"
-7. picoClaw creates a draft skill: `leaf_stress_score`.
-8. nano-os-agent validates it with `validate_skill`, runs an experiment, and promotes it with `promote_skill` only if it works.
-9. The running monitor is updated to include the new skill.
+1. After two days, `monitor_summary` reports that `yellow_ratio` and `brown_ratio` are rising quickly while visible cluster count is dropping.
+2. picoClaw asks the LLM once: "This trend may indicate leaf stress or bad framing. What should we test?"
+3. picoClaw creates a draft skill: `leaf_stress_score`.
+4. nano-os-agent validates it with `validate_skill`, runs an experiment, and promotes it with `promote_skill` only if it works.
+5. The running monitor is updated to include the new skill.
 
 The board has made a real change: it moved from generic observation to a new domain-specific measurement, without changing the core Go executor and without asking the LLM to watch every frame.
 

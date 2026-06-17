@@ -207,17 +207,26 @@ The board has made a real change: it moved from generic observation to a new dom
 stateDiagram-v2
     [*] --> Draft: picoClaw creates skill
     Draft --> Validate: validate_skill
+    Validate --> Draft: schema or safety fail
     Validate --> Experiment: run task N times
-    Experiment --> Promote: metrics pass
-    Experiment --> Draft: fix or rewrite
+    Experiment --> Draft: metrics fail
+    Experiment --> Evidence: metrics pass
+    Evidence --> Promote: journal + artifacts stored
     Promote --> Active: promote_skill
     Active --> Monitor: used in long chains
+    Monitor --> Revalidate: drift or error
+    Revalidate --> Active: still valid
+    Revalidate --> Draft: needs revision
+    Active --> Retired: superseded or unsafe
+    Retired --> [*]
 ```
 
 This separation is deliberate:
 
 - Draft skills can be creative and imperfect.
 - Promoted skills are trusted by unattended monitors.
+- Evidence and artifacts survive promotion so the decision is auditable.
+- Active skills can be revalidated or retired when hardware, models, or field conditions change.
 - The Go executor stays small and reliable.
 
 Runtime preference:

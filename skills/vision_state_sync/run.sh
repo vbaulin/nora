@@ -1,34 +1,81 @@
 #!/bin/sh
-# vision_state_sync/run.sh — Orchestrate capture and inference
+# vision_state_sync - current camera -> Maix YOLO skill chain.
+# This deliberately avoids v4l2/ffmpeg/direct NPU commands.
 
-# 1. Capture Image
-# The orchestrator handles native capture_image mostly, but we can call it here via CLI if needed
-# For now, we assume capture.jpg already exist or we trigger it.
-# We'll call the internal tools via the engine's provided mechanism conceptually.
+BASE_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+SKILLS_DIR="$(dirname "$BASE_DIR")"
+IMAGE="${SKILL_IMAGE_PATH:-/tmp/vision_sync.jpg}"
+MODEL="${SKILL_MODEL_PATH:-/root/models/yolov8n_coco_320.cvimodel}"
+THRESHOLD="${SKILL_THRESHOLD:-0.5}"
+FAMILY="${SKILL_MODEL_FAMILY:-auto}"
 
-# Since this is a shell skill, we'll try to use ffmpeg/v4l2 directly if engine didn't provide one
-IMAGE="/tmp/vision_sync.jpg"
+CAPTURE_JSON="/tmp/vision_state_capture_$$.json"
+YOLO_JSON="/tmp/vision_state_yolo_$$.json"
 
-# Try capture
-v4l2-ctl --device=/dev/video0 --set-fmt-video=width=640,height=480,pixelformat=MJPG --stream-mmap=3 --stream-to=$IMAGE --stream-count=1 2>/dev/null || \
-ffmpeg -y -f v4l2 -video_size 640x480 -i /dev/video0 -frames:v 1 $IMAGE 2>/dev/null
+cleanup() {
+    rm -f "$CAPTURE_JSON" "$YOLO_JSON"
+}
+trap cleanup EXIT
 
-if [ ! -f "$IMAGE" ]; then
-    echo '{"error": "capture failed", "status": "failed"}'
+if [ ! -x "$SKILLS_DIR/capture_image/run.py" ]; then
+    echo '{"status":"error","message":"capture_image skill runner missing"}'
+    exit 1
+fi
+if [ ! -x "$SKILLS_DIR/run_yolo/run.sh" ]; then
+    echo '{"status":"error","message":"run_yolo skill runner missing"}'
+    exit 1
+fi
+
+printf '{"output_path":"%s"}' "$IMAGE" | python3 "$SKILLS_DIR/capture_image/run.py" > "$CAPTURE_JSON" 2>&1
+
+CAPTURE_STATUS=$(python3 - "$CAPTURE_JSON" <<'PY'
+import json, sys
+raw = open(sys.argv[1], errors="ignore").read()
+start, end = raw.find("{"), raw.rfind("}")
+if start >= 0 and end > start:
+    try:
+        print(json.loads(raw[start:end+1]).get("status", "error"))
+    except Exception:
+        print("error")
+else:
+    print("error")
+PY
+)
+
+if [ "$CAPTURE_STATUS" != "success" ]; then
+    python3 - "$CAPTURE_JSON" <<'PY'
+import json, sys
+raw = open(sys.argv[1], errors="ignore").read()
+print(json.dumps({"status": "error", "stage": "capture", "message": raw[-1000:]}))
+PY
     exit 0
 fi
 
-# 2. Run Inference
-# We call the yolo_inference skill conceptually, but here we run it directly or via engine call
-# For shell scripts in skills/, we can't easily call other skills via engine internal API
-# unless we go through the MCP port or just run the binary again.
+printf '{"image_path":"%s","model_path":"%s","threshold":%s,"model_family":"%s","backend":"maix","capture":false}' \
+    "$IMAGE" "$MODEL" "$THRESHOLD" "$FAMILY" | "$SKILLS_DIR/run_yolo/run.sh" > "$YOLO_JSON" 2>&1
 
-MODEL="/root/models/yolov8n.cvimodel"
-BIN="/root/yolo_detect"
+python3 - "$CAPTURE_JSON" "$YOLO_JSON" "$IMAGE" <<'PY'
+import json
+import sys
 
-if [ -x "$BIN" ] && [ -f "$MODEL" ]; then
-    INF_OUT=$($BIN "$MODEL" "$IMAGE" 0.5 2>/dev/null | tr '\n' ' ')
-    echo '{"status": "ok", "image": "'"$IMAGE"'", "detections": "'"$INF_OUT"'"}'
-else
-    echo '{"status": "partial", "image": "'"$IMAGE"'", "error": "npu_binary_missing"}'
-fi
+def load(path):
+    raw = open(path, errors="ignore").read()
+    start, end = raw.find("{"), raw.rfind("}")
+    if start >= 0 and end > start:
+        try:
+            return json.loads(raw[start:end+1])
+        except Exception:
+            pass
+    return {"status": "error", "message": raw[-1000:]}
+
+capture = load(sys.argv[1])
+yolo = load(sys.argv[2])
+status = "success" if capture.get("status") == "success" and yolo.get("status") == "success" else "partial"
+print(json.dumps({
+    "status": status,
+    "image_path": sys.argv[3],
+    "capture": capture,
+    "yolo": yolo,
+    "object_count": yolo.get("count", 0) if isinstance(yolo, dict) else 0,
+}))
+PY

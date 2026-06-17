@@ -1,5 +1,5 @@
 ---
-name: npu_info
+name: npu_inspect
 exec_type: native
 command: npu_inspect
 input_format: env

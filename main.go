@@ -51,6 +51,7 @@ var (
 	SkillsDir          = "/root/.picoclaw/workspace/skills"
 	TasksDir           = "tasks"
 	DefaultCapturePath = "/tmp/capture.jpg"
+	ResetTaskStatuses  = true
 )
 
 const (
@@ -340,6 +341,21 @@ var obfuscationPatterns = []string{
 	"base64 --decode", "base64 -d", "eval $(", "perl -e",
 	"/dev/tcp/", "/dev/udp/", "nc -e", "xxd -r",
 }
+var hardwareCommandBlocks = []struct {
+	Pattern    string
+	Suggestion string
+}{
+	{"sensor_test", "Use MCP capture_image, call_skill camera_init, or call_skill vision_state_sync."},
+	{"v4l2-ctl", "Use MCP capture_image or call_skill capture_image; the SG2002 camera path is board-specific."},
+	{"/dev/video", "Use MCP capture_image or call_skill capture_image instead of direct video device access."},
+	{"cvi_tdl_yolo", "Use MCP run_yolo or call_skill run_yolo so model paths, timeouts, and perception atoms are recorded."},
+	{"sample_yolov", "Use MCP run_yolo or call_skill run_yolo."},
+	{".cvimodel", "Use MCP run_yolo or call_skill run_yolo for NPU model execution."},
+	{"i2cset", "Use call_skill gpio_control, adc_read, pwm_control, or a validated hardware skill."},
+	{"/sys/class/gpio", "Use call_skill gpio_control."},
+	{"/sys/class/pwm", "Use MCP pwm_control or call_skill pwm_control."},
+	{"while true", "Use task repeat.interval_sec and journal_path for long-running monitors."},
+}
 
 // engineFiles are strictly off-limits for mutation by generated tasks/skills
 var engineFiles = []string{
@@ -383,7 +399,20 @@ func extractWriteTargets(cmdStr string) []string {
 	return targets
 }
 
+func hardwareBoundaryReason(cmdStr string) string {
+	lower := strings.ToLower(cmdStr)
+	for _, block := range hardwareCommandBlocks {
+		if strings.Contains(lower, strings.ToLower(block.Pattern)) {
+			return fmt.Sprintf("hardware command %q must go through nano-os-agent. %s", block.Pattern, block.Suggestion)
+		}
+	}
+	return ""
+}
+
 func (e *Engine) isApproved(cmdStr string) bool {
+	if hardwareBoundaryReason(cmdStr) != "" {
+		return false
+	}
 	lower := strings.ToLower(cmdStr)
 	for _, w := range dangerousWordPatterns {
 		if isWordMatch(lower, w) {
@@ -1299,17 +1328,19 @@ func NewEngine() *Engine {
 	// Diagnostic: Count and conditionally reset tasks
 	taskFiles, _ := os.ReadDir(TasksDir)
 	log.Printf("   Task files found: %d", len(taskFiles))
-	for _, f := range taskFiles {
-		if strings.HasSuffix(f.Name(), ".yaml") || strings.HasSuffix(f.Name(), ".yml") {
-			path := filepath.Join(TasksDir, f.Name())
-			data, err := os.ReadFile(path)
-			if err == nil {
-				content := string(data)
-				// Only reset if it's NOT already pending
-				if strings.Contains(content, "status: completed") || strings.Contains(content, "status: failed") {
-					content = regexp.MustCompile(`(?m)^(\s*)status:.*$`).ReplaceAllString(content, `${1}status: pending`)
-					os.WriteFile(path, []byte(content), 0644)
-					log.Printf("     - %s [RESET]", f.Name())
+	if ResetTaskStatuses {
+		for _, f := range taskFiles {
+			if strings.HasSuffix(f.Name(), ".yaml") || strings.HasSuffix(f.Name(), ".yml") {
+				path := filepath.Join(TasksDir, f.Name())
+				data, err := os.ReadFile(path)
+				if err == nil {
+					content := string(data)
+					// Only reset if it's NOT already pending
+					if strings.Contains(content, "status: completed") || strings.Contains(content, "status: failed") {
+						content = regexp.MustCompile(`(?m)^(\s*)status:.*$`).ReplaceAllString(content, `${1}status: pending`)
+						os.WriteFile(path, []byte(content), 0644)
+						log.Printf("     - %s [RESET]", f.Name())
+					}
 				}
 			}
 		}
@@ -1787,6 +1818,7 @@ func (e *Engine) handleMCPRequest(req *MCPRequest) MCPResponse {
 				{"uri": "nano://experiments", "name": "Experiment Journal", "mimeType": "application/json"},
 				{"uri": "nano://hypotheses", "name": "Research Agenda", "mimeType": "application/json"},
 				{"uri": "nano://metrics", "name": "Hardware Metrics", "mimeType": "application/json"},
+				{"uri": "nano://orchestrator_contract", "name": "picoClaw Orchestrator Contract", "mimeType": "text/markdown"},
 			},
 		}
 	case "resources/read":
@@ -1816,12 +1848,14 @@ func (e *Engine) getMCPTools() []MCPTool {
 		},
 		{
 			Name:        "run_yolo",
-			Description: "Run YOLO object detection on NPU (1 TOPS INT8).",
+			Description: "Run YOLO object detection through the canonical Maix Python skill. Supports YOLOv8/YOLOv11-style .cvimodel files via model_path/model_family.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"image_path":    map[string]interface{}{"type": "string"},
-					"model_path":    map[string]interface{}{"type": "string", "default": "/root/models/yolov8n_coco_640.cvimodel"},
+					"model_path":    map[string]interface{}{"type": "string", "default": "/root/models/yolov8n_coco_320.cvimodel"},
+					"model_family":  map[string]interface{}{"type": "string", "enum": []string{"auto", "yolov8", "yolov11"}, "default": "auto"},
+					"backend":       map[string]interface{}{"type": "string", "enum": []string{"maix", "auto", "native"}, "default": "maix"},
 					"sampling_step": map[string]interface{}{"type": "integer", "default": 4, "description": "Pixel sampling step for color analysis (1=high precision, 4=high performance)"},
 				},
 				"required": []string{"image_path"},
@@ -1913,7 +1947,7 @@ func (e *Engine) getMCPTools() []MCPTool {
 		},
 		{
 			Name:        "run_shell",
-			Description: "Execute a shell command on the board (security checked).",
+			Description: "Execute a non-hardware shell command on the board (security checked). Prefer dedicated MCP tools or call_skill for camera, TPU, GPIO, I2C, PWM, ADC, and audio.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -1930,7 +1964,7 @@ func (e *Engine) getMCPTools() []MCPTool {
 		},
 		{
 			Name:        "call_skill",
-			Description: "Call any registered skill by name with JSON arguments.",
+			Description: "Call any registered skill by name with JSON arguments. Use this instead of direct shell access for hardware capabilities not exposed as first-class MCP tools.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -1995,6 +2029,9 @@ func (e *Engine) executeMCPTool(name string, args map[string]interface{}) (map[s
 		return e.analyzeImageTool(args)
 	case "run_shell":
 		cmdStr := paramString(args, "cmd", "")
+		if reason := hardwareBoundaryReason(cmdStr); reason != "" {
+			return nil, fmt.Errorf("%s", reason)
+		}
 		if !e.isApproved(cmdStr) {
 			return nil, fmt.Errorf("command blocked by security policy")
 		}
@@ -2210,6 +2247,20 @@ func (e *Engine) readMCPResource(uri string) interface{} {
 		data, _ := json.MarshalIndent(e.State.Metrics, "", "  ")
 		e.mu.Unlock()
 		text = string(data)
+	case "nano://orchestrator_contract":
+		text = strings.Join([]string{
+			"# picoClaw Orchestrator Contract",
+			"",
+			"picoClaw is the planner. nano-os-agent is the deterministic hardware executor.",
+			"Before hardware action or error recovery: call list_skills, choose an MCP tool or skill, then execute through capture_image, run_yolo, call_skill, or a task YAML.",
+			"Do not run sensor_test, v4l2-ctl, /dev/video*, cvi_tdl_yolo, sample_yolov8, direct .cvimodel runners, i2cset, /sys/class/gpio, /sys/class/pwm, or while-true monitor loops from picoClaw shell.",
+			"For camera/vb_pool/video/ION/CMA errors, run the known skill path first: capture_image, camera_init, vision_state_sync, or observe_scene.",
+			"For vineyard/weather/treatment questions, do not answer from memory: call list_skills, then the relevant vineyard or farmer-feedback skill, and answer only from current structured JSON plus local YAML/config.",
+			"Normal chat discussion must use notify=false; use notify=true only for explicit scheduled/unsolicited Telegram notifications.",
+			"For farmer treatment messages, call farmer-feedback-capture with confirmed=false first; do not write local feedback or push Supabase until the farmer confirms product/catalog/area details.",
+			"For long monitors, write tasks/*.yaml with repeat and journal_path.",
+			"Skills are the source of truth; generic Linux commands are not.",
+		}, "\n")
 	default:
 		text = "unknown resource"
 	}
@@ -2752,8 +2803,53 @@ func (e *Engine) findNextTask() (*Task, error) {
 	return candidates[0], nil
 }
 
+func loadOneShotTask(path string) (*Task, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var taskList []Task
+	if err := yaml.Unmarshal(data, &taskList); err == nil && len(taskList) > 0 {
+		t := taskList[0]
+		t.SourceFile = path
+		if strings.TrimSpace(t.Status) == "" || t.Status == "template" {
+			t.Status = "pending"
+		}
+		return &t, nil
+	}
+
+	var wrapper struct {
+		Task Task `yaml:"task"`
+	}
+	if err := yaml.Unmarshal(data, &wrapper); err == nil && wrapper.Task.ID != "" {
+		t := wrapper.Task
+		t.SourceFile = path
+		if strings.TrimSpace(t.Status) == "" || t.Status == "template" {
+			t.Status = "pending"
+		}
+		return &t, nil
+	}
+
+	var t Task
+	if err := yaml.Unmarshal(data, &t); err != nil {
+		return nil, err
+	}
+	if t.ID == "" {
+		return nil, fmt.Errorf("task file %s does not contain a task id", path)
+	}
+	t.SourceFile = path
+	if strings.TrimSpace(t.Status) == "" || t.Status == "template" {
+		t.Status = "pending"
+	}
+	return &t, nil
+}
+
 func (e *Engine) runShellCommand(params map[string]interface{}, timeout int) (map[string]interface{}, error) {
 	cmdStr := paramString(params, "cmd", "")
+	if reason := hardwareBoundaryReason(cmdStr); reason != "" {
+		return nil, fmt.Errorf("%s", reason)
+	}
 	if !e.isApproved(cmdStr) {
 		return nil, fmt.Errorf("command blocked by security policy")
 	}
@@ -3201,6 +3297,7 @@ func (e *Engine) executeTask(t *Task) {
 	if len(e.State.History) > e.Program.Loop.ContextWindow {
 		e.State.History = e.State.History[len(e.State.History)-e.Program.Loop.ContextWindow:]
 	}
+	e.State.CurrentTaskID = ""
 	e.mu.Unlock()
 	e.markStateDirty()
 
@@ -3343,11 +3440,13 @@ func (e *Engine) saveTaskStatus(t *Task) {
 }
 
 func (e *Engine) updateMetrics() {
+	changed := false
 	for name, metric := range e.Program.Metrics {
 		if !e.isApproved(metric.Check) {
 			e.mu.Lock()
 			e.State.Metrics[name] = "blocked"
 			e.mu.Unlock()
+			changed = true
 			continue
 		}
 		cmdStr := metric.Check
@@ -3361,6 +3460,10 @@ func (e *Engine) updateMetrics() {
 		e.mu.Lock()
 		e.State.Metrics[name] = val
 		e.mu.Unlock()
+		changed = true
+	}
+	if changed {
+		e.markStateDirty()
 	}
 }
 
@@ -3609,6 +3712,27 @@ func (e *Engine) findIIODevice(match string) string {
 }
 
 func main() {
+	if len(os.Args) >= 2 {
+		switch os.Args[1] {
+		case "--once":
+			if len(os.Args) < 3 {
+				log.Fatal("usage: nano-os-agent --once <task.yaml>")
+			}
+			ResetTaskStatuses = false
+			engine := NewEngine()
+			task, err := loadOneShotTask(os.Args[2])
+			if err != nil {
+				log.Fatalf("load one-shot task: %v", err)
+			}
+			engine.executeTask(task)
+			engine.saveState()
+			return
+		case "--version":
+			fmt.Printf("nano-os-agent %s build %s\n", AgentVersion, BuildTimestamp)
+			return
+		}
+	}
+
 	engine := NewEngine()
 	log.Printf("═══ nano-os-agent v%s ═══", AgentVersion)
 	engine.Run()

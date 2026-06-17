@@ -1,0 +1,1698 @@
+diff --git a/web/backend/api/router.go b/web/backend/api/router.go
+index abd3196c..dbfbc0a3 100644
+--- a/web/backend/api/router.go
++++ b/web/backend/api/router.go
+@@ -110,6 +110,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
+ 	// Runtime build/version metadata
+ 	h.registerVersionRoutes(mux)
+ 
++	// Board runtime overview: PicoClaw Gateway, nano-os-agent, Vineyard Guard
++	h.registerVineyardGuardRoutes(mux)
++
+ 	// WeChat QR login flow
+ 	h.registerWeixinRoutes(mux)
+ 
+diff --git a/web/backend/api/vineyard_guard.go b/web/backend/api/vineyard_guard.go
+new file mode 100644
+index 00000000..1587294b
+--- /dev/null
++++ b/web/backend/api/vineyard_guard.go
+@@ -0,0 +1,1032 @@
++package api
++
++import (
++	"bufio"
++	"bytes"
++	"context"
++	"encoding/json"
++	"errors"
++	"io/fs"
++	"net/http"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"regexp"
++	"sort"
++	"strconv"
++	"strings"
++	"time"
++)
++
++const (
++	defaultPicoclawHome       = "/root/.picoclaw"
++	defaultPicoclawWorkspace  = "/root/.picoclaw/workspace"
++	defaultNanoOSAgentRoot    = "/root/nano-os-agent"
++	defaultGatewayReadyURL    = "http://127.0.0.1:18790/ready"
++	defaultGatewayHealthURL   = "http://127.0.0.1:18790/health"
++	defaultGatewayLogPath     = "/tmp/picoclaw_gateway.log"
++	defaultGoidanichDirectory = "goidanich"
++)
++
++// registerVineyardGuardRoutes binds the read-only board overview endpoint.
++func (h *Handler) registerVineyardGuardRoutes(mux *http.ServeMux) {
++	mux.HandleFunc("GET /api/runtime/status", h.handleVineyardGuardStatus)
++	mux.HandleFunc("GET /api/vineyard-guard/status", h.handleVineyardGuardStatus)
++}
++
++func (h *Handler) handleVineyardGuardStatus(w http.ResponseWriter, r *http.Request) {
++	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
++	defer cancel()
++
++	cfg := readJSONMap(h.configPath)
++	picoclawHome := filepath.Dir(h.configPath)
++	if picoclawHome == "." || picoclawHome == "" {
++		picoclawHome = defaultPicoclawHome
++	}
++	workspace := configWorkspace(cfg, defaultPicoclawWorkspace)
++	goidanichPath := filepath.Join(workspace, defaultGoidanichDirectory)
++
++	gateway := collectGatewayOverview(ctx, h.configPath, cfg, workspace)
++	nano := collectNanoOSAgentOverview(ctx, workspace)
++	vineyard := collectVineyardGuardOverview(ctx, goidanichPath)
++
++	payload := map[string]any{
++		"generated_at": time.Now().UTC().Format(time.RFC3339),
++		"paths": map[string]any{
++			"config":        h.configPath,
++			"picoclaw_home": picoclawHome,
++			"workspace":     workspace,
++			"goidanich":     goidanichPath,
++			"nano_os_agent": defaultNanoOSAgentRoot,
++		},
++		"platform": map[string]any{
++			"picoclaw_gateway": gateway,
++			"nano_os_agent":    nano,
++		},
++		"apps": map[string]any{
++			"vineyard_guard": vineyard,
++			"available_slots": []map[string]any{
++				{
++					"name":       "AdBlock",
++					"key":        "adblock",
++					"status":     "not_installed",
++					"activation": "add an app collector when the app runtime/config path exists",
++				},
++			},
++		},
++		"gateway":         gateway,
++		"nano_os_agent":   nano,
++		"vineyard_guard":  vineyard,
++		"collection_note": "read_only_runtime_snapshot",
++	}
++
++	w.Header().Set("Content-Type", "application/json")
++	_ = json.NewEncoder(w).Encode(payload)
++}
++
++func collectGatewayOverview(ctx context.Context, configPath string, cfg map[string]any, workspace string) map[string]any {
++	cronPath := filepath.Join(workspace, "cron", "jobs.json")
++	skillsDir := filepath.Join(workspace, "skills")
++	picoclawHome := filepath.Dir(configPath)
++	return map[string]any{
++		"model_config": modelConfigSummary(cfg),
++		"channels": map[string]any{
++			"configured": configuredChannels(cfg),
++			"active":     activeChannelsFromLog(defaultGatewayLogPath),
++		},
++		"telegram": telegramSummary(picoclawHome, workspace, cfg),
++		"skills_tools": map[string]any{
++			"skills_path": skillsDir,
++			"skills":      skillInventory(skillsDir),
++			"tools":       toolInventory(cfg),
++		},
++		"scheduler": cronSummary(cronPath),
++		"logs_health": map[string]any{
++			"ready":  httpJSON(ctx, defaultGatewayReadyURL),
++			"health": httpJSON(ctx, defaultGatewayHealthURL),
++			"log":    fileMeta(defaultGatewayLogPath),
++			"tail":   tailLines(defaultGatewayLogPath, 18),
++		},
++		"config": fileMeta(configPath),
++	}
++}
++
++func collectNanoOSAgentOverview(ctx context.Context, workspace string) map[string]any {
++	taskDirs := []string{
++		filepath.Join(defaultNanoOSAgentRoot, "tasks"),
++		filepath.Join(workspace, "tasks"),
++	}
++	journalPaths := []string{
++		filepath.Join(defaultNanoOSAgentRoot, "experiments.jsonl"),
++		filepath.Join(workspace, "experiments.jsonl"),
++	}
++	return map[string]any{
++		"board_hardware_status": hardwareReadOnlyInventory(),
++		"task_queue":            taskQueueSummary(taskDirs),
++		"running_experiments": map[string]any{
++			"processes": processMatches(ctx, []string{"nano-os-agent", "nano_os_agent"}),
++			"journals":  journalSummary(journalPaths),
++		},
++		"skill_validation_promote_flow": map[string]any{
++			"root":            fileMeta(defaultNanoOSAgentRoot),
++			"skills":          skillInventory(filepath.Join(defaultNanoOSAgentRoot, "skills")),
++			"validation_hits": taskKeywordHits(taskDirs, []string{"validate_skill", "promote_skill", "validation", "promote"}),
++		},
++		"hardware_capability_map": hardwareReadOnlyInventory(),
++		"experiment_journal":      journalSummary(journalPaths),
++		"artifacts": artifactSummary([]string{
++			filepath.Join(defaultNanoOSAgentRoot, "artifacts"),
++			filepath.Join(workspace, "artifacts"),
++			filepath.Join(workspace, defaultGoidanichDirectory, "results"),
++			"/tmp/observations",
++			"/tmp/monitors",
++		}),
++	}
++}
++
++func collectVineyardGuardOverview(ctx context.Context, goidanichPath string) map[string]any {
++	resultsDir := filepath.Join(goidanichPath, "results")
++	dbPath := filepath.Join(goidanichPath, "goidanich.db")
++	repo := fileMeta(goidanichPath)
++	return map[string]any{
++		"app": map[string]any{
++			"name":        "Vineyard Guard",
++			"type":        "app",
++			"runtime":     "goidanich",
++			"available":   existsMeta(repo),
++			"repo_path":   goidanichPath,
++			"private":     true,
++			"activation":  "active when the private goidanich repo exists in the PicoClaw workspace",
++			"repo_status": repo,
++		},
++		"fields_from_yaml": map[string]any{
++			"agent_config": fileMeta(filepath.Join(goidanichPath, "agent_config.yaml")),
++			"fields":       parseAgentFields(filepath.Join(goidanichPath, "agent_config.yaml")),
++		},
++		"disease_reports": map[string]any{
++			"downy_mildew":   diseaseReportSummary(resultsDir, "downy_mildew"),
++			"powdery_mildew": diseaseReportSummary(resultsDir, "powdery_mildew"),
++		},
++		"forecast_cache_state": forecastCacheSummary(resultsDir),
++		"supabase_sync_state": map[string]any{
++			"env":        envKeySummary(filepath.Join(goidanichPath, ".env"), []string{"SUPABASE_URL", "SUPABASE_PUBLISHABLE_KEY", "SUPABASE_ANON_KEY"}),
++			"neighbours": neighboursSummary(filepath.Join(goidanichPath, "neighbours.yaml")),
++		},
++		"farmer_feedback_product_catalog": sqliteVineyardSummary(ctx, dbPath),
++		"treatment_history":               treatmentHistorySummary(ctx, dbPath),
++	}
++}
++
++func readJSONMap(path string) map[string]any {
++	raw, err := os.ReadFile(path)
++	if err != nil {
++		return map[string]any{"error": err.Error()}
++	}
++	var out map[string]any
++	if err := json.Unmarshal(raw, &out); err != nil {
++		return map[string]any{"error": err.Error()}
++	}
++	return out
++}
++
++func configWorkspace(cfg map[string]any, fallback string) string {
++	if agent, ok := cfg["agent"].(map[string]any); ok {
++		if workspace, ok := agent["workspace"].(string); ok && strings.TrimSpace(workspace) != "" {
++			return workspace
++		}
++		if defaults, ok := agent["defaults"].(map[string]any); ok {
++			if workspace, ok := defaults["workspace"].(string); ok && strings.TrimSpace(workspace) != "" {
++				return workspace
++			}
++		}
++	}
++	if defaults, ok := cfg["defaults"].(map[string]any); ok {
++		if workspace, ok := defaults["workspace"].(string); ok && strings.TrimSpace(workspace) != "" {
++			return workspace
++		}
++	}
++	return fallback
++}
++
++func modelConfigSummary(cfg map[string]any) map[string]any {
++	models, _ := cfg["model_list"].([]any)
++	defaultModel, _ := cfg["model_name"].(string)
++	outModels := make([]map[string]any, 0, len(models))
++	enabled := 0
++	for _, item := range models {
++		m, ok := item.(map[string]any)
++		if !ok {
++			continue
++		}
++		name, _ := m["model_name"].(string)
++		model, _ := m["model"].(string)
++		provider, _ := m["provider"].(string)
++		if provider == "" {
++			provider = strings.SplitN(model, "/", 2)[0]
++		}
++		isEnabled := boolFromAny(m["enabled"], true)
++		if isEnabled {
++			enabled++
++		}
++		outModels = append(outModels, map[string]any{
++			"model_name":      name,
++			"provider":        provider,
++			"model":           model,
++			"enabled":         isEnabled,
++			"is_default":      name != "" && name == defaultModel,
++			"has_api_base":    strings.TrimSpace(stringFromAny(m["api_base"])) != "",
++			"has_api_key_ref": strings.TrimSpace(stringFromAny(m["api_key"])) != "",
++		})
++	}
++	return map[string]any{
++		"default_model": defaultModel,
++		"total":         len(outModels),
++		"enabled":       enabled,
++		"models":        outModels,
++	}
++}
++
++func configuredChannels(cfg map[string]any) []map[string]any {
++	var raw []any
++	if channels, ok := cfg["channel_list"].([]any); ok {
++		raw = channels
++	} else if channels, ok := cfg["channels"].([]any); ok {
++		raw = channels
++	} else if channels, ok := cfg["channels"].(map[string]any); ok {
++		out := make([]map[string]any, 0, len(channels))
++		for name, value := range channels {
++			m, _ := value.(map[string]any)
++			out = append(out, map[string]any{
++				"name":    name,
++				"type":    firstNonEmpty(stringFromAny(m["type"]), name),
++				"enabled": boolFromAny(m["enabled"], true),
++			})
++		}
++		sort.Slice(out, func(i, j int) bool { return stringFromAny(out[i]["name"]) < stringFromAny(out[j]["name"]) })
++		return out
++	}
++	out := make([]map[string]any, 0, len(raw))
++	for _, item := range raw {
++		m, ok := item.(map[string]any)
++		if !ok {
++			continue
++		}
++		name := stringFromAny(m["name"])
++		if name == "" {
++			name = stringFromAny(m["type"])
++		}
++		out = append(out, map[string]any{
++			"name":    name,
++			"type":    stringFromAny(m["type"]),
++			"enabled": boolFromAny(m["enabled"], false),
++		})
++	}
++	return out
++}
++
++func telegramSummary(picoclawHome string, workspace string, cfg map[string]any) map[string]any {
++	active := false
++	for _, channel := range activeChannelsFromLog(defaultGatewayLogPath) {
++		if channel == "telegram" {
++			active = true
++			break
++		}
++	}
++	tokenEnv := envKeySummary(filepath.Join(picoclawHome, "telegram.env"), []string{"TELEGRAM_BOT_TOKEN", "PICOCLAW_CHANNELS_TELEGRAM_TOKEN"})
++	tokenKeys, _ := tokenEnv["keys"].(map[string]bool)
++	hasToken := tokenKeys["TELEGRAM_BOT_TOKEN"] || tokenKeys["PICOCLAW_CHANNELS_TELEGRAM_TOKEN"]
++	return map[string]any{
++		"configured":           telegramConfigured(cfg) || active || hasToken,
++		"active":               active,
++		"token_env":            tokenEnv,
++		"recent_errors":        logLinesContaining(defaultGatewayLogPath, []string{"telego", "telegram"}, 12),
++		"outbox":               directorySummary("/tmp/picoclaw_outbox"),
++		"scheduled_alert_jobs": cronJobsMatching(filepath.Join(workspace, "cron", "jobs.json"), []string{"telegram", "risk_only", "picoclaw_telegram"}),
++	}
++}
++
++func telegramConfigured(cfg map[string]any) bool {
++	for _, item := range configuredChannels(cfg) {
++		name := strings.ToLower(firstNonEmpty(stringFromAny(item["name"]), stringFromAny(item["type"])))
++		if strings.Contains(name, "telegram") {
++			return boolFromAny(item["enabled"], true)
++		}
++	}
++	if channels, ok := cfg["channels"].(map[string]any); ok {
++		if _, ok := channels["telegram"]; ok {
++			return true
++		}
++	}
++	return false
++}
++
++func cronJobsMatching(path string, terms []string) []map[string]any {
++	summary := cronSummary(path)
++	raw, _ := summary["jobs"].([]map[string]any)
++	if raw == nil {
++		if anyJobs, ok := summary["jobs"].([]any); ok {
++			for _, item := range anyJobs {
++				if m, ok := item.(map[string]any); ok {
++					raw = append(raw, m)
++				}
++			}
++		}
++	}
++	var hits []map[string]any
++	for _, job := range raw {
++		blob := strings.ToLower(stringFromAny(job["id"]) + " " + stringFromAny(job["name"]) + " " + mapJSON(job))
++		for _, term := range terms {
++			if strings.Contains(blob, strings.ToLower(term)) {
++				hits = append(hits, job)
++				break
++			}
++		}
++	}
++	return hits
++}
++
++func activeChannelsFromLog(path string) []string {
++	lines := tailLines(path, 80)
++	re := regexp.MustCompile(`Channels enabled:\s*\[([^\]]*)\]`)
++	for i := len(lines) - 1; i >= 0; i-- {
++		match := re.FindStringSubmatch(lines[i])
++		if len(match) != 2 {
++			continue
++		}
++		fields := strings.Fields(match[1])
++		sort.Strings(fields)
++		return fields
++	}
++	return nil
++}
++
++func skillInventory(dir string) map[string]any {
++	entries, err := os.ReadDir(dir)
++	if err != nil {
++		return map[string]any{"path": dir, "available": false, "error": err.Error(), "items": []any{}}
++	}
++	items := make([]map[string]any, 0, len(entries))
++	for _, entry := range entries {
++		if !entry.IsDir() {
++			continue
++		}
++		skillPath := filepath.Join(dir, entry.Name())
++		name := skillNameFromMarkdown(filepath.Join(skillPath, "SKILL.md"))
++		items = append(items, map[string]any{
++			"directory": entry.Name(),
++			"name":      firstNonEmpty(name, entry.Name()),
++			"path":      skillPath,
++		})
++	}
++	sort.Slice(items, func(i, j int) bool { return stringFromAny(items[i]["name"]) < stringFromAny(items[j]["name"]) })
++	return map[string]any{"path": dir, "available": true, "count": len(items), "items": items}
++}
++
++func skillNameFromMarkdown(path string) string {
++	raw, err := os.ReadFile(path)
++	if err != nil {
++		return ""
++	}
++	scanner := bufio.NewScanner(bytes.NewReader(raw))
++	for scanner.Scan() {
++		line := strings.TrimSpace(scanner.Text())
++		if strings.HasPrefix(line, "name:") {
++			return strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "name:")), `"'`)
++		}
++	}
++	return ""
++}
++
++func toolInventory(cfg map[string]any) map[string]any {
++	tools, ok := cfg["tools"].(map[string]any)
++	if !ok {
++		return map[string]any{"count": 0, "items": []string{}}
++	}
++	items := make([]string, 0, len(tools))
++	for key := range tools {
++		items = append(items, key)
++	}
++	sort.Strings(items)
++	return map[string]any{"count": len(items), "items": items}
++}
++
++func cronSummary(path string) map[string]any {
++	data := readJSONMap(path)
++	jobsRaw, _ := data["jobs"].([]any)
++	jobs := make([]map[string]any, 0, len(jobsRaw))
++	enabled := 0
++	for _, item := range jobsRaw {
++		m, ok := item.(map[string]any)
++		if !ok {
++			continue
++		}
++		isEnabled := boolFromAny(m["enabled"], false)
++		if isEnabled {
++			enabled++
++		}
++		jobs = append(jobs, map[string]any{
++			"id":       stringFromAny(m["id"]),
++			"name":     stringFromAny(m["name"]),
++			"enabled":  isEnabled,
++			"schedule": m["schedule"],
++			"state":    m["state"],
++		})
++	}
++	return map[string]any{
++		"file":    fileMeta(path),
++		"count":   len(jobs),
++		"enabled": enabled,
++		"jobs":    jobs,
++	}
++}
++
++func httpJSON(ctx context.Context, url string) map[string]any {
++	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
++	if err != nil {
++		return map[string]any{"ok": false, "url": url, "error": err.Error()}
++	}
++	client := http.Client{Timeout: 900 * time.Millisecond}
++	resp, err := client.Do(req)
++	if err != nil {
++		return map[string]any{"ok": false, "url": url, "error": err.Error()}
++	}
++	defer resp.Body.Close()
++	var body map[string]any
++	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
++		return map[string]any{"ok": false, "url": url, "status_code": resp.StatusCode, "error": err.Error()}
++	}
++	body["ok"] = resp.StatusCode >= 200 && resp.StatusCode < 300
++	body["status_code"] = resp.StatusCode
++	body["url"] = url
++	return body
++}
++
++func processMatches(ctx context.Context, needles []string) []map[string]any {
++	cmd := exec.CommandContext(ctx, "ps", "w")
++	out, err := cmd.Output()
++	if err != nil {
++		return []map[string]any{{"error": err.Error()}}
++	}
++	needleSet := make([]string, 0, len(needles))
++	for _, needle := range needles {
++		needleSet = append(needleSet, strings.ToLower(needle))
++	}
++	var matches []map[string]any
++	for _, line := range strings.Split(string(out), "\n") {
++		lower := strings.ToLower(line)
++		if strings.Contains(lower, "grep") {
++			continue
++		}
++		for _, needle := range needleSet {
++			if !strings.Contains(lower, needle) {
++				continue
++			}
++			fields := strings.Fields(line)
++			if len(fields) == 0 {
++				continue
++			}
++			matches = append(matches, map[string]any{"pid": fields[0], "command": strings.TrimSpace(line)})
++			break
++		}
++	}
++	return matches
++}
++
++func taskQueueSummary(dirs []string) map[string]any {
++	type taskItem struct {
++		Path   string `json:"path"`
++		Status string `json:"status,omitempty"`
++		Name   string `json:"name,omitempty"`
++	}
++	var items []taskItem
++	statusCounts := map[string]int{}
++	for _, dir := range dirs {
++		_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
++			if err != nil || d == nil || d.IsDir() {
++				return nil
++			}
++			if !strings.HasSuffix(path, ".yaml") && !strings.HasSuffix(path, ".yml") {
++				return nil
++			}
++			raw, err := os.ReadFile(path)
++			if err != nil {
++				return nil
++			}
++			status := yamlScalar(raw, "status")
++			name := yamlScalar(raw, "name")
++			if status != "" {
++				statusCounts[status]++
++			}
++			items = append(items, taskItem{Path: path, Status: status, Name: name})
++			return nil
++		})
++	}
++	sort.Slice(items, func(i, j int) bool { return items[i].Path < items[j].Path })
++	return map[string]any{"directories": dirs, "count": len(items), "status_counts": statusCounts, "items": items}
++}
++
++func taskKeywordHits(dirs []string, keywords []string) []map[string]any {
++	var hits []map[string]any
++	for _, dir := range dirs {
++		_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
++			if err != nil || d == nil || d.IsDir() {
++				return nil
++			}
++			if !strings.HasSuffix(path, ".yaml") && !strings.HasSuffix(path, ".yml") && !strings.HasSuffix(path, ".md") {
++				return nil
++			}
++			raw, err := os.ReadFile(path)
++			if err != nil {
++				return nil
++			}
++			lower := strings.ToLower(string(raw))
++			var matched []string
++			for _, keyword := range keywords {
++				if strings.Contains(lower, strings.ToLower(keyword)) {
++					matched = append(matched, keyword)
++				}
++			}
++			if len(matched) > 0 {
++				hits = append(hits, map[string]any{"path": path, "keywords": matched})
++			}
++			return nil
++		})
++	}
++	sort.Slice(hits, func(i, j int) bool { return stringFromAny(hits[i]["path"]) < stringFromAny(hits[j]["path"]) })
++	return hits
++}
++
++func journalSummary(paths []string) []map[string]any {
++	out := make([]map[string]any, 0, len(paths))
++	for _, path := range paths {
++		meta := fileMeta(path)
++		meta["lines"] = countLines(path)
++		out = append(out, meta)
++	}
++	return out
++}
++
++func hardwareReadOnlyInventory() map[string]any {
++	return map[string]any{
++		"dev_video":     globMetas("/dev/video*"),
++		"i2c_buses":     globMetas("/dev/i2c-*"),
++		"pwm":           globMetas("/sys/class/pwm/*"),
++		"gpio":          globMetas("/sys/class/gpio/*"),
++		"thermal_zones": thermalZones(),
++	}
++}
++
++func globMetas(pattern string) []map[string]any {
++	matches, _ := filepath.Glob(pattern)
++	out := make([]map[string]any, 0, len(matches))
++	for _, match := range matches {
++		out = append(out, fileMeta(match))
++	}
++	sort.Slice(out, func(i, j int) bool { return stringFromAny(out[i]["path"]) < stringFromAny(out[j]["path"]) })
++	return out
++}
++
++func thermalZones() []map[string]any {
++	matches, _ := filepath.Glob("/sys/class/thermal/thermal_zone*/temp")
++	out := make([]map[string]any, 0, len(matches))
++	for _, match := range matches {
++		raw, err := os.ReadFile(match)
++		item := fileMeta(match)
++		if err == nil {
++			if milli, parseErr := strconv.ParseFloat(strings.TrimSpace(string(raw)), 64); parseErr == nil {
++				item["celsius"] = milli / 1000.0
++			}
++		}
++		out = append(out, item)
++	}
++	return out
++}
++
++func artifactSummary(dirs []string) map[string]any {
++	counts := map[string]int{"images": 0, "audio": 0, "plots": 0, "json": 0, "other": 0}
++	var recent []map[string]any
++	for _, dir := range dirs {
++		_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
++			if err != nil || d == nil || d.IsDir() {
++				return nil
++			}
++			ext := strings.ToLower(filepath.Ext(path))
++			switch ext {
++			case ".png", ".jpg", ".jpeg", ".webp":
++				counts["images"]++
++				if strings.Contains(strings.ToLower(filepath.Base(path)), "plot") || strings.Contains(strings.ToLower(filepath.Base(path)), "dashboard") {
++					counts["plots"]++
++				}
++			case ".wav", ".mp3", ".flac", ".ogg":
++				counts["audio"]++
++			case ".json", ".jsonl":
++				counts["json"]++
++			default:
++				counts["other"]++
++			}
++			recent = append(recent, fileMeta(path))
++			return nil
++		})
++	}
++	sort.Slice(recent, func(i, j int) bool {
++		return floatFromAny(recent[i]["mtime_unix"]) > floatFromAny(recent[j]["mtime_unix"])
++	})
++	if len(recent) > 20 {
++		recent = recent[:20]
++	}
++	return map[string]any{"directories": dirs, "counts": counts, "recent": recent}
++}
++
++func parseAgentFields(path string) []map[string]any {
++	raw, err := os.ReadFile(path)
++	if err != nil {
++		return []map[string]any{}
++	}
++	var fields []map[string]any
++	current := map[string]any{}
++	flush := func() {
++		if stringFromAny(current["field_id"]) == "" && stringFromAny(current["id"]) == "" {
++			current = map[string]any{}
++			return
++		}
++		fields = append(fields, current)
++		current = map[string]any{}
++	}
++	scanner := bufio.NewScanner(bytes.NewReader(raw))
++	for scanner.Scan() {
++		line := strings.TrimSpace(scanner.Text())
++		line = strings.TrimPrefix(line, "- ")
++		key, value, ok := splitYAMLScalar(line)
++		if !ok {
++			continue
++		}
++		switch key {
++		case "field_id", "id", "name", "location", "location_name", "station", "station_code", "variety", "latitude", "longitude", "municipality", "municipality_code":
++			if key == "field_id" && stringFromAny(current["field_id"]) != "" {
++				flush()
++			}
++			current[key] = value
++		}
++	}
++	flush()
++	return fields
++}
++
++func diseaseReportSummary(resultsDir string, disease string) map[string]any {
++	statePath := filepath.Join(resultsDir, "dashboard_state_"+disease+".json")
++	reportPath := filepath.Join(resultsDir, "dashboard_report_"+disease+".md")
++	plotPath := filepath.Join(resultsDir, "dashboard_latest_"+disease+".png")
++	state := readJSONMap(statePath)
++	forecastRows := 0
++	if rows, ok := state["forecast"].([]any); ok {
++		forecastRows = len(rows)
++	}
++	return map[string]any{
++		"state":                  fileMeta(statePath),
++		"report":                 fileMeta(reportPath),
++		"plot":                   fileMeta(plotPath),
++		"updated_at":             state["updated_at"],
++		"forecast_rows":          forecastRows,
++		"plot_render":            state["plot_render"],
++		"freshness":              firstNonNil(state["model_layer_freshness"], state["freshness"]),
++		"current_day":            state["day"],
++		"summary_fields_present": keysPresent(state, []string{"rows", "forecast", "forecast_refresh", "plot_render", "model_layer_freshness"}),
++	}
++}
++
++func forecastCacheSummary(resultsDir string) map[string]any {
++	return map[string]any{
++		"downy_mildew":   forecastDiseaseCache(filepath.Join(resultsDir, "dashboard_state_downy_mildew.json")),
++		"powdery_mildew": forecastDiseaseCache(filepath.Join(resultsDir, "dashboard_state_powdery_mildew.json")),
++	}
++}
++
++func forecastDiseaseCache(path string) map[string]any {
++	state := readJSONMap(path)
++	rows := 0
++	if forecast, ok := state["forecast"].([]any); ok {
++		rows = len(forecast)
++	}
++	return map[string]any{
++		"state":              fileMeta(path),
++		"updated_at":         state["updated_at"],
++		"forecast_rows":      rows,
++		"forecast_refresh":   state["forecast_refresh"],
++		"freshness":          firstNonNil(state["model_layer_freshness"], state["freshness"]),
++		"forecast_line_rows": lenArray(state["forecast_line_predictions"]),
++	}
++}
++
++func envKeySummary(path string, keys []string) map[string]any {
++	raw, err := os.ReadFile(path)
++	if err != nil {
++		return map[string]any{"file": fileMeta(path), "keys": map[string]bool{}, "error": err.Error()}
++	}
++	values := map[string]bool{}
++	lines := strings.Split(string(raw), "\n")
++	for _, key := range keys {
++		values[key] = false
++		prefix := key + "="
++		for _, line := range lines {
++			if strings.HasPrefix(strings.TrimSpace(line), prefix) && strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), prefix)) != "" {
++				values[key] = true
++				break
++			}
++		}
++	}
++	return map[string]any{"file": fileMeta(path), "keys": values}
++}
++
++func neighboursSummary(path string) map[string]any {
++	raw, err := os.ReadFile(path)
++	if err != nil {
++		return map[string]any{"file": fileMeta(path), "count": 0, "error": err.Error()}
++	}
++	count := 0
++	for _, line := range strings.Split(string(raw), "\n") {
++		if strings.HasPrefix(strings.TrimSpace(line), "- ") {
++			count++
++		}
++	}
++	return map[string]any{"file": fileMeta(path), "count": count}
++}
++
++func directorySummary(path string) map[string]any {
++	entries, err := os.ReadDir(path)
++	if err != nil {
++		return map[string]any{"path": path, "exists": false, "count": 0, "error": err.Error(), "recent": []map[string]any{}}
++	}
++	recent := make([]map[string]any, 0, len(entries))
++	for _, entry := range entries {
++		if entry.IsDir() {
++			continue
++		}
++		recent = append(recent, fileMeta(filepath.Join(path, entry.Name())))
++	}
++	sort.Slice(recent, func(i, j int) bool {
++		return floatFromAny(recent[i]["mtime_unix"]) > floatFromAny(recent[j]["mtime_unix"])
++	})
++	if len(recent) > 10 {
++		recent = recent[:10]
++	}
++	return map[string]any{"path": path, "exists": true, "count": len(entries), "recent": recent}
++}
++
++func logLinesContaining(path string, terms []string, limit int) []string {
++	lines := tailLines(path, 300)
++	var matches []string
++	for _, line := range lines {
++		lower := strings.ToLower(line)
++		for _, term := range terms {
++			if strings.Contains(lower, strings.ToLower(term)) {
++				matches = append(matches, line)
++				break
++			}
++		}
++	}
++	if len(matches) > limit {
++		return matches[len(matches)-limit:]
++	}
++	return matches
++}
++
++func sqliteVineyardSummary(ctx context.Context, dbPath string) map[string]any {
++	script := `
++import json, sqlite3, sys
++db=sys.argv[1]
++out={"available": False, "db": db}
++try:
++    con=sqlite3.connect("file:%s?mode=ro" % db, uri=True)
++    cur=con.cursor()
++    tables={r[0] for r in cur.execute("select name from sqlite_master where type='table'")}
++    out["available"]=True
++    out["tables"]=sorted(tables)
++    for table in ("farmer_feedback","feedback_events","product_catalog","products"):
++        if table in tables:
++            try:
++                out[table+"_count"]=cur.execute("select count(*) from "+table).fetchone()[0]
++            except Exception as e:
++                out[table+"_error"]=str(e)
++    con.close()
++except Exception as e:
++    out["error"]=str(e)
++print(json.dumps(out))
++`
++	return runPythonJSON(ctx, script, dbPath)
++}
++
++func treatmentHistorySummary(ctx context.Context, dbPath string) map[string]any {
++	script := `
++import json, sqlite3, sys
++db=sys.argv[1]
++out={"available": False, "db": db, "recent": []}
++try:
++    con=sqlite3.connect("file:%s?mode=ro" % db, uri=True)
++    cur=con.cursor()
++    tables={r[0] for r in cur.execute("select name from sqlite_master where type='table'")}
++    out["available"]=True
++    candidates=["farmer_feedback","feedback_events"]
++    for table in candidates:
++        if table not in tables:
++            continue
++        cols=[r[1] for r in cur.execute("pragma table_info("+table+")")]
++        if "feedback_type" not in cols:
++            continue
++        ts="timestamp" if "timestamp" in cols else ("created_at" if "created_at" in cols else None)
++        field="field_id" if "field_id" in cols else None
++        disease="disease_id" if "disease_id" in cols else None
++        meta="metadata" if "metadata" in cols else ("treatment" if "treatment" in cols else None)
++        select_cols=[c for c in (ts, field, disease, "feedback_type", meta) if c]
++        order = (" order by "+ts+" desc") if ts else ""
++        rows=cur.execute("select "+",".join(select_cols)+" from "+table+" where feedback_type='treatment'"+order+" limit 5").fetchall()
++        for row in rows:
++            item={"table": table}
++            for i,c in enumerate(select_cols):
++                item[c]=row[i]
++            out["recent"].append(item)
++    con.close()
++except Exception as e:
++    out["error"]=str(e)
++print(json.dumps(out))
++`
++	return runPythonJSON(ctx, script, dbPath)
++}
++
++func runPythonJSON(ctx context.Context, script string, arg string) map[string]any {
++	if _, err := os.Stat(arg); err != nil {
++		return map[string]any{"available": false, "db": arg, "error": err.Error()}
++	}
++	cctx, cancel := context.WithTimeout(ctx, 1200*time.Millisecond)
++	defer cancel()
++	cmd := exec.CommandContext(cctx, "python3", "-c", script, arg)
++	out, err := cmd.Output()
++	if err != nil {
++		var exitErr *exec.ExitError
++		if errors.As(err, &exitErr) {
++			return map[string]any{"available": false, "error": err.Error(), "stderr": strings.TrimSpace(string(exitErr.Stderr))}
++		}
++		return map[string]any{"available": false, "error": err.Error()}
++	}
++	var parsed map[string]any
++	if err := json.Unmarshal(out, &parsed); err != nil {
++		return map[string]any{"available": false, "error": err.Error(), "stdout": strings.TrimSpace(string(out))}
++	}
++	return parsed
++}
++
++func fileMeta(path string) map[string]any {
++	info, err := os.Stat(path)
++	if err != nil {
++		return map[string]any{"path": path, "exists": false, "error": err.Error()}
++	}
++	return map[string]any{
++		"path":       path,
++		"exists":     true,
++		"size":       info.Size(),
++		"mtime":      info.ModTime().UTC().Format(time.RFC3339),
++		"mtime_unix": float64(info.ModTime().Unix()),
++		"is_dir":     info.IsDir(),
++	}
++}
++
++func existsMeta(meta map[string]any) bool {
++	return boolFromAny(meta["exists"], false)
++}
++
++func tailLines(path string, n int) []string {
++	raw, err := os.ReadFile(path)
++	if err != nil {
++		return nil
++	}
++	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
++	if len(lines) <= n {
++		return lines
++	}
++	return lines[len(lines)-n:]
++}
++
++func countLines(path string) int {
++	f, err := os.Open(path)
++	if err != nil {
++		return 0
++	}
++	defer f.Close()
++	scanner := bufio.NewScanner(f)
++	count := 0
++	for scanner.Scan() {
++		count++
++	}
++	return count
++}
++
++func yamlScalar(raw []byte, key string) string {
++	scanner := bufio.NewScanner(bytes.NewReader(raw))
++	for scanner.Scan() {
++		k, v, ok := splitYAMLScalar(strings.TrimSpace(scanner.Text()))
++		if ok && k == key {
++			return v
++		}
++	}
++	return ""
++}
++
++func splitYAMLScalar(line string) (string, string, bool) {
++	if line == "" || strings.HasPrefix(line, "#") || !strings.Contains(line, ":") {
++		return "", "", false
++	}
++	parts := strings.SplitN(line, ":", 2)
++	key := strings.TrimSpace(parts[0])
++	value := strings.Trim(strings.TrimSpace(parts[1]), `"'`)
++	if key == "" {
++		return "", "", false
++	}
++	return key, value, true
++}
++
++func keysPresent(m map[string]any, keys []string) map[string]bool {
++	out := make(map[string]bool, len(keys))
++	for _, key := range keys {
++		_, ok := m[key]
++		out[key] = ok
++	}
++	return out
++}
++
++func lenArray(v any) int {
++	if arr, ok := v.([]any); ok {
++		return len(arr)
++	}
++	return 0
++}
++
++func boolFromAny(v any, fallback bool) bool {
++	if b, ok := v.(bool); ok {
++		return b
++	}
++	if s, ok := v.(string); ok {
++		switch strings.ToLower(strings.TrimSpace(s)) {
++		case "true", "yes", "1", "enabled":
++			return true
++		case "false", "no", "0", "disabled":
++			return false
++		}
++	}
++	return fallback
++}
++
++func stringFromAny(v any) string {
++	switch value := v.(type) {
++	case string:
++		return value
++	case json.Number:
++		return value.String()
++	case float64:
++		return strconv.FormatFloat(value, 'f', -1, 64)
++	case int:
++		return strconv.Itoa(value)
++	default:
++		return ""
++	}
++}
++
++func floatFromAny(v any) float64 {
++	switch value := v.(type) {
++	case float64:
++		return value
++	case int64:
++		return float64(value)
++	case int:
++		return float64(value)
++	case string:
++		parsed, _ := strconv.ParseFloat(value, 64)
++		return parsed
++	default:
++		return 0
++	}
++}
++
++func firstNonEmpty(values ...string) string {
++	for _, value := range values {
++		if strings.TrimSpace(value) != "" {
++			return value
++		}
++	}
++	return ""
++}
++
++func firstNonNil(values ...any) any {
++	for _, value := range values {
++		if value != nil {
++			return value
++		}
++	}
++	return nil
++}
++
++func mapJSON(v any) string {
++	raw, err := json.Marshal(v)
++	if err != nil {
++		return ""
++	}
++	return string(raw)
++}
+diff --git a/web/backend/embed.go b/web/backend/embed.go
+index cf0c76bc..998f1c8f 100644
+--- a/web/backend/embed.go
++++ b/web/backend/embed.go
+@@ -42,6 +42,10 @@ func registerEmbedRoutes(mux *http.ServeMux) {
+ 	mux.Handle(
+ 		"/",
+ 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++			w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
++			w.Header().Set("Pragma", "no-cache")
++			w.Header().Set("Expires", "0")
++
+ 			if r.Method != http.MethodGet && r.Method != http.MethodHead {
+ 				http.NotFound(w, r)
+ 				return
+diff --git a/web/frontend/src/api/vineyard-guard.ts b/web/frontend/src/api/vineyard-guard.ts
+new file mode 100644
+index 00000000..2ae39b92
+--- /dev/null
++++ b/web/frontend/src/api/vineyard-guard.ts
+@@ -0,0 +1,22 @@
++import { launcherFetch } from "@/api/http"
++
++export type RuntimeMap = Record<string, unknown>
++
++export interface VineyardGuardRuntimeStatus {
++  generated_at: string
++  paths?: RuntimeMap
++  platform?: RuntimeMap
++  apps?: RuntimeMap
++  gateway?: RuntimeMap
++  nano_os_agent?: RuntimeMap
++  vineyard_guard?: RuntimeMap
++  collection_note?: string
++}
++
++export async function getVineyardGuardRuntimeStatus(): Promise<VineyardGuardRuntimeStatus> {
++  const res = await launcherFetch("/api/runtime/status")
++  if (!res.ok) {
++    throw new Error(`API error: ${res.status} ${res.statusText}`)
++  }
++  return res.json() as Promise<VineyardGuardRuntimeStatus>
++}
+diff --git a/web/frontend/src/components/app-sidebar.tsx b/web/frontend/src/components/app-sidebar.tsx
+index 1980e458..e1d1a838 100644
+--- a/web/frontend/src/components/app-sidebar.tsx
++++ b/web/frontend/src/components/app-sidebar.tsx
+@@ -4,6 +4,7 @@ import {
+   IconChevronsDown,
+   IconChevronsUp,
+   IconKey,
++  IconLeaf,
+   IconListDetails,
+   IconMessageCircle,
+   IconSearch,
+@@ -155,6 +156,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
+       {
+         ...baseNavGroups[3],
+         items: [
++          {
++            title: "Runtime",
++            url: "/runtime",
++            icon: IconLeaf,
++            translateTitle: false,
++          },
+           {
+             title: "navigation.config",
+             url: "/config",
+diff --git a/web/frontend/src/components/vineyard-guard/vineyard-guard-page.tsx b/web/frontend/src/components/vineyard-guard/vineyard-guard-page.tsx
+new file mode 100644
+index 00000000..6447d1f5
+--- /dev/null
++++ b/web/frontend/src/components/vineyard-guard/vineyard-guard-page.tsx
+@@ -0,0 +1,460 @@
++import { IconRefresh } from "@tabler/icons-react"
++import { useQuery } from "@tanstack/react-query"
++import type { ReactNode } from "react"
++
++import {
++  type RuntimeMap,
++  getVineyardGuardRuntimeStatus,
++} from "@/api/vineyard-guard"
++import { PageHeader } from "@/components/page-header"
++import { Badge } from "@/components/ui/badge"
++import { Button } from "@/components/ui/button"
++import {
++  Card,
++  CardContent,
++  CardDescription,
++  CardHeader,
++  CardTitle,
++} from "@/components/ui/card"
++
++function asMap(value: unknown): RuntimeMap {
++  return value && typeof value === "object" && !Array.isArray(value)
++    ? (value as RuntimeMap)
++    : {}
++}
++
++function asArray(value: unknown): unknown[] {
++  return Array.isArray(value) ? value : []
++}
++
++function asString(value: unknown, fallback = "not available"): string {
++  if (typeof value === "string" && value.trim()) return value
++  if (typeof value === "number" || typeof value === "boolean") {
++    return String(value)
++  }
++  return fallback
++}
++
++function boolValue(value: unknown): boolean {
++  return value === true || value === "true" || value === "ok"
++}
++
++function exists(value: unknown): boolean {
++  return boolValue(asMap(value).exists)
++}
++
++function StatusBadge({ ok, label }: { ok: boolean; label?: string }) {
++  return (
++    <Badge variant={ok ? "secondary" : "destructive"}>
++      {label ?? (ok ? "ok" : "attention")}
++    </Badge>
++  )
++}
++
++function StatLine({ label, value }: { label: string; value: unknown }) {
++  return (
++    <div className="border-border/50 flex min-h-6 items-start justify-between gap-4 border-b py-1.5 last:border-b-0">
++      <span className="text-muted-foreground">{label}</span>
++      <span className="max-w-[65%] text-right font-medium break-words">
++        {asString(value)}
++      </span>
++    </div>
++  )
++}
++
++function CompactList({
++  items,
++  empty = "No entries detected",
++}: {
++  items: unknown[]
++  empty?: string
++}) {
++  if (items.length === 0) {
++    return <div className="text-muted-foreground text-sm">{empty}</div>
++  }
++  return (
++    <div className="space-y-1.5">
++      {items.slice(0, 8).map((item, index) => {
++        const map = asMap(item)
++        const title =
++          asString(map.name, "") ||
++          asString(map.id, "") ||
++          asString(map.directory, "") ||
++          asString(map.path, `item ${index + 1}`)
++        const detail =
++          asString(map.schedule, "") ||
++          asString(map.status, "") ||
++          asString(map.type, "") ||
++          asString(map.mtime, "")
++        return (
++          <div
++            key={`${title}-${index}`}
++            className="bg-muted/40 flex items-start justify-between gap-3 rounded-md px-2 py-1.5 text-sm"
++          >
++            <span className="min-w-0 font-medium break-words">{title}</span>
++            {detail ? (
++              <span className="text-muted-foreground max-w-[45%] text-right text-xs break-words">
++                {detail}
++              </span>
++            ) : null}
++          </div>
++        )
++      })}
++      {items.length > 8 ? (
++        <div className="text-muted-foreground text-xs">
++          +{items.length - 8} more
++        </div>
++      ) : null}
++    </div>
++  )
++}
++
++function StatusCard({
++  title,
++  description,
++  children,
++}: {
++  title: string
++  description?: string
++  children: ReactNode
++}) {
++  return (
++    <Card size="sm" className="rounded-lg">
++      <CardHeader>
++        <CardTitle>{title}</CardTitle>
++        {description ? <CardDescription>{description}</CardDescription> : null}
++      </CardHeader>
++      <CardContent className="space-y-3">{children}</CardContent>
++    </Card>
++  )
++}
++
++function GatewaySection({ gateway }: { gateway: RuntimeMap }) {
++  const modelConfig = asMap(gateway.model_config)
++  const channels = asMap(gateway.channels)
++  const telegram = asMap(gateway.telegram)
++  const skillsTools = asMap(gateway.skills_tools)
++  const scheduler = asMap(gateway.scheduler)
++  const logsHealth = asMap(gateway.logs_health)
++  const ready = asMap(logsHealth.ready)
++  const health = asMap(logsHealth.health)
++  const skills = asMap(skillsTools.skills)
++  const tools = asMap(skillsTools.tools)
++  const tokenEnv = asMap(telegram.token_env)
++  const tokenKeys = asMap(tokenEnv.keys)
++  const outbox = asMap(telegram.outbox)
++
++  return (
++    <section className="space-y-3">
++      <div className="flex items-center justify-between">
++        <h3 className="text-lg font-semibold">Platform: PicoClaw Gateway</h3>
++        <div className="flex gap-2">
++          <StatusBadge ok={boolValue(ready.ok)} label="ready" />
++          <StatusBadge ok={boolValue(health.ok)} label="health" />
++        </div>
++      </div>
++      <div className="grid gap-4 xl:grid-cols-4">
++        <StatusCard title="Model config">
++          <StatLine label="Default model" value={modelConfig.default_model} />
++          <StatLine label="Models" value={modelConfig.total} />
++          <StatLine label="Enabled" value={modelConfig.enabled} />
++        </StatusCard>
++
++        <StatusCard title="Telegram / Pico channels">
++          <StatLine
++            label="Active channels"
++            value={asArray(channels.active).join(", ")}
++          />
++          <StatLine
++            label="Telegram configured"
++            value={telegram.configured === true ? "yes" : "no"}
++          />
++          <StatLine
++            label="Telegram active"
++            value={telegram.active === true ? "yes" : "no"}
++          />
++          <StatLine
++            label="Token present"
++            value={
++              boolValue(tokenKeys.TELEGRAM_BOT_TOKEN) ||
++              boolValue(tokenKeys.PICOCLAW_CHANNELS_TELEGRAM_TOKEN)
++                ? "yes"
++                : "no"
++            }
++          />
++          <StatLine label="Outbox files" value={outbox.count} />
++        </StatusCard>
++
++        <StatusCard title="Skills / tools">
++          <StatLine label="Skills" value={skills.count} />
++          <StatLine label="Tools" value={tools.count} />
++          <CompactList items={asArray(skills.items)} />
++        </StatusCard>
++
++        <StatusCard title="Scheduler / cron">
++          <StatLine label="Jobs" value={scheduler.count} />
++          <StatLine label="Enabled" value={scheduler.enabled} />
++          <CompactList items={asArray(scheduler.jobs)} />
++        </StatusCard>
++      </div>
++      {asArray(telegram.recent_errors).length > 0 ? (
++        <Card size="sm" className="rounded-lg">
++          <CardHeader>
++            <CardTitle>Recent Telegram errors</CardTitle>
++          </CardHeader>
++          <CardContent>
++            <pre className="bg-muted max-h-36 overflow-auto rounded-md p-3 text-xs whitespace-pre-wrap">
++              {asArray(telegram.recent_errors).join("\n")}
++            </pre>
++          </CardContent>
++        </Card>
++      ) : null}
++    </section>
++  )
++}
++
++function NanoSection({ nano }: { nano: RuntimeMap }) {
++  const hardware = asMap(nano.board_hardware_status)
++  const tasks = asMap(nano.task_queue)
++  const running = asMap(nano.running_experiments)
++  const skillFlow = asMap(nano.skill_validation_promote_flow)
++  const artifacts = asMap(nano.artifacts)
++  const counts = asMap(artifacts.counts)
++  const skillInventory = asMap(skillFlow.skills)
++
++  return (
++    <section className="space-y-3">
++      <h3 className="text-lg font-semibold">Platform: nano-os-agent</h3>
++      <div className="grid gap-4 xl:grid-cols-4">
++        <StatusCard title="Board hardware status">
++          <StatLine
++            label="/dev/video*"
++            value={asArray(hardware.dev_video).length}
++          />
++          <StatLine
++            label="I2C buses"
++            value={asArray(hardware.i2c_buses).length}
++          />
++          <StatLine label="PWM nodes" value={asArray(hardware.pwm).length} />
++          <StatLine
++            label="Thermal zones"
++            value={asArray(hardware.thermal_zones).length}
++          />
++        </StatusCard>
++
++        <StatusCard title="Task queue">
++          <StatLine label="Task files" value={tasks.count} />
++          <CompactList items={asArray(tasks.items)} />
++        </StatusCard>
++
++        <StatusCard title="Experiments / journals">
++          <StatLine
++            label="Running processes"
++            value={asArray(running.processes).length}
++          />
++          <CompactList items={asArray(running.journals)} />
++        </StatusCard>
++
++        <StatusCard title="Skill validation / artifacts">
++          <StatLine label="nano skills" value={skillInventory.count} />
++          <StatLine label="Images" value={counts.images} />
++          <StatLine label="Audio" value={counts.audio} />
++          <StatLine label="Plots" value={counts.plots} />
++          <StatLine label="JSON" value={counts.json} />
++        </StatusCard>
++      </div>
++    </section>
++  )
++}
++
++function DiseaseCard({
++  title,
++  disease,
++}: {
++  title: string
++  disease: RuntimeMap
++}) {
++  const state = asMap(disease.state)
++  const plot = asMap(disease.plot)
++  const report = asMap(disease.report)
++  const freshness = asMap(disease.freshness)
++
++  return (
++    <StatusCard title={title}>
++      <StatLine label="Updated" value={disease.updated_at} />
++      <StatLine label="Forecast rows" value={disease.forecast_rows} />
++      <StatLine
++        label="State JSON"
++        value={exists(state) ? "present" : "missing"}
++      />
++      <StatLine label="Report" value={exists(report) ? "present" : "missing"} />
++      <StatLine label="Plot PNG" value={exists(plot) ? "present" : "missing"} />
++      <StatLine
++        label="Forecast current"
++        value={boolValue(freshness.forecast_current) ? "yes" : "no"}
++      />
++      <StatLine
++        label="Prediction current"
++        value={boolValue(freshness.prediction_ok) ? "yes" : "no"}
++      />
++    </StatusCard>
++  )
++}
++
++function VineyardSection({ vineyard }: { vineyard: RuntimeMap }) {
++  const app = asMap(vineyard.app)
++  const fields = asMap(vineyard.fields_from_yaml)
++  const reports = asMap(vineyard.disease_reports)
++  const supabase = asMap(vineyard.supabase_sync_state)
++  const env = asMap(supabase.env)
++  const envKeys = asMap(env.keys)
++  const neighbours = asMap(supabase.neighbours)
++  const feedback = asMap(vineyard.farmer_feedback_product_catalog)
++  const treatments = asMap(vineyard.treatment_history)
++
++  return (
++    <section className="space-y-3">
++      <div className="flex items-center justify-between">
++        <h3 className="text-lg font-semibold">Apps</h3>
++        <Badge variant="outline">Extensible app slots</Badge>
++      </div>
++      <div className="grid gap-4 xl:grid-cols-4">
++        <StatusCard
++          title="Vineyard Guard"
++          description="Private goidanich app, active only when the repo/runtime is present."
++        >
++          <StatLine
++            label="Status"
++            value={app.available === true ? "active" : "not installed"}
++          />
++          <StatLine label="Runtime" value={app.runtime} />
++          <StatLine label="Repo path" value={app.repo_path} />
++          <StatLine
++            label="Configured fields"
++            value={asArray(fields.fields).length}
++          />
++          <CompactList items={asArray(fields.fields)} />
++        </StatusCard>
++
++        <DiseaseCard
++          title="Downy disease report"
++          disease={asMap(reports.downy_mildew)}
++        />
++
++        <DiseaseCard
++          title="Powdery disease report"
++          disease={asMap(reports.powdery_mildew)}
++        />
++
++        <StatusCard title="Supabase / feedback / treatments">
++          <StatLine
++            label="Supabase URL"
++            value={boolValue(envKeys.SUPABASE_URL) ? "configured" : "missing"}
++          />
++          <StatLine
++            label="Publishable key"
++            value={
++              boolValue(envKeys.SUPABASE_PUBLISHABLE_KEY) ||
++              boolValue(envKeys.SUPABASE_ANON_KEY)
++                ? "configured"
++                : "missing"
++            }
++          />
++          <StatLine label="Neighbours" value={neighbours.count} />
++          <StatLine
++            label="Feedback DB"
++            value={feedback.available === true ? "readable" : "not readable"}
++          />
++          <StatLine
++            label="Product catalog"
++            value={
++              feedback.product_catalog_count ??
++              feedback.products_count ??
++              "not detected"
++            }
++          />
++          <StatLine
++            label="Recent treatments"
++            value={asArray(treatments.recent).length}
++          />
++        </StatusCard>
++      </div>
++    </section>
++  )
++}
++
++export function VineyardGuardPage() {
++  const { data, error, isFetching, refetch } = useQuery({
++    queryKey: ["vineyard-guard-runtime-status"],
++    queryFn: getVineyardGuardRuntimeStatus,
++    refetchInterval: 30000,
++  })
++
++  return (
++    <div className="flex h-full flex-col">
++      <PageHeader
++        title="Board Runtime"
++        titleExtra={
++          data?.generated_at ? (
++            <Badge variant="outline">
++              Snapshot {new Date(data.generated_at).toLocaleString()}
++            </Badge>
++          ) : null
++        }
++      >
++        <Button
++          variant="outline"
++          size="sm"
++          onClick={() => void refetch()}
++          disabled={isFetching}
++        >
++          <IconRefresh
++            className={isFetching ? "size-4 animate-spin" : "size-4"}
++          />
++          Refresh
++        </Button>
++      </PageHeader>
++
++      <main className="flex-1 overflow-auto px-6 py-6">
++        <div className="max-w-7xl space-y-8">
++          {error ? (
++            <Card className="rounded-lg">
++              <CardHeader>
++                <CardTitle>Runtime snapshot failed</CardTitle>
++                <CardDescription>
++                  {error instanceof Error ? error.message : "Unknown error"}
++                </CardDescription>
++              </CardHeader>
++            </Card>
++          ) : null}
++
++          {!data && !error ? (
++            <div className="text-muted-foreground text-sm">
++              Loading runtime snapshot...
++            </div>
++          ) : null}
++
++          {data ? (
++            <>
++              <GatewaySection
++                gateway={asMap(
++                  asMap(data.platform).picoclaw_gateway ?? data.gateway,
++                )}
++              />
++              <NanoSection
++                nano={asMap(
++                  asMap(data.platform).nano_os_agent ?? data.nano_os_agent,
++                )}
++              />
++              <VineyardSection
++                vineyard={asMap(
++                  asMap(data.apps).vineyard_guard ?? data.vineyard_guard,
++                )}
++              />
++            </>
++          ) : null}
++        </div>
++      </main>
++    </div>
++  )
++}
+diff --git a/web/frontend/src/routeTree.gen.ts b/web/frontend/src/routeTree.gen.ts
+index b2f85e82..0dd47997 100644
+--- a/web/frontend/src/routeTree.gen.ts
++++ b/web/frontend/src/routeTree.gen.ts
+@@ -9,6 +9,7 @@
+ // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
+ 
+ import { Route as rootRouteImport } from './routes/__root'
++import { Route as RuntimeRouteImport } from './routes/runtime'
+ import { Route as ModelsRouteImport } from './routes/models'
+ import { Route as LogsRouteImport } from './routes/logs'
+ import { Route as LauncherSetupRouteImport } from './routes/launcher-setup'
+@@ -24,6 +25,11 @@ import { Route as AgentToolsRouteImport } from './routes/agent/tools'
+ import { Route as AgentSkillsRouteImport } from './routes/agent/skills'
+ import { Route as AgentHubRouteImport } from './routes/agent/hub'
+ 
++const RuntimeRoute = RuntimeRouteImport.update({
++  id: '/runtime',
++  path: '/runtime',
++  getParentRoute: () => rootRouteImport,
++} as any)
+ const ModelsRoute = ModelsRouteImport.update({
+   id: '/models',
+   path: '/models',
+@@ -105,6 +111,7 @@ export interface FileRoutesByFullPath {
+   '/launcher-setup': typeof LauncherSetupRoute
+   '/logs': typeof LogsRoute
+   '/models': typeof ModelsRoute
++  '/runtime': typeof RuntimeRoute
+   '/agent/hub': typeof AgentHubRoute
+   '/agent/skills': typeof AgentSkillsRoute
+   '/agent/tools': typeof AgentToolsRoute
+@@ -121,6 +128,7 @@ export interface FileRoutesByTo {
+   '/launcher-setup': typeof LauncherSetupRoute
+   '/logs': typeof LogsRoute
+   '/models': typeof ModelsRoute
++  '/runtime': typeof RuntimeRoute
+   '/agent/hub': typeof AgentHubRoute
+   '/agent/skills': typeof AgentSkillsRoute
+   '/agent/tools': typeof AgentToolsRoute
+@@ -138,6 +146,7 @@ export interface FileRoutesById {
+   '/launcher-setup': typeof LauncherSetupRoute
+   '/logs': typeof LogsRoute
+   '/models': typeof ModelsRoute
++  '/runtime': typeof RuntimeRoute
+   '/agent/hub': typeof AgentHubRoute
+   '/agent/skills': typeof AgentSkillsRoute
+   '/agent/tools': typeof AgentToolsRoute
+@@ -156,6 +165,7 @@ export interface FileRouteTypes {
+     | '/launcher-setup'
+     | '/logs'
+     | '/models'
++    | '/runtime'
+     | '/agent/hub'
+     | '/agent/skills'
+     | '/agent/tools'
+@@ -172,6 +182,7 @@ export interface FileRouteTypes {
+     | '/launcher-setup'
+     | '/logs'
+     | '/models'
++    | '/runtime'
+     | '/agent/hub'
+     | '/agent/skills'
+     | '/agent/tools'
+@@ -188,6 +199,7 @@ export interface FileRouteTypes {
+     | '/launcher-setup'
+     | '/logs'
+     | '/models'
++    | '/runtime'
+     | '/agent/hub'
+     | '/agent/skills'
+     | '/agent/tools'
+@@ -205,10 +217,18 @@ export interface RootRouteChildren {
+   LauncherSetupRoute: typeof LauncherSetupRoute
+   LogsRoute: typeof LogsRoute
+   ModelsRoute: typeof ModelsRoute
++  RuntimeRoute: typeof RuntimeRoute
+ }
+ 
+ declare module '@tanstack/react-router' {
+   interface FileRoutesByPath {
++    '/runtime': {
++      id: '/runtime'
++      path: '/runtime'
++      fullPath: '/runtime'
++      preLoaderRoute: typeof RuntimeRouteImport
++      parentRoute: typeof rootRouteImport
++    }
+     '/models': {
+       id: '/models'
+       path: '/models'
+@@ -357,6 +377,7 @@ const rootRouteChildren: RootRouteChildren = {
+   LauncherSetupRoute: LauncherSetupRoute,
+   LogsRoute: LogsRoute,
+   ModelsRoute: ModelsRoute,
++  RuntimeRoute: RuntimeRoute,
+ }
+ export const routeTree = rootRouteImport
+   ._addFileChildren(rootRouteChildren)
+diff --git a/web/frontend/src/routes/runtime.tsx b/web/frontend/src/routes/runtime.tsx
+new file mode 100644
+index 00000000..dda95cd3
+--- /dev/null
++++ b/web/frontend/src/routes/runtime.tsx
+@@ -0,0 +1,7 @@
++import { createFileRoute } from "@tanstack/react-router"
++
++import { VineyardGuardPage } from "@/components/vineyard-guard/vineyard-guard-page"
++
++export const Route = createFileRoute("/runtime")({
++  component: VineyardGuardPage,
++})

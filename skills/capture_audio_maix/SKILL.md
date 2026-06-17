@@ -1,7 +1,7 @@
 ---
 name: capture_audio_maix
 exec_type: python
-command: python3 run.py
+command: ./run.py
 input_format: env
 output_format: json
 timeout: 30

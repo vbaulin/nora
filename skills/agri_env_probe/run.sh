@@ -3,8 +3,8 @@
 # Generic I2C Environmental Probe for LicheeRV Nano
 # Example: Reading an SHT3x or AHT20 sensor on /dev/i2c-1
 
-BUS="/dev/i2c-1"
-ADDR="0x44" # Standard SHT31 address
+BUS="${SKILL_BUS:-/dev/i2c-1}"
+ADDR="${SKILL_ADDRESS:-0x44}" # Standard SHT31 address
 
 # Check if i2c-tools are installed
 if ! command -v i2cget >/dev/null 2>&1; then

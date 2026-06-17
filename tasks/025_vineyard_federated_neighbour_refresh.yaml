@@ -1,0 +1,37 @@
+- id: vineyard_federated_neighbour_refresh
+  name: "Vineyard Federated Neighbour Refresh"
+  priority: 7
+  status: template
+  steps:
+    - id: health
+      action: call_skill
+      parameters:
+        skill_name: vineyard_disease_risk
+        repo_path: /root/goidanich
+        mode: health
+      expect:
+        status: success
+      timeout: 30
+      on_fail: block
+    - id: refresh_neighbours
+      action: call_skill
+      parameters:
+        skill_name: vineyard_disease_risk
+        repo_path: /root/goidanich
+        mode: sync_neighbours
+        neighbours_file: neighbours.yaml
+        neighbour_radius_km: 15
+      expect:
+        status: success
+      timeout: 180
+      on_fail: block
+    - id: latest_neighbours
+      action: call_skill
+      parameters:
+        skill_name: vineyard_disease_risk
+        repo_path: /root/goidanich
+        mode: latest_neighbours
+        neighbours_file: neighbours.yaml
+      expect:
+        status: success
+      timeout: 20

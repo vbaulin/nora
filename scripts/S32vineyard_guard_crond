@@ -1,0 +1,42 @@
+#!/bin/sh
+
+CROND=/usr/sbin/crond
+CRON_DIR=/etc/crontabs
+ROOT_CRON=/etc/crontabs/root
+TICK=/root/.picoclaw/workspace/scripts/vineyard_guard_tick.sh
+
+start() {
+    mkdir -p "$CRON_DIR"
+    touch "$ROOT_CRON"
+    if [ -x "$TICK" ] && ! grep -q "$TICK" "$ROOT_CRON"; then
+        echo "*/5 * * * * $TICK" >> "$ROOT_CRON"
+    fi
+    if pidof crond >/dev/null 2>&1; then
+        echo "vineyard guard crond already running"
+        return 0
+    fi
+    echo "Starting vineyard guard crond..."
+    "$CROND" -c "$CRON_DIR" -l 8
+}
+
+stop() {
+    echo "Stopping vineyard guard crond..."
+    for pid in $(pidof crond 2>/dev/null); do
+        kill "$pid" 2>/dev/null
+    done
+}
+
+case "$1" in
+    start) start ;;
+    stop) stop ;;
+    restart) stop; sleep 1; start ;;
+    status)
+        if pidof crond >/dev/null 2>&1; then
+            echo "vineyard guard crond running: $(pidof crond)"
+            exit 0
+        fi
+        echo "vineyard guard crond not running"
+        exit 1
+        ;;
+    *) echo "Usage: $0 {start|stop|restart|status}"; exit 1 ;;
+esac

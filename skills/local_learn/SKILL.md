@@ -1,7 +1,7 @@
 ---
 name: local_learn
 exec_type: python
-command: train.py
+command: ./run.py
 input_format: stdin
 output_format: json
 timeout: 60

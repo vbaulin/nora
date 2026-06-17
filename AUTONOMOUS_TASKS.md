@@ -12,6 +12,10 @@ picoClaw decides intent once
 
 This is powerful because long-term observation is mostly patience, not reasoning. A grape cluster does not need a model call every hour; it needs consistent lighting notes, image paths, color indices, object counts, and a compact trend summary.
 
+Hardware access must still go through nano-os-agent. picoClaw should not run
+camera, TPU, GPIO, I2C, PWM, ADC, or audio commands directly. If a chain needs a
+new primitive, create a skill or task step and let the executor run it.
+
 ## Chain Primitives
 
 Tasks support ordinary ordered steps plus long-running repeat blocks:

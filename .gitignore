@@ -12,14 +12,33 @@ yolo_detect
 *.cvimodel
 *.jsonl
 *.tsv
+*.db
+*.sqlite
+*.sqlite3
 results.tsv
 experiments.jsonl
 state.json
 /tmp/*
+results/
+artifacts/
+models/*.json
+
+# Local secrets and board identity
+.env
+.env.*
+!.env.example
+telegram.env
+*.key
+*.pem
+*_ed25519
 
 # Logs & OS
 *.log
 .DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
 
 # Go
 vendor/

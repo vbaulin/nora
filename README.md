@@ -1,18 +1,20 @@
-# Nano-os-agent - Autonomous Hardware Executor for picoClaw
+# nano-os-agent: Deterministic Executor for Autonomous Scientific Experiments
 
 ![Nano-os-agent](images/Nano-os-Agent.jpg)
 
-**nano-os-agent** turns a 10$ LicheeRV Nano into a patient, local hardware researcher. It is the deterministic body for **picoClaw**: picoClaw decides goals and asks for reasoning over WiFi, while nano-os-agent runs camera, TPU, microphone, sensors, skills, retries, journals, and long-term monitoring on the board.
+**nano-os-agent** turns a low-cost LicheeRV Nano into a patient autonomous experiment station. It is the deterministic body for **picoClaw**: picoClaw decides goals and asks for reasoning over WiFi, while nano-os-agent runs camera, TPU, microphone, sensors, skills, retries, journals, and long-term monitoring on the board.
 
-The advance is simple and powerful: the LLM does not babysit hardware. It gives intent once. With 1W power consumption the board acts for minutes, hours, or days.
+The central claim is simple: an LLM should design or revise experiments, not babysit the hardware loop. It gives intent once. With about 1 W power consumption the board can act for minutes, hours, or days, recording evidence even when the LLM is offline.
 
-Such low cost board becomes really interesting when we stop thinking of it as "camera + mic + TPU" and start thinking of it as a **low-cost autonomous experiment station**:
+The same runtime can monitor a vineyard, count Petri dish colonies, run microscope timelapse observations, detect reaction endpoints, build field datasets, or verify robotic actions. The useful abstraction is not "camera + mic + TPU"; it is a small scientific agent running a closed evidence loop:
 
 ```text
 observe -> perturb -> measure -> learn -> summarize
 ```
 
-It can watch grapes ripen, detect grass stress, run lab protocols, verify robot actions, collect datasets, and promote new skills from local evidence.
+The current end-to-end reference deployment is Vineyard Guard: a field board that runs disease-risk models, weather forecasts, Telegram notifications, Supabase synchronization, and farmer feedback capture. That application is intentionally visible in this repository because it exercises the whole stack under real timing, network, and operational constraints.
+
+The same executor can also watch grapes ripen, detect grass stress, run lab protocols, verify robot actions, collect datasets, and promote new skills from local evidence.
 It can also run bounded active-inference-style loops: maintain a small belief state, choose the next local action, observe the result, and update the belief without waking the LLM.
 
 ![LicheeRV Nano Hardware Interface](images/LicheeRV%20Nano.jpg)
@@ -21,7 +23,7 @@ It can also run bounded active-inference-style loops: maintain a small belief st
 
 ## Why This Matters
 
-Most AI hardware projects fail at the boundary between language and physics. The model can plan, but the board has driver quirks, memory pressure, camera initialization, NPU model formats, audio contention, flaky sensors, and slow environmental change.
+Most AI hardware projects fail at the boundary between language and physics. The model can plan, but real experiments have driver quirks, memory pressure, camera initialization, NPU model formats, audio contention, flaky sensors, changing illumination, slow biological dynamics, and strict timing requirements.
 
 nano-os-agent makes that boundary boring:
 
@@ -30,13 +32,60 @@ nano-os-agent makes that boundary boring:
 - **Skills are the evolving hands**: camera, TPU, microphone, GPIO, I2C, color analysis, event detection, learned classifiers, and future board-specific abilities.
 - **Journals are memory**: every experiment creates before/after metrics and compact JSONL evidence that picoClaw can read later.
 
+The Vineyard Guard deployment is the working example of this split under field
+conditions. picoClaw asks for a daily risk update or neighbour refresh;
+nano-os-agent runs a locked skill/task; and the adjacent Goidanich project
+handles Supabase agents, feedback events, model deltas, released shared models,
+and SQLite risk rows. See
+[picoClaw, nano-os-agent, and Goidanich coordination](PICOCLAW_GOIDANICH_COORDINATION.md).
+
+## Hardware Boundary Contract
+
+picoClaw should never treat the board as a full Linux machine and start poking
+camera, TPU, GPIO, I2C, PWM, or audio devices directly. Hardware access goes
+through nano-os-agent:
+
+```text
+picoClaw intent
+  -> MCP tool or task YAML
+  -> nano-os-agent skill/native handler
+  -> hardware
+  -> JSON result + experiment journal
+```
+
+Bad pattern:
+
+```text
+picoClaw shell -> v4l2-ctl / cvi_tdl_yolo / i2cset / sysfs PWM write
+```
+
+Good pattern:
+
+```text
+picoClaw -> call MCP capture_image
+picoClaw -> write task calling run_yolo
+picoClaw -> create/validate/promote a skill
+```
+
+This keeps retries, timeouts, memory pressure, state, safety policy, and
+experiment evidence in one deterministic place.
+
+For the short version that should be loaded into picoClaw itself, use
+[PICOCLAW_ORCHESTRATOR_PROMPT.md](PICOCLAW_ORCHESTRATOR_PROMPT.md).
+
 ## Application Atlas
 
-Each application is a different way to use the same core loop: local sensing, local action, compact evidence, and occasional high-level reasoning.
+Each application is a different way to use the same core loop: local sensing, local action, compact evidence, and occasional high-level reasoning. Vineyard Guard is listed first because it is the current complete reference deployment; the runtime itself is not limited to agriculture.
 
 - [Autonomous vineyard and plant research](docs/applications/vineyard-plant-research.md) - phenology, ripeness, leaf stress, wetness, and growth trends.
+- [Vineyard disease risk models](docs/applications/vineyard-disease-risk-models.md) - Goidanich, Rossi, powdery mildew priors, personalized risk, and farmer feedback.
+- [Vineyard Guard runtime](VINEYARD_GUARD.md) - the field-board application layer: daily reports, Telegram policy, Supabase sync, product catalog, and farm-health hardware routing.
+- [picoClaw, nano-os-agent, and Goidanich coordination](PICOCLAW_GOIDANICH_COORDINATION.md) - smooth task/skill control for cron jobs, neighbour refresh, and federated learning.
+- [PicoClaw gateway board sync](docs/picoclaw-gateway-board-sync.md) - rebuild and deploy the PicoClaw launcher/gateway pair without fragmenting skills.
+- [PicoClaw webapp and nano-os-agent integration](docs/picoclaw-nano-webapp-integration.md) - `/runtime` UI for platform modules, installed apps, hardware discovery, tasks, skills, journals, Telegram, and Vineyard Guard state.
 - [Grass and field motion intelligence](docs/applications/grass-field-motion.md) - wind proxy, water stress, mowing events, and day/night color changes.
 - [Automatic lab experiment runner](docs/applications/automatic-lab-experiments.md) - timed sample observation, reaction endpoints, liquid levels, germination, and protocol search.
+- [Microscope timelapse station](docs/applications/microscope-timelapse.md) - focus checks, illumination normalization, segmentation, growth curves, and anomaly-triggered sampling.
 - [Wine fermentation monitor](docs/applications/wine-fermentation-monitor.md) - alcohol-conversion proxies, pH/temperature trends, bubbling, turbidity, and batch knowledge graphs.
 - [Petri dish colony counting](docs/applications/petri-colony-counting.md) - colony count, growth curves, contamination cues, inhibition zones, and treatment/control comparison.
 - [Closed-loop robot manipulation](docs/applications/robot-manipulation.md) - visual servoing, actuation verification, safe retries, and local reflex loops.
@@ -54,7 +103,7 @@ flowchart LR
     U["User / Goal"] --> P["picoClaw<br/>planner + LLM gateway"]
     P -->|"writes task YAML<br/>or calls MCP tool"| N["nano-os-agent<br/>deterministic Go executor"]
     N --> C["Camera<br/>CSI / Maix / SDK"]
-    N --> T["TPU / NPU<br/>cvimodel + TDL"]
+    N --> T["TPU / NPU<br/>Maix Python + cvimodel"]
     N --> M["Microphone<br/>audio events"]
     N --> S["Sensors<br/>I2C / ADC / PWM / system"]
     N --> K["Skills<br/>native + compiled + adapters"]
@@ -189,7 +238,8 @@ prototype quickly -> validate with repeated experiments -> rewrite as compiled h
 The LicheeRV Nano gives the agent a compact but serious sensor/compute stack:
 
 - **Camera**: CSI MIPI capture, frame journaling, color indices, visual change detection.
-- **TPU/NPU**: INT8 `.cvimodel` inference through Cvitek/Sophgo TDL paths.
+- **TPU/NPU**: INT8 `.cvimodel` inference through the Maix Python `run_yolo`
+  skill, with CVI/TDL paths kept as fallback/research routes.
 - **Microphone**: audio capture and local event detection.
 - **System probes**: memory, thermal, video devices, dmesg, I2C, ADC, PWM, GPIO.
 - **MCP server**: picoClaw can call board tools directly.
@@ -202,7 +252,7 @@ Typical tools:
 - `capture_image` - capture a CSI frame.
 - `capture_audio` - record a short WAV sample.
 - `capture_video` - record a short video clip.
-- `run_yolo` - run TPU/NPU detection and attach perception atoms when possible.
+- `run_yolo` - run Maix Python YOLOv8/YOLOv11 `.cvimodel` detection and attach perception atoms when possible.
 - `analyze_image` - convert detections into structured perception atoms.
 - `scan_i2c` - scan an I2C bus.
 - `probe_cvitek` - inspect camera/NPU related board state.
@@ -252,6 +302,10 @@ Run on the board:
 The agent scans `tasks/*.yaml`, exposes MCP on `0.0.0.0:9600`, writes state to `state.json`, and appends experiment evidence to the configured journal.
 
 For board setup, library paths, and CMA notes, see [INSTALL_BOARD.md](INSTALL_BOARD.md).
+
+For the PicoClaw launcher/gateway rebuild used by the board webapp and
+Telegram runtime, see
+[PicoClaw gateway board sync](docs/picoclaw-gateway-board-sync.md).
 
 ## Stability Notes
 

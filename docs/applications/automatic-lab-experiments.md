@@ -113,6 +113,7 @@ This is where the board starts acting like an experimenter, not just a camera.
 
 Specialized lab applications:
 
+- [Microscope timelapse station](microscope-timelapse.md)
 - [Wine fermentation monitor](wine-fermentation-monitor.md)
 - [Petri dish colony counting](petri-colony-counting.md)
 

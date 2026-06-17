@@ -2,11 +2,11 @@
 
 ![Nano-os-agent](images/Nano-os-Agent.jpg)
 
-**nano-os-agent** turns a low-cost LicheeRV Nano into a patient autonomous experiment station. It is the deterministic body for **picoClaw**: picoClaw decides goals and asks for reasoning over WiFi, while nano-os-agent runs camera, TPU, microphone, sensors, skills, retries, journals, and long-term monitoring on the board.
+**nano-os-agent** turns a low-cost [LicheeRV Nano board](https://wiki.sipeed.com/hardware/en/lichee/RV_Nano/1_intro.html) (~$10) into a patient autonomous experiment station. It is the deterministic body for **[picoClaw](https://picoclaw.io/)**: Ultra-light-weight AI agent adapted for such board. This tool makes a separation of stochastic intelligence from deterministic execution. PicoClaw decides goals and asks for reasoning over WiFi, while nano-os-agent runs camera, TPU, microphone, sensors, skills, retries, journals, and long-term monitoring on the board. PicoClaw uses OS-level tools to orchestrate nano-os-agent, providing robust execution with built-in fault tolerance and automated recovery.
 
-The central claim is simple: an LLM should design or revise experiments, not babysit the hardware loop. It gives intent once. With about 1 W power consumption the board can act for minutes, hours, or days, recording evidence even when the LLM is offline.
+The central claim is simple: AI should design or revise experiments, not babysit the hardware loop. It gives intent once. With about 1 W power consumption the board can act for minutes, hours, or days, recording real-world evidence and registering the skill only when all real-world checks and experiments are passed. The original picoClaw gate was patched in such a way that before replying to user the board always checks the skills and runs real experiments and not replying from memory.
 
-The same runtime can monitor a vineyard, count Petri dish colonies, run microscope timelapse observations, detect reaction endpoints, build field datasets, or verify robotic actions. The useful abstraction is not "camera + mic + TPU"; it is a small scientific agent running a closed evidence loop:
+It is designed to be universal. The same runtime can monitor a vineyard, count Petri dish colonies, run microscope timelapse observations, detect reaction endpoints, build field datasets, or verify robotic actions. The useful abstraction is not "camera + mic + TPU"; it is a small scientific agent running a closed evidence loop:
 
 ```text
 observe -> perturb -> measure -> learn -> summarize

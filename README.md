@@ -167,8 +167,7 @@ for vendor bindings or early prototypes.
 ## Proactive Scientific Companion
 
 The proactive loop is an evidence memory plus an
-`observe -> propose -> confirm` protocol. It is not a second uncontrolled
-agent runtime.
+`observe -> propose -> confirm` protocol.
 
 1. Read current structured observations, artifacts, and released task results.
 2. Preserve provenance and distinguish measurement, confirmed fact, public

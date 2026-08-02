@@ -16,6 +16,11 @@ class ProactiveDeploymentContractTest(unittest.TestCase):
         self.assertIn('proactive-field-agent evidence-only observe check failed', script)
         self.assertIn('proactive-field-agent:proactive_field_agent', script)
 
+    def test_board_sync_installs_season_climate_skill_and_discovery_link(self):
+        script = (ROOT / "scripts" / "sync_vineyard_board.sh").read_text(encoding="utf-8")
+        self.assertIn("vineyard_season_climate", script)
+        self.assertIn("vineyard-season-climate:vineyard_season_climate", script)
+
     def test_busybox_tick_runs_research_after_daily_alert_and_sends_outbox(self):
         script = (ROOT / "scripts" / "vineyard_guard_tick.sh").read_text(encoding="utf-8")
         alert = script.index("run_once alert")

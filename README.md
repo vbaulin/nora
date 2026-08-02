@@ -166,16 +166,39 @@ for vendor bindings or early prototypes.
 
 ## Proactive Scientific Companion
 
-The proactive loop is an evidence memory plus an
-`observe -> propose -> confirm` protocol.
+The companion converts a stream of measurements into a sparse sequence of
+useful interactions. Its unit of work is not a conversation turn, but an
+evidence-linked proposal with a subject, reason, priority, provenance, and
+next observation.
 
-1. Read current structured observations, artifacts, and released task results.
-2. Preserve provenance and distinguish measurement, confirmed fact, public
-   source, and proposal.
-3. Detect one declared change, discrepancy, or missing parameter.
-4. Produce at most one bounded next proposal for the subject.
-5. Ask for confirmation before any consequential write or operation.
-6. Record the human decision and later outcome without claiming causality.
+| Proactive capability | Observable behaviour |
+|---|---|
+| **Evidence-triggered attention** | A scheduled `tick` reads fresh artifacts, task verdicts, field profiles, and confirmed operations, then reacts to a declared change, discrepancy, or missing parameter. |
+| **One high-value question** | The runtime ranks candidate proposals and creates at most one new proposal per subject, reducing repeated prompts while preserving unresolved questions. |
+| **Context-bearing dialogue** | Every actionable prompt receives a `PF-<id>`. Informal replies are resolved to the pending subject, field, experiment, and disease before any record is drafted. |
+| **Structured confirmation** | Free-form observations and operations become a structured draft. Missing field, time, product, quantity, or outcome information is requested before a confirmed write. |
+| **Outcome follow-up** | After an operation-specific delay, the companion asks once for the later observation. The resulting sequence is retained as an association, providing material for subsequent experiments. |
+| **Selective notification** | A proposal reaches Telegram only above its configured priority threshold. Signals already covered by the daily briefing are marked `skipped_covered` rather than sent twice. |
+| **Bounded research** | An unresolved capability or failed experiment can open one focused source search. URLs and snippets enter a review proposal, not an operating instruction. |
+| **Experiment-to-memory learning** | nano-os-agent results enter reusable memory only when the executed steps are internally consistent and satisfy their declared expectations. |
+
+### A Proactive Cycle
+
+```text
+07:00  A scheduled tick observes a changed measurement and its source artifact.
+07:00  The companion selects one question: "Inspect sample A for morphology X. Ref: PF-12"
+09:14  The operator replies informally: "PF-12: absent; image looks clear."
+09:14  proposal_context resolves sample A + experiment X without writing.
+09:15  A structured observation is shown for confirmation.
+Day +2 The next tick links the confirmed outcome to the earlier operation,
+       retains temporal order, and proposes a controlled comparison if useful.
+```
+
+This cycle can begin from a sensor excursion, a camera-derived change, a failed
+task expectation, a missing experimental covariate, an overdue observation, or
+a source-attributed research result. The same machinery supports laboratory
+samples, machines, fermentation batches, robots, environmental stations, and
+field plots.
 
 The reference `proactive-field-agent` uses `PF-<id>` references so informal
 Telegram replies can be resolved to one field and one pending question. An
@@ -216,6 +239,9 @@ runtimes. Its public integration contracts cover:
 - catalog-checked, two-step farmer feedback and treatment confirmation;
 - board and field identity, SIGPAC-enriched provisioning, and Supabase sync;
 - field memory and proactive questions grounded in current model artifacts.
+- observed April-to-harvest climate summaries with monthly rainfall,
+  day/night conditions, heat/wetness indices, and calibration-ready Brix
+  features through `vineyard-season-climate`.
 
 Read [VINEYARD_GUARD.md](VINEYARD_GUARD.md), the
 [disease-model contract](docs/applications/vineyard-disease-risk-models.md),

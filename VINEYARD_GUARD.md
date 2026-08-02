@@ -71,6 +71,7 @@ vineyard-guard-scheduler
 vineyard-model-explainer
 black-rot-risk
 proactive-field-agent
+vineyard-season-climate
 ```
 
 Their source directories may use underscores on disk, but each `SKILL.md`

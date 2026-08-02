@@ -30,6 +30,7 @@ vineyard_guard_scheduler
 vineyard_model_explainer
 black_rot_risk
 proactive_field_agent
+vineyard_season_climate
 "
 
 echo "syncing contracts to $BOARD"
@@ -136,7 +137,8 @@ for skill in \
   vineyard_guard_scheduler \
   vineyard_model_explainer \
   black_rot_risk \
-  proactive_field_agent
+  proactive_field_agent \
+  vineyard_season_climate
 do
   umount "/root/.picoclaw/workspace/skills/$skill" 2>/dev/null || true
   rm -rf "/root/.picoclaw/workspace/skills/$skill"
@@ -155,7 +157,8 @@ for pair in \
   vineyard-guard-scheduler:vineyard_guard_scheduler \
   vineyard-model-explainer:vineyard_model_explainer \
   black-rot-risk:black_rot_risk \
-  proactive-field-agent:proactive_field_agent
+  proactive-field-agent:proactive_field_agent \
+  vineyard-season-climate:vineyard_season_climate
 do
   hyphen_name=${pair%%:*}
   underscore_name=${pair#*:}
@@ -230,7 +233,8 @@ case "$1" in
       vineyard_guard_scheduler \
       vineyard_model_explainer \
       black_rot_risk \
-      proactive_field_agent
+      proactive_field_agent \
+      vineyard_season_climate
     do
       if [ -d "/root/nano-os-agent/skills/$skill" ]; then
         umount "/root/.picoclaw/workspace/skills/$skill" 2>/dev/null || true
@@ -250,7 +254,8 @@ case "$1" in
       vineyard-guard-scheduler:vineyard_guard_scheduler \
       vineyard-model-explainer:vineyard_model_explainer \
       black-rot-risk:black_rot_risk \
-      proactive-field-agent:proactive_field_agent
+      proactive-field-agent:proactive_field_agent \
+      vineyard-season-climate:vineyard_season_climate
     do
       hyphen_name=${pair%%:*}
       underscore_name=${pair#*:}
@@ -276,7 +281,8 @@ case "$1" in
       vineyard_guard_scheduler \
       vineyard_model_explainer \
       black_rot_risk \
-      proactive_field_agent
+      proactive_field_agent \
+      vineyard_season_climate
     do
       umount "/root/.picoclaw/workspace/skills/$skill" 2>/dev/null || true
     done
@@ -315,6 +321,7 @@ for old, new in {
     "vineyard_model_explainer": "vineyard-model-explainer",
     "black_rot_risk": "black-rot-risk",
     "proactive_field_agent": "proactive-field-agent",
+    "vineyard_season_climate": "vineyard-season-climate",
 }.items():
     text = text.replace(old, new)
 data = json.loads(text)

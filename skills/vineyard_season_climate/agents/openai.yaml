@@ -1,0 +1,4 @@
+interface:
+  display_name: "Vineyard Season Climate"
+  short_description: "Summarize seasonal weather and ripening context"
+  default_prompt: "Calculate seasonal rainfall, temperature, humidity, heat, wetness, and ripening-context statistics for the configured vineyard fields."

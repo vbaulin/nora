@@ -165,7 +165,8 @@ def _plot_delivery_intent(question: str) -> bool:
         "vineyard", "goidanich", "mildew", "mildiu", "oidi", "oïdi",
         "oidium", "disease", "risk", "risc", "forecast", "pmi", "rossi",
         "downy", "powdery", "vinya", "vina", "vinedo", "enfermedad",
-        "malaltia", "riesgo",
+        "malaltia", "riesgo", "black rot", "black-rot", "blackrot",
+        "podridura negra", "podredumbre negra", "guignardia", "bidwellii",
     )
     has_request_verb = any(term in lower for term in PLOT_REQUEST_VERBS)
     if any(term in lower for term in vineyard_context_terms):
@@ -555,7 +556,9 @@ def _build_orchestrated_question(question: str) -> str:
     lower = question.lower()
     report_terms = (
         "vineyard", "goidanich", "mildew", "mildiu", "oidi", "oïdi",
-        "oidium", "disease model", "disease report", "risk report",
+        "oidium", "black rot", "black-rot", "blackrot", "podridura negra",
+        "podredumbre negra", "guignardia", "bidwellii", "disease model",
+        "disease report", "risk report",
         "risc", "forecast", "pmi", "rossi",
     )
     action_terms = (
@@ -587,14 +590,38 @@ def _build_orchestrated_question(question: str) -> str:
         )
         or plot_intent
     )
-    explicit_powdery = any(term in lower for term in ("powdery", "oidium", "oïdium"))
-    explicit_downy = "downy" in lower
+    explicit_disease = _mildew_disease_intent_text(question)
+    explicit_powdery = explicit_disease == "powdery_mildew"
+    explicit_downy = explicit_disease == "downy_mildew"
+    explicit_black_rot = _black_rot_intent_text(question)
+    ambiguous_rot = _ambiguous_rot_intent_text(question)
+    secondary_bunch_rot = _secondary_bunch_rot_intent_text(question)
     deterministic_route = ""
     weather_intent = any(term in lower for term in (
         "weather", "forecast", "temperature", "rain", "humidity", "meteo",
         "wind", "heatwave", "hot", "cold",
     ))
-    if product_or_treatment_advice:
+    if ambiguous_rot:
+        deterministic_route = (
+            "\n\n## Deterministic Rot Clarification Route\n"
+            "The local phrase `podridura negra` / `podredumbre negra` is ambiguous. "
+            "Do not call the Guignardia model, the mildew report, or any treatment route. "
+            "Call nano-os-agent skill `vineyard-model-explainer` once with:\n"
+            f"{{\"disease\":\"rot_clarification\",\"raw_text\":{json.dumps(question, ensure_ascii=False)}}}\n"
+            "Return its top-level `send_text` in the user's language and wait for the "
+            "farmer to choose between grapevine black rot caused by Guignardia bidwellii "
+            "and secondary grape bunch rots associated with Aspergillus/Penicillium."
+        )
+    elif secondary_bunch_rot and not explicit_black_rot:
+        deterministic_route = (
+            "\n\n## Deterministic Secondary Bunch-Rot Route\n"
+            "This request concerns secondary grape bunch rots, not grapevine black rot. "
+            "Do not call `black-rot-risk`. Call `vineyard-model-explainer` with "
+            f"{{\"disease\":\"secondary_rot\",\"raw_text\":{json.dumps(question, ensure_ascii=False)}}}. "
+            "State that the current deployment has no validated predictive model for this "
+            "disease complex and ask for symptoms/organism evidence before advice."
+        )
+    elif product_or_treatment_advice:
         field_id = _default_goidanich_field_id() or "<field id from agent_config.yaml>"
         deterministic_route = (
             "\n\n## Deterministic Treatment/Product Advice Route\n"
@@ -617,17 +644,27 @@ def _build_orchestrated_question(question: str) -> str:
         )
     elif vineyard_intent:
         field_id = _default_goidanich_field_id() or "<field id from agent_config.yaml>"
-        if explicit_powdery and not explicit_downy:
+        if explicit_black_rot:
+            route_body = (
+                "This is an explicit black-rot request. Call nano-os-agent skill "
+                "`black-rot-risk` once with:\n"
+                "{\"mode\":\"report\",\"days\":31,\"notify\":false}\n"
+                "Use only its black-rot text and black-rot attachments/media. Do not "
+                "attach downy-mildew or powdery-mildew plots.\n"
+            )
+        elif explicit_powdery and not explicit_downy:
             route_body = (
                 "Call nano-os-agent skill `daily-vineyard-briefing` once with:\n"
-                f"{{\"mode\":\"standard_report\",\"field\":\"{field_id}\","
+                f"{{\"mode\":\"single_disease_report\",\"field\":\"{field_id}\","
                 "\"disease\":\"powdery_mildew\",\"days\":31,\"notify\":false,\"board_only\":true}\n"
+                "Use only powdery-mildew text and powdery-mildew media.\n"
             )
         elif explicit_downy and not explicit_powdery:
             route_body = (
                 "Call nano-os-agent skill `daily-vineyard-briefing` once with:\n"
-                f"{{\"mode\":\"standard_report\",\"field\":\"{field_id}\","
+                f"{{\"mode\":\"single_disease_report\",\"field\":\"{field_id}\","
                 "\"disease\":\"downy_mildew\",\"days\":31,\"notify\":false,\"board_only\":true}\n"
+                "Use only downy-mildew text and downy-mildew media.\n"
             )
         else:
             route_body = (
@@ -636,6 +673,13 @@ def _build_orchestrated_question(question: str) -> str:
                 f"{{\"mode\":\"both_disease_report\",\"field\":\"{field_id}\","
                 "\"days\":31,\"notify\":false,\"board_only\":true,\"channel\":\"picoclaw_telegram\"}\n"
             )
+        report_scope = (
+            "This explicit black-rot report must include only black-rot text and black-rot images. "
+            if explicit_black_rot else
+            "This explicit disease report must include only the requested disease text and image. "
+            if explicit_powdery or explicit_downy else
+            "Generic reports must include both mildew disease images and both full texts. "
+        )
         deterministic_route = (
             "\n\n## Deterministic Vineyard Route\n"
             "This user request is a vineyard/Goidanich report intent. Do not answer from memory. "
@@ -647,8 +691,8 @@ def _build_orchestrated_question(question: str) -> str:
             "Do not also send `telegram.text_after_photo` if it duplicates `send_text`. "
             "If `attachments` or `telegram.media` contains multiple photos, send each "
             "unique attachment once. "
-            "Never replace this with a six-line prose summary. Generic reports must "
-            "include both disease images and both full texts."
+            "Never replace this with a six-line prose summary. "
+            f"{report_scope}"
         )
     elif weather_intent:
         deterministic_route = (
@@ -750,9 +794,69 @@ def _vineyard_risk_intent_text(content: str) -> bool:
     vineyard_terms = (
         "vineyard", "goidanich", "avgvstvs", "station d9", "cabernet franc",
         "downy", "powdery", "mildew", "mildiu", "oidi", "oïdi", "oidium",
-        "fungal", "pmi", "rossi", "treatment", "risk", "risc",
+        "black rot", "black-rot", "blackrot", "podridura negra",
+        "podredumbre negra", "guignardia", "bidwellii", "fungal", "pmi",
+        "rossi", "treatment", "risk", "risc",
     )
     return any(term in lower for term in vineyard_terms)
+
+
+def _secondary_bunch_rot_intent_text(content: str) -> bool:
+    lower = (content or "").lower()
+    return any(term in lower for term in (
+        "secondary bunch rot", "secondary bunch rots", "secondary grape rot",
+        "podridures secundàries", "podridura secundària",
+        "podredumbres secundarias", "podredumbre secundaria",
+        "aspergillus", "penicillium", "cladosporium", "clamidospora",
+    ))
+
+
+def _explicit_grapevine_black_rot_intent_text(content: str) -> bool:
+    lower = (content or "").lower()
+    return any(term in lower for term in (
+        "black rot", "black-rot", "blackrot", "guignardia", "bidwellii",
+        "phyllosticta ampelicida",
+    ))
+
+
+def _ambiguous_rot_intent_text(content: str) -> bool:
+    lower = (content or "").lower()
+    generic_local_name = any(term in lower for term in (
+        "podridura negra", "podredumbre negra",
+    ))
+    explicit_black_rot = _explicit_grapevine_black_rot_intent_text(lower)
+    secondary_rot = _secondary_bunch_rot_intent_text(lower)
+    comparison = any(term in lower for term in (
+        " o ", " or ", "refereixes", "refieres", "mean", "diferència",
+        "diferencia", "difference", "distinció", "distinción",
+    ))
+    if generic_local_name and not explicit_black_rot:
+        return True
+    return explicit_black_rot and secondary_rot and comparison
+
+
+def _black_rot_intent_text(content: str) -> bool:
+    return (
+        _explicit_grapevine_black_rot_intent_text(content)
+        and not _ambiguous_rot_intent_text(content)
+    )
+
+
+def _mildew_disease_intent_text(content: str) -> str:
+    lower = (content or "").lower()
+    if _black_rot_intent_text(lower):
+        return ""
+    powdery = any(term in lower for term in (
+        "powdery", "oidium", "oïdium", "oidi", "oïdi", "oídio", "oidio",
+    ))
+    downy = any(term in lower for term in (
+        "downy", "mildiu", "míldiu", "mildiú", "mildiou", "goidanich", "rossi",
+    ))
+    if powdery and not downy:
+        return "powdery_mildew"
+    if downy and not powdery:
+        return "downy_mildew"
+    return ""
 
 
 def _product_or_treatment_advice_text(content: str) -> bool:
@@ -771,15 +875,155 @@ def _product_or_treatment_advice_text(content: str) -> bool:
     ))
 
 
+def _proposal_decision_params(content: str) -> dict | None:
+    lower = _normalize_intent_text(content)
+    match = re.search(r"\bpf[\s_-]?(\d+)\b", lower, re.IGNORECASE)
+    if not match:
+        return None
+    decision_text = " ".join(re.sub(r"[^a-z0-9]+", " ", lower).split())
+
+    def has_phrase(phrases):
+        return any(
+            re.search(rf"(?:^| ){re.escape(phrase)}(?:$| )", decision_text)
+            for phrase in phrases
+        )
+
+    # A PF reply carrying a field outcome must enter proposal_context first.
+    # Treating "PF-12: cap simptoma" as proposal acceptance would discard the
+    # observation that the proactive message was explicitly asking us to learn.
+    if has_phrase((
+        "no symptoms", "without symptoms", "compatible symptoms", "false alarm",
+        "clean canopy", "clean inspection", "disease detected", "symptoms present",
+        "cap simptoma", "sense simptomes", "simptomes compatibles", "fals avis",
+        "dosser net", "malaltia detectada", "sin sintomas", "sintomas compatibles",
+        "falsa alarma", "dosel limpio", "enfermedad detectada",
+    )):
+        return {"proposal_id": int(match.group(1)), "decision": "", "note": ""}
+
+    decision_markers = (
+        ("accepted", (
+            "accept", "accepted", "approve", "approved", "aprovo", "accepto",
+            "acepto", "d acord", "de acuerdo",
+        )),
+        ("rejected", (
+            "reject", "rejected", "decline", "declined", "rebutjo", "descarto",
+            "rechazo", "no accepto", "no acepto", "no aprovo", "no apruebo",
+            "no estic d acord", "no hi estic d acord", "no estoy de acuerdo",
+            "do not accept", "don t accept", "not accepted",
+        )),
+        ("deferred", (
+            "defer", "deferred", "later", "postpone", "postponed", "mes tard",
+            "despres", "ajorno", "posposa", "aplaza", "mas tarde",
+        )),
+        ("corrected", (
+            "corrected", "correction", "corregeixo", "corregit", "correccio",
+            "corrijo", "corregido", "correccion",
+        )),
+    )
+    matched = [
+        value for value, markers in decision_markers if has_phrase(markers)
+    ]
+    # A negated acceptance intentionally matches both accepted and rejected;
+    # conflicting cues likewise fail closed and require one clarification.
+    decision = matched[0] if len(matched) == 1 else ""
+    return {
+        "proposal_id": int(match.group(1)),
+        "decision": decision,
+        "note": content if decision == "corrected" else "",
+    }
+
+
+def _general_field_operation_intent_text(content: str) -> bool:
+    lower = _normalize_intent_text(content)
+    return any(marker in lower for marker in (
+        "prun", "poda", "esporga", "mow", "sega", "desbross", "desbro",
+        "till", "cultivat", "llaur", "laboreo", "subsol", "irrig", "regat",
+        "riego", "fertil", "abon", "compost", "esmena", "cover crop",
+        "coberta vegetal", "cubierta vegetal", "harvest", "verema", "vendimia",
+        "collita", "planting", "plantat", "plantado", "replant", "install sensor",
+        "sensor install", "instal sensor", "sonda", "datalogger",
+    ))
+
+
+def _proactive_research_intent_text(content: str) -> bool:
+    lower = _normalize_intent_text(content)
+    research = any(marker in lower for marker in (
+        "research", "investigate", "search the web", "search internet", "literature",
+        "busca a internet", "cerca a internet", "investiga", "recerca", "estudi",
+        "find a solution", "troba una solucio", "busca una solucion",
+    ))
+    field_context = any(marker in lower for marker in (
+        "field", "vineyard", "vinya", "vinedo", "soil", "sol", "suelo", "sensor",
+        "crop", "cultiu", "cultivo", "canopy", "dosser", "planta",
+    ))
+    return research and field_context
+
+
+def _proactive_status_intent_text(content: str) -> bool:
+    lower = _normalize_intent_text(content)
+    return any(marker in lower for marker in (
+        "what have you learned", "what has the board learned", "what do you know about the field",
+        "que has apres", "que ha apres la placa", "que saps del camp",
+        "que has aprendido", "que sabe la placa", "que sabes del campo",
+        "field history", "historial del camp", "historial del campo",
+        "pending proposal", "pending proposals", "proposta pendent", "propostes pendents",
+        "propuesta pendiente", "propuestas pendientes", "proactive status",
+        "field observations", "observacions del camp", "observaciones del campo",
+    ))
+
+
+def _proactive_preflight(question: str) -> dict | None:
+    decision = _proposal_decision_params(question)
+    calls = []
+    results = []
+
+    def call(params):
+        tool_call = ToolCall(
+            name="proactive-field-agent",
+            args=json.dumps(params, ensure_ascii=False),
+        )
+        calls.append(tool_call)
+        results.append(_run_skill("proactive-field-agent", params))
+
+    base = {"repo_path": str(GOIDANICH_REPO_PATH), "notify": False}
+    if decision:
+        if decision["decision"]:
+            call({**base, "mode": "record_decision", **decision})
+            route = "record_decision"
+        else:
+            call({**base, "mode": "proposal_context", "raw_text": question})
+            route = "proposal_context"
+    elif _general_field_operation_intent_text(question):
+        call({**base, "mode": "draft_operation", "raw_text": question, "confirmed": False})
+        route = "draft_operation"
+    elif _proactive_research_intent_text(question):
+        call({**base, "mode": "research", "query": question, "reason": "Farmer-requested bounded research"})
+        route = "research"
+    elif _proactive_status_intent_text(question):
+        call({**base, "mode": "tick"})
+        call({**base, "mode": "status"})
+        route = "status"
+    else:
+        return None
+    return {"route": route, "tool_calls": calls, "results": results}
+
+
 def _has_current_vineyard_skill_call(response: PicoResponse) -> bool:
     for tool_call in response.tool_calls:
         name = (tool_call.name or "").strip()
         args = tool_call.args or ""
-        if name in {"daily-vineyard-briefing", "vineyard-disease-risk", "daily_vineyard_briefing", "vineyard_disease_risk"}:
+        if name in {
+            "daily-vineyard-briefing", "vineyard-disease-risk", "black-rot-risk",
+            "proactive-field-agent",
+            "daily_vineyard_briefing", "vineyard_disease_risk", "black_rot_risk",
+            "proactive_field_agent",
+        }:
             return True
         if name in {"call_skill", "run_skill", "skill"} and (
             "daily-vineyard-briefing" in args or "vineyard-disease-risk" in args
             or "daily_vineyard_briefing" in args or "vineyard_disease_risk" in args
+            or "black-rot-risk" in args or "black_rot_risk" in args
+            or "proactive-field-agent" in args or "proactive_field_agent" in args
         ):
             return True
     return False
@@ -885,24 +1129,32 @@ def _direct_vineyard_plot_response(question: str) -> PicoResponse | None:
     if not _plot_delivery_intent(question):
         return None
 
+    black_rot = _black_rot_intent_text(question)
+    mildew_disease = _mildew_disease_intent_text(question)
+    skill_name = "black-rot-risk" if black_rot else "daily-vineyard-briefing"
     params = {
-        "mode": "both_disease_report",
+        "mode": "report" if black_rot else "single_disease_report" if mildew_disease else "both_disease_report",
         "repo_path": str(GOIDANICH_REPO_PATH),
         "days": 31,
         "notify": False,
-        "board_only": True,
-        "channel": "picoclaw_telegram",
     }
+    if not black_rot:
+        params.update({
+            "board_only": True,
+            "channel": "picoclaw_telegram",
+        })
+        if mildew_disease:
+            params["disease"] = mildew_disease
     field_id = _default_goidanich_field_id()
     if field_id:
         params["field"] = field_id
 
     response = PicoResponse()
     response.tool_calls.append(ToolCall(
-        name="daily-vineyard-briefing",
+        name=skill_name,
         args=json.dumps(params, ensure_ascii=False),
     ))
-    result = _run_skill("daily-vineyard-briefing", params)
+    result = _run_skill(skill_name, params)
     payload = result if isinstance(result, dict) else {
         "status": "error",
         "error": str(result),
@@ -917,14 +1169,52 @@ def _direct_vineyard_plot_response(question: str) -> PicoResponse | None:
     )
     if not text:
         if payload.get("status") == "success":
-            text = "Vineyard plots are ready."
+            text = "Black-rot plot is ready." if black_rot else "Vineyard plots are ready."
         else:
             detail = payload.get("error") or payload.get("stderr") or "unknown error"
-            text = f"Could not generate vineyard plots: {detail}"
+            target = "black-rot plot" if black_rot else "vineyard plots"
+            text = f"Could not generate {target}: {detail}"
         payload = dict(payload)
         payload["send_text"] = text
         payload["telegram"] = {**telegram, "method": "sendMessage", "text": text}
 
+    response.payload = payload
+    response.text = text
+    return response
+
+
+def _direct_rot_clarification_response(question: str) -> PicoResponse | None:
+    if not _ambiguous_rot_intent_text(question):
+        return None
+
+    params = {
+        "disease": "rot_clarification",
+        "raw_text": question,
+    }
+    response = PicoResponse(tool_calls=[ToolCall(
+        name="vineyard-model-explainer",
+        args=json.dumps(params, ensure_ascii=False),
+    )])
+    result = _run_skill("vineyard-model-explainer", params)
+    payload = result if isinstance(result, dict) else {
+        "status": "error",
+        "error": str(result),
+    }
+    text = payload.get("send_text") or payload.get("confirmation_question") or payload.get("message")
+    if not text:
+        text = (
+            "Cal concretar si et refereixes al Black rot de la vinya per "
+            "Guignardia bidwellii o a les podridures secundàries del raïm."
+        )
+    payload = dict(payload)
+    payload["send_text"] = text
+    payload["must_attach_image"] = False
+    payload["attachments"] = []
+    payload["media"] = []
+    payload["telegram"] = {
+        "method": "sendMessage",
+        "text": text,
+    }
     response.payload = payload
     response.text = text
     return response
@@ -974,7 +1264,32 @@ class PicoclawAgent:
         session_id = self._session_id
         response   = PicoResponse()
 
+        proactive = _proactive_preflight(question)
         outbound = _build_orchestrated_question(question)
+        if proactive:
+            response.tool_calls.extend(proactive["tool_calls"])
+            if on_tool_call:
+                for tool_call in proactive["tool_calls"]:
+                    await on_tool_call(tool_call)
+            evidence = json.dumps({
+                "route": proactive["route"],
+                "results": proactive["results"],
+            }, ensure_ascii=False, indent=2)
+            outbound += (
+                "\n\n## Mandatory Current Proactive Evidence\n"
+                "The local proactive-field-agent was already called in this turn. "
+                "Do not call it again and do not use session memory. Read the structured "
+                "result below, then answer in the user's language as concise human prose. "
+                "Never paste raw JSON. For a draft operation, ask exactly for missing fields "
+                "or confirmation and do not claim it was saved. For a proposal decision, "
+                "state whether it was recorded and never claim an automatic field action. "
+                "For proposal_context, obey next_route: use farmer-feedback-capture for a "
+                "disease/treatment outcome or draft_operation for a general-operation outcome; "
+                "nothing is written before the farmer confirms the resulting draft.\n"
+                "```json\n"
+                f"{evidence}\n"
+                "```"
+            )
         logger.debug("Send: %s", question)
 
         await ws.send(json.dumps({
@@ -1063,6 +1378,13 @@ class PicoclawAgent:
         on_tool_call=None,  # async callable(ToolCall)
     ) -> PicoResponse:
         async with self._lock:
+            clarification_response = _direct_rot_clarification_response(question)
+            if clarification_response:
+                if on_tool_call:
+                    for tool_call in clarification_response.tool_calls:
+                        await on_tool_call(tool_call)
+                return clarification_response
+
             direct_response = _direct_vineyard_plot_response(question)
             if direct_response:
                 if on_tool_call:

@@ -16,7 +16,6 @@ parameters:
     default: /root/.picoclaw/workspace/goidanich
   - name: disease
     type: string
-    default: downy_mildew
   - name: field
     type: string
   - name: feedback_type
@@ -77,9 +76,21 @@ message.
 4. Only when the farmer confirms or corrects it, call this skill again with
    `raw_text=<corrected/full message>` and `confirmed=true`.
 
+For a short reply to `PF-<id>`, first call `proactive-field-agent
+mode=proposal_context`. Pass its `field` and `disease` to this skill only when
+it resolves exactly one disease. If it returns `confirmation_required`, ask
+that question and do not write.
+
 In confirmed mode the wrapper records feedback locally via
 `vineyard-disease-risk mode=record_feedback`, refreshes the disease-specific
 dashboard, and pushes the event to Supabase unless `skip_supabase=true`.
+
+Do not default an ambiguous inspection reply to downy mildew. Explicit
+`black rot`, *Guignardia bidwellii*, or *Phyllosticta ampelicida* maps to
+`disease=black_rot`; compatible symptoms map to `detected_black_rot`. Catalan
+`cap símptoma` and `fals avís`, Spanish `sin síntomas` and `falsa alarma`, and
+their English equivalents are valid outcomes. If disease or field cannot be
+resolved from the message/current proposal, ask before writing.
 
 ## Treatment normalization
 

@@ -639,6 +639,7 @@ def health(repo):
         "network_config.yaml",
         "disease_tasks.yaml",
         "daily_update.py",
+        "black_rot.py",
         "predict_period.py",
         "record_feedback.py",
         "personalized_predict.py",
@@ -736,6 +737,8 @@ def main():
                 cmd.append("--skip-fill-gaps")
             if env("SKIP_FORECAST", "").lower() == "true":
                 cmd.append("--skip-forecast")
+            if env("ALLOW_FALLBACK_PLOT", "").lower() == "true":
+                cmd.append("--allow-fallback-plot")
             result = run(repo, cmd, timeout=int(env("TIMEOUT", "900")))
             if isinstance(result.get("stdout"), dict) and isinstance(result["stdout"].get("plot"), str):
                 plot = result["stdout"]["plot"]

@@ -12,6 +12,9 @@ weather, biology, feedback, and federation model for vineyard mildew risk.
 - Rossi primary-infection comparison for downy mildew.
 - Personalized local risk trained from farmer feedback.
 - Powdery mildew prior models and PMI timing support.
+- VitiMeteo grapevine black-rot infection-index and incubation model for
+  *Guignardia bidwellii*, with a labelled
+  rain/RH leaf-wetness proxy when no wetness sensor is installed.
 - Supabase event/model sync when enabled.
 - Supabase neighbour refresh from active agents.
 - Period reports and dashboard plots.
@@ -27,6 +30,42 @@ skills/vineyard_disease_risk/
   SKILL.md
   run.sh
 ```
+
+Explicit black-rot requests use the additional board skill:
+
+```text
+skills/black_rot_risk/
+  SKILL.md
+  run.py
+  run.sh
+```
+
+Grapevine black rot is reported as infection degree-hours (`85`, `150`, and `300`
+event thresholds) and a `175` degree-day leaf-incubation projection. It is not
+reported as percentage disease probability. The skill preserves the local
+inoculum status and whether leaf wetness was measured or inferred.
+
+The term is pathogen-qualified deliberately: grapevine black rot caused by
+*Guignardia bidwellii* (syn. *Phyllosticta ampelicida*) is distinct from
+secondary bunch rots associated with *Aspergillus*, *Penicillium*, and other
+opportunistic fungi. The current secondary-bunch-rot concern is retained as
+field metadata, but Vineyard Guard does not yet claim a validated predictive
+model for that disease complex.
+
+The daily notification policy forwards a threshold-crossing VitiMeteo weather
+signal even when local inoculum is unknown. In that case it is explicitly an
+unconfirmed model signal, not diagnosed disease: the plot is attached and the
+farmer is asked to report compatible symptoms, no symptoms, or a false alarm.
+A statement that an expert has not personally observed the disease is retained
+as provenance, not converted into a regional presence/absence conclusion.
+
+The primary index requires leaf wetness. Boards without a leaf-wetness sensor
+use the explicit rain/RH >=95% proxy and also calculate a separate
+near-saturation sensitivity index for hours at RH 90-<95%. Crossing 85
+degree-hours in the sensitivity index creates a `wetness_uncertain_watch`; it
+does not rewrite the primary VitiMeteo index and is not a confirmed infection
+event. A primary value of zero therefore means that the proxy did not confirm
+wetness, not that disease probability is zero.
 
 Modes:
 
@@ -89,6 +128,13 @@ computed.
 - Neighbor/regional pressure is not EPI.
 - Do not say "no mildew" unless there is clean inspection or false-alarm feedback.
 - Powdery PMI is treatment-timing support, not an automatic treatment order.
+- A black-rot infection event is weather evidence conditional on inoculum, not
+  confirmation of symptoms or an automatic treatment order.
+- A threshold-crossing black-rot weather signal is delivered regardless of
+  inoculum status. Unknown inoculum adds a field-confirmation request and does
+  not turn the signal into a diagnosis or treatment order.
+- A black-rot wetness-uncertainty watch means canopy wetness is plausible but
+  unmeasured; inspect locally and prefer a calibrated leaf-wetness sensor.
 
 ## Why It Fits picoClaw + nano-os-agent
 

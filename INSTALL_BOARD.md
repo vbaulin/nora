@@ -55,7 +55,63 @@ scp nano-os-agent root@<board_ip>:/root/nano-os-agent
 
 Because we are using CGO_ENABLED=0, the Go compiler statically links the yaml.v3 library directly into the nano-os-agent binary. The board does not need to have Go or any YAML libraries installed
 
-## 4. Initialize Hardware
+## 5. Provision Vineyard Guard on an Existing SD Card
+
+This step is required only when the board will run the Vineyard Guard
+application. It configures a mounted Linux root filesystem; it does not format
+the card or modify the boot partition.
+
+1. Copy and edit the manifest:
+
+   ```bash
+   cp config/vineyard-board.example.json /tmp/my-board.json
+   ```
+
+2. Set a unique physical `board.id`. For every field, set a unique `field.id`,
+   GPS coordinates, variety, and either planting year or vine age. Also record
+   management, water regime, weather station when known, black-rot inoculum
+   evidence, phenology, and sensor availability.
+
+3. Validate and preview without writing:
+
+   ```bash
+   python3 scripts/provision_vineyard_sd.py \
+     --manifest /tmp/my-board.json \
+     --rootfs /Volumes/rootfs \
+     --dry-run
+   ```
+
+4. Resolve the official SIGPAC recinto and write the configuration:
+
+   ```bash
+   python3 scripts/provision_vineyard_sd.py \
+     --manifest /tmp/my-board.json \
+     --rootfs /Volumes/rootfs \
+     --fetch-sigpac \
+     --require-sigpac
+   ```
+
+On Linux, replace `/Volumes/rootfs` with the rootfs mount point. On a running
+board, use `--rootfs /`. If `agent_config.yaml` already exists, inspect it and
+then add `--force`; the script creates a timestamped backup.
+
+The following files are written:
+
+```text
+/root/.picoclaw/workspace/goidanich/agent_config.yaml
+/root/.picoclaw/workspace/goidanich/board_manifest.json
+/root/.picoclaw/board_inventory.json
+```
+
+Secrets are deliberately excluded. Copy the Goidanich `.env` and PicoClaw
+`telegram.env` separately with mode `0600`. Use a Supabase publishable/anon key
+on the board, never a service-role key.
+
+See
+[docs/vineyard-sd-card-provisioning.md](docs/vineyard-sd-card-provisioning.md)
+for SIGPAC ambiguity handling, metadata definitions, and verification.
+
+## 6. Initialize Hardware
 
 Before running vision tasks, you must initialize the CSI camera sensor. This is usually done via a one-time probe or by running the `sensor_test` utility:
 
@@ -65,7 +121,7 @@ chmod +x /root/nano-os-agent
 /root/nano-os-agent --init-sensor  # If implemented
 ```
 
-## 6. Usage
+## 7. Usage
 
 Run the agent in orchestrator mode:
 

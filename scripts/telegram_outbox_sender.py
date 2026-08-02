@@ -6,15 +6,84 @@ exactly the declared Telegram payload.
 """
 
 import argparse
+import datetime as dt
 import json
 import mimetypes
 import os
+import re
 import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+
+
+def split_recipient_values(value):
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        recipients = []
+        for item in value:
+            recipients.extend(split_recipient_values(item))
+        return recipients
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return [str(int(value))]
+    return [part for part in re.split(r"[\s,;]+", str(value).strip()) if part]
+
+
+def telegram_channel_configs(config):
+    configs = []
+    for key in ("channel_list", "channels"):
+        channels = config.get(key)
+        if isinstance(channels, dict):
+            telegram = channels.get("telegram")
+            if isinstance(telegram, dict):
+                configs.append(telegram)
+        elif isinstance(channels, list):
+            for item in channels:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name") or item.get("type") or "").lower()
+                if "telegram" in name:
+                    configs.append(item)
+    return configs
+
+
+def configured_direct_recipients(config_path):
+    try:
+        with open(config_path, "r", encoding="utf-8") as handle:
+            config = json.load(handle)
+    except (OSError, ValueError, TypeError):
+        return []
+    recipients = []
+    for channel in telegram_channel_configs(config):
+        settings = channel.get("settings") if isinstance(channel.get("settings"), dict) else {}
+        for value in (channel.get("allow_from"), settings.get("allow_from")):
+            for recipient in split_recipient_values(value):
+                # In a direct Telegram chat the numeric user id is also the chat id.
+                # Usernames are valid allow-list entries but are not reliable proactive
+                # destinations, so only numeric ids are inferred from allow_from.
+                if re.fullmatch(r"\d+", recipient):
+                    recipients.append(recipient)
+    return recipients
+
+
+def resolve_recipients(chat_id=None, chat_ids=None, config_path=None, include_allow_from=True):
+    recipients = []
+    recipients.extend(split_recipient_values(chat_id))
+    recipients.extend(split_recipient_values(chat_ids))
+    if include_allow_from and config_path:
+        recipients.extend(configured_direct_recipients(config_path))
+    unique = []
+    seen = set()
+    for recipient in recipients:
+        normalized = str(recipient).strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        unique.append(normalized)
+    return unique
 
 
 def encode_multipart(fields, files):
@@ -74,7 +143,7 @@ def save_payload(path, payload):
     os.replace(tmp, path)
 
 
-def send_payload(path, token, chat_id, dry_run=False, timeout=90):
+def send_payload(path, token, chat_id, dry_run=False, timeout=90, save_status=True):
     payload = load_payload(path)
     telegram = payload.get("telegram") or {}
     method = telegram.get("method") or ("sendPhoto" if payload.get("photo_path") else "sendMessage")
@@ -160,10 +229,57 @@ def send_payload(path, token, chat_id, dry_run=False, timeout=90):
             result = call_telegram(token, "sendMessage", fields, timeout=timeout)
         results.append(result)
 
-    if not dry_run:
+    if not dry_run and save_status:
         payload["status"] = "sent" if all(result.get("ok") for result in results) else "error"
         payload["telegram_result"] = results[0] if len(results) == 1 else results
         save_payload(path, payload)
+    else:
+        payload["telegram_result"] = results[0] if len(results) == 1 else results
+    return payload
+
+
+def send_payload_to_recipients(path, token, recipients, dry_run=False, timeout=90):
+    payload = load_payload(path)
+    delivered = {str(value) for value in payload.get("delivered_chat_ids") or []}
+    delivery_results = list(payload.get("telegram_results_by_chat") or [])
+    attempted = []
+    for chat_id in recipients:
+        chat_id = str(chat_id)
+        if chat_id in delivered:
+            continue
+        result_payload = send_payload(
+            path,
+            token,
+            chat_id,
+            dry_run=dry_run,
+            timeout=timeout,
+            save_status=False,
+        )
+        attempted.append(chat_id)
+        if dry_run:
+            continue
+        telegram_result = result_payload.get("telegram_result")
+        telegram_results = telegram_result if isinstance(telegram_result, list) else [telegram_result]
+        if not telegram_results or not all(
+            isinstance(result, dict) and result.get("ok") is True for result in telegram_results
+        ):
+            raise RuntimeError(f"Telegram rejected scheduled delivery to chat {chat_id}")
+        delivered.add(chat_id)
+        delivery_results.append({"chat_id": chat_id, "result": telegram_result})
+        payload = load_payload(path)
+        payload["status"] = "pending"
+        payload["delivered_chat_ids"] = sorted(delivered)
+        payload["telegram_results_by_chat"] = delivery_results
+        save_payload(path, payload)
+    if dry_run:
+        payload["dry_run_recipients"] = attempted
+        return payload
+    payload = load_payload(path)
+    payload["status"] = "sent"
+    payload["delivered_chat_ids"] = sorted(delivered)
+    payload["telegram_results_by_chat"] = delivery_results
+    payload.pop("last_error", None)
+    save_payload(path, payload)
     return payload
 
 
@@ -176,13 +292,26 @@ def record_send_error(path, payload, error):
     save_payload(path, payload)
 
 
+def payload_created_timestamp(path, payload):
+    created_at = payload.get("created_at")
+    if created_at:
+        try:
+            created = dt.datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=dt.timezone.utc)
+            return created.timestamp()
+        except ValueError:
+            pass
+    return os.path.getmtime(path)
+
+
 def skip_stale_pending(outbox, max_age_hours, dry_run=False):
     if max_age_hours <= 0:
         return []
     cutoff = time.time() - (max_age_hours * 3600)
     skipped = []
     for path, payload in pending_payloads(outbox):
-        if os.path.getmtime(path) >= cutoff:
+        if payload_created_timestamp(path, payload) >= cutoff:
             continue
         reason = f"pending payload older than {max_age_hours:g} hours"
         if dry_run:
@@ -269,12 +398,11 @@ def select_gateway_batch(outbox):
         if role_of(item[1]) in {"fleet_overview", "field_alert", "single_report"}
     ]
     overview_items = [item for item in selected if role_of(item[1]) == "fleet_overview"]
-    field_alert_items = [item for item in selected if role_of(item[1]) == "field_alert"]
-    if overview_items and len(field_alert_items) > int(os.environ.get("PICOCLAW_OUTBOX_MAX_FIELD_ALERTS", "2")):
+    if overview_items:
         selected = overview_items
         selected_paths = {path for path, _payload in selected}
         skipped = [
-            (path, payload, "multi-field alert group: sent fleet overview only")
+            (path, payload, "scheduled alert group: sent consolidated vineyard overview only")
             for path, payload in batch
             if path not in selected_paths
         ]
@@ -298,6 +426,17 @@ def main():
     parser.add_argument("--outbox", default=os.environ.get("PICOCLAW_OUTBOX", "/tmp/picoclaw_outbox"))
     parser.add_argument("--token", default=os.environ.get("TELEGRAM_BOT_TOKEN"))
     parser.add_argument("--chat-id", default=os.environ.get("TELEGRAM_CHAT_ID"))
+    parser.add_argument("--chat-ids", default=os.environ.get("TELEGRAM_CHAT_IDS"))
+    parser.add_argument(
+        "--config",
+        default=os.environ.get("PICOCLAW_CONFIG")
+        or os.path.join(os.environ.get("PICOCLAW_HOME", "/root/.picoclaw"), "config.json"),
+    )
+    parser.add_argument(
+        "--no-config-recipients",
+        action="store_true",
+        help="do not add numeric Telegram allow_from users as direct recipients",
+    )
     parser.add_argument("--once", action="store_true", help="send only the first pending payload")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
@@ -313,12 +452,27 @@ def main():
         help="skip pending Vineyard Guard payloads older than this; 0 disables",
     )
     args = parser.parse_args()
+    include_allow_from = not args.no_config_recipients and os.environ.get(
+        "PICOCLAW_TELEGRAM_INCLUDE_ALLOW_FROM", "true"
+    ).lower() not in {"0", "false", "no"}
+    recipients = resolve_recipients(
+        args.chat_id,
+        args.chat_ids,
+        args.config,
+        include_allow_from=include_allow_from,
+    )
 
     if not os.path.isdir(args.outbox):
         print(json.dumps({"ok": False, "error": f"outbox missing: {args.outbox}"}))
         return 1
-    if not args.dry_run and (not args.token or not args.chat_id):
-        print(json.dumps({"ok": False, "error": "TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are required"}))
+    if not recipients:
+        print(json.dumps({
+            "ok": False,
+            "error": "no Telegram recipients configured; set TELEGRAM_CHAT_ID/TELEGRAM_CHAT_IDS or numeric allow_from",
+        }))
+        return 1
+    if not args.dry_run and not args.token:
+        print(json.dumps({"ok": False, "error": "TELEGRAM_BOT_TOKEN is required"}))
         return 1
 
     sent = []
@@ -334,7 +488,9 @@ def main():
                 skipped.append({"path": path, "reason": reason})
         for path, _payload in selected:
             try:
-                sent.append(send_payload(path, args.token, args.chat_id, args.dry_run, timeout=args.timeout))
+                sent.append(send_payload_to_recipients(
+                    path, args.token, recipients, args.dry_run, timeout=args.timeout
+                ))
             except Exception as exc:
                 if not args.dry_run:
                     record_send_error(path, _payload, exc)
@@ -342,12 +498,20 @@ def main():
     else:
         for path in iter_pending(args.outbox):
             try:
-                sent.append(send_payload(path, args.token, args.chat_id, args.dry_run, timeout=args.timeout))
+                sent.append(send_payload_to_recipients(
+                    path, args.token, recipients, args.dry_run, timeout=args.timeout
+                ))
             except Exception as exc:
                 if not args.dry_run:
                     record_send_error(path, None, exc)
                 errors.append({"path": path, "error": str(exc)})
-    print(json.dumps({"ok": not errors, "sent": len(sent), "skipped": skipped, "errors": errors}, indent=2))
+    print(json.dumps({
+        "ok": not errors,
+        "sent": len(sent),
+        "recipient_count": len(recipients),
+        "skipped": skipped,
+        "errors": errors,
+    }, indent=2))
     return 0 if not errors else 2
 
 

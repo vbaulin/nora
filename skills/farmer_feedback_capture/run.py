@@ -103,6 +103,8 @@ def infer_field(text):
     matches.sort(key=lambda item: item[0], reverse=True)
     if matches:
         return matches[0][1].get("id", ""), fields
+    if len(fields) == 1:
+        return fields[0].get("id", ""), fields
     return "", fields
 
 
@@ -335,30 +337,68 @@ def infer_feedback_type(text):
     lower = text.lower()
     if any(w in lower for w in ("treated", "sprayed", "applied", "tractat", "tractament", "aplicat", "aplicado", "sulfat", "pulveritzat", "traté", "tratado", "apliqué", "aplique", "tratamiento")):
         return "treatment"
-    if any(w in lower for w in ("clean", "net", "no mildew", "sense míldiu", "sin mildiu", "no oidi", "no oïdi")):
+    if any(w in lower for w in (
+        "clean", "net", "no mildew", "sense míldiu", "sin mildiu", "no oidi", "no oïdi",
+        "cap símptoma", "cap simptoma", "sense símptomes", "sense simptomes",
+        "sin síntomas", "sin sintomas", "no symptoms", "no symptom", "no signs",
+    )):
         return "clean_inspection"
-    if any(w in lower for w in ("false alarm", "falsa alarma")):
+    if any(w in lower for w in (
+        "false alarm", "false positive", "falsa alarma", "falso positivo",
+        "fals avís", "fals avis", "falsa alerta", "fals positiu",
+    )):
         return "false_alarm"
     if any(w in lower for w in ("not inspected", "no inspeccionat", "no inspeccionado")):
         return "not_inspected"
     grade = re.search(r"\b(?:grade|grau|grado)\s*([0-4])\b", lower)
     if grade:
         return "grade", int(grade.group(1))
-    if any(w in lower for w in ("mildew", "míldiu", "mildiu", "oidi", "oïdi", "oidio")):
+    if any(w in lower for w in (
+        "black rot", "black-rot", "blackrot", "guignardia", "bidwellii",
+        "phyllosticta ampelicida",
+    )):
+        return "detected_black_rot"
+    if any(w in lower for w in (
+        "compatible symptoms", "símptomes compatibles", "simptomes compatibles",
+        "síntomas compatibles", "sintomas compatibles", "lesions compatibles",
+        "mildew", "míldiu", "mildiu", "oidi", "oïdi", "oidio",
+        "black rot", "guignardia", "bidwellii",
+    )):
         return "detected_mildew"
     return ""
 
 
 def infer_disease(text):
     lower = text.lower()
+    if any(w in lower for w in (
+        "black rot", "black-rot", "blackrot", "guignardia", "bidwellii",
+        "phyllosticta ampelicida",
+    )):
+        return "black_rot"
     if any(w in lower for w in ("powdery", "oidi", "oïdi", "oidio")):
         return "powdery_mildew"
     if any(w in lower for w in ("downy", "mildiu", "míldiu", "mildio")):
         return "downy_mildew"
-    return env("DISEASE", "downy_mildew")
+    return env("DISEASE")
+
+
+def feedback_language(text):
+    lower = text.lower()
+    if any(word in lower for word in (
+        "símptoma", "simptoma", "míldiu", "oïdi", "fals avís", "cap ",
+        "sense ", "camp", "tractament", "aplicat", "confirmeu",
+    )):
+        return "ca"
+    if any(word in lower for word in (
+        "síntoma", "sintoma", "mildiu", "oidio", "falsa alarma", "sin ",
+        "campo", "tratamiento", "aplicado", "confirme",
+    )):
+        return "es"
+    return "en"
 
 
 def parse_raw_feedback(text):
+    language = feedback_language(text)
     inferred_field, configured_fields = infer_field(text)
     product_text = strip_field_terms(text, configured_fields)
     area_match = AREA_RE.search(text)
@@ -374,6 +414,8 @@ def parse_raw_feedback(text):
         feedback, grade = feedback
 
     disease = infer_disease(text)
+    if disease == "black_rot" and feedback == "detected_mildew":
+        feedback = "detected_black_rot"
     products, water_volume = parse_products(product_text, area_ha)
     treatment_type = product_family(" ".join(p["product"] for p in products)) if products else ""
     all_product_doses_per_ha = bool(products) and all(p.get("dose_is_per_ha") for p in products)
@@ -387,6 +429,8 @@ def parse_raw_feedback(text):
         missing.append("field")
     if not feedback:
         missing.append("feedback_type")
+    if not disease:
+        missing.append("disease")
     if feedback == "treatment":
         if not products:
             missing.append("products_and_quantities")
@@ -395,8 +439,6 @@ def parse_raw_feedback(text):
             missing.append("product_catalog_confirmation")
         if not area_ha and not all_product_doses_per_ha:
             missing.append("treated_area")
-        if not disease:
-            missing.append("disease")
 
     draft = {
         "field": inferred_field,
@@ -414,6 +456,33 @@ def parse_raw_feedback(text):
         "notes": text.strip(),
     }
 
+    copy = {
+        "ca": {
+            "missing_product": "No trobo '{product}' al catàleg de productes.",
+            "candidate": "Per a '{product}', volíeu dir: {choices}?",
+            "field": " Quin camp s'ha tractat? Trieu-ne un: {choices}.",
+            "treatment": "Confirmeu abans de desar aquest tractament",
+            "feedback": "Confirmeu abans de desar aquesta observació",
+            "reply": "Responeu amb el nom/codi exacte del producte i «confirmo» si és correcte, o corregiu les dades que falten.",
+        },
+        "es": {
+            "missing_product": "No encuentro '{product}' en el catálogo de productos.",
+            "candidate": "Para '{product}', ¿quería decir: {choices}?",
+            "field": " ¿Qué campo se trató? Elija uno: {choices}.",
+            "treatment": "Confirme antes de guardar este tratamiento",
+            "feedback": "Confirme antes de guardar esta observación",
+            "reply": "Responda con el nombre/código exacto del producto y «confirmo» si es correcto, o corrija los datos que faltan.",
+        },
+        "en": {
+            "missing_product": "I cannot find '{product}' in the product catalogue.",
+            "candidate": "For '{product}', did you mean: {choices}?",
+            "field": " Which field was treated? Choose one: {choices}.",
+            "treatment": "Please confirm before I save this treatment",
+            "feedback": "Please confirm before I save this feedback",
+            "reply": "Reply with the exact product name/code and 'confirm' if correct, or correct the missing/wrong parts.",
+        },
+    }[language]
+
     if feedback == "treatment":
         candidate_text = ""
         unresolved = [p for p in products if not p.get("catalog_confirmed")]
@@ -426,25 +495,25 @@ def parse_raw_feedback(text):
                         f"{c['name']} (code {c['id']}, {c.get('description') or 'no target'})"
                         for c in candidates[:3]
                     )
-                    parts.append(f"For '{product['product']}', did you mean: {choices}?")
+                    parts.append(copy["candidate"].format(product=product["product"], choices=choices))
                 else:
-                    parts.append(f"I cannot find '{product['product']}' in the product catalogue.")
+                    parts.append(copy["missing_product"].format(product=product["product"]))
             candidate_text = " " + " ".join(parts)
         field_text = ""
         if "field" in missing and configured_fields:
             choices = "; ".join(f"{field.get('name')} ({field.get('id')})" for field in configured_fields)
-            field_text = f" Which field was treated? Choose one: {choices}."
+            field_text = copy["field"].format(choices=choices)
         confirm = (
-            "Please confirm before I save this treatment: "
+            f"{copy['treatment']}: "
             f"field={draft['field'] or '<missing>'}; disease={disease}; "
             f"area={area_display or '<missing>'}; products={product_summary or '<missing>'}; "
             f"water={water_volume or '<missing>'}; method={draft['method'] or '<missing>'}."
             f"{field_text}{candidate_text} "
-            "Reply with the exact product name/code and 'confirm' if correct, or correct the missing/wrong parts."
+            f"{copy['reply']}"
         )
     else:
         confirm = (
-            "Please confirm before I save this feedback: "
+            f"{copy['feedback']}: "
             f"field={draft['field'] or '<missing>'}; disease={disease}; "
             f"type={feedback or '<missing>'}; grade={grade if grade is not None else '-'}."
         )

@@ -68,11 +68,21 @@ def preferred_language(repo_path, field_id="", params=None):
 
 
 CA_REPLACEMENTS = [
+    ("Downy mildew overview", "Resum de míldiu"),
+    ("Powdery mildew overview", "Resum d'oïdi"),
+    ("Míldiu overview", "Resum de míldiu"),
+    ("Oïdi overview", "Resum d'oïdi"),
     ("Vineyard treatment watch", "Seguiment de tractament de la vinya"),
     ("Vineyard risk overview", "Resum general del risc de la vinya"),
     ("Vineyard risk report", "Informe de risc de la vinya"),
     ("Vineyard risk summary", "Resum de risc de la vinya"),
     ("Vineyard disease report", "Informe de malalties de la vinya"),
+    ("Treatment outlook: the forecast is mostly dry, so there is no rain-driven treatment trigger. Use scouting and the protection record before deciding.",
+     "Perspectiva de tractament: la previsió és majoritàriament seca, per tant no hi ha activador de tractament per pluja. Useu la inspecció i el registre de protecció abans de decidir."),
+    ("Treatment outlook: dry forecast and low current models; no immediate treatment signal, keep normal scouting.",
+     "Perspectiva de tractament: previsió seca i models actuals baixos; sense senyal immediat de tractament, manteniu la inspecció normal."),
+    ("Treatment outlook: no automatic treatment signal; use scouting and recent treatment history before applying anything.",
+     "Perspectiva de tractament: sense senyal automàtic de tractament; useu la inspecció i l'historial recent abans d'aplicar res."),
     ("Downy Mildew", "Míldiu"),
     ("Powdery Mildew", "Oïdi"),
     ("Powdery mildew is the active issue", "L'oïdi és el problema actiu"),
@@ -101,6 +111,7 @@ CA_REPLACEMENTS = [
     ("WATCH: inspect within 24-48h and check treatment records before deciding on protection.",
      "VIGILAR: inspeccioneu en 24-48 h i reviseu els registres de tractament abans de decidir sobre la protecció."),
     ("PROTECT DECISION", "DECISIÓ DE PROTECCIÓ"),
+    ("TREATMENT DECISION WINDOW", "FINESTRA DE DECISIÓ DE TRACTAMENT"),
     ("WATCH NOW", "VIGILAR ARA"),
     ("WATCH", "VIGILAR"),
     ("MONITOR", "MONITORAR"),
@@ -117,8 +128,9 @@ CA_REPLACEMENTS = [
     ("Plots:", "Gràfics:"),
     ("Disease forecast:", "Previsió de malaltia:"),
     ("Downy daily disease forecast", "Previsió diària de míldiu"),
-    ("Powdery UC disease forecast", "Previsió UC d'oïdi"),
+    ("Powdery weather-suitability forecast", "Previsió d'idoneïtat meteorològica per a l'oïdi"),
     ("Forecast prediction", "Previsió de malaltia"),
+    ("maximum", "màxim"),
     ("Goidanich daily risk", "Risc diari Goidanich"),
     ("Goidanich daily", "Goidanich diari"),
     ("Rossi state/risk", "Estat/risc Rossi"),
@@ -128,7 +140,9 @@ CA_REPLACEMENTS = [
     ("PMI", "PMI"),
     ("Field-specific learned model: not trained yet; using original Goidanich/Rossi layers.",
      "El model après específic del camp encara no està entrenat; s'utilitzen les capes originals Goidanich/Rossi."),
+    ("powdery weather suitability reaches", "la idoneïtat meteorològica per a l'oïdi arriba a"),
     ("forecast weather-suitability for UC powdery mildew", "idoneïtat meteorològica prevista per a l'oïdi UC"),
+    ("watch context, not disease probability and not a rain infection event", "context de vigilància, no probabilitat de malaltia ni infecció per pluja"),
     ("watch context, not a continuation of today's UC risk", "context de vigilància, no una continuació del risc UC d'avui"),
     ("watch context, not a continuation of today's risc UC", "context de vigilància, no una continuació del risc UC d'avui"),
     ("forecast daily-risk line", "línia prevista de risc diari"),
@@ -146,6 +160,19 @@ CA_REPLACEMENTS = [
      "inspeccioneu en 24-48 h i comproveu la protecció recent abans de decidir"),
     ("inspect within 24-48h and check treatment records before deciding on protection.",
      "inspeccioneu en 24-48 h i reviseu els registres de tractament abans de decidir sobre la protecció."),
+    ("risk rose sharply into watch range",
+     "el risc ha pujat bruscament fins al rang de vigilància"),
+    ("current alert is active; scout now and use treatment records before deciding.",
+     "l'alerta actual és activa; inspeccioneu ara i useu els registres de tractament abans de decidir."),
+    ("scout the field and check recent protection; treatment is a decision after inspection.",
+     "inspeccioneu el camp i comproveu la protecció recent; el tractament és una decisió després de la inspecció."),
+    ("prepare to inspect and decide before the risk/weather window; treat only if protection is absent/expired or disease is confirmed.",
+     "prepareu-vos per inspeccionar i decidir abans de la finestra de risc/meteo; tracteu només si la protecció falta, ha caducat o es confirma la malaltia."),
+    ("UC risk is low; verify first sulfur/protection record, no treatment from risk alone",
+     "el risc UC és baix; verifiqueu el primer registre de sofre/protecció, sense tractament només pel risc"),
+    ("risk alert", "alerta de risc"),
+    ("No field has a forecast or current alerta de risc today.",
+     "Avui cap camp té alerta de risc actual o prevista."),
     ("normal scouting; no powdery action from the model",
      "inspecció normal; el model no indica cap acció contra l'oïdi"),
     ("mostly dry; do not treat from rain pressure alone, but keep the forecast-risk scouting date.",
@@ -166,12 +193,20 @@ CA_REPLACEMENTS = [
      "Responeu amb el resultat de la inspecció o els detalls del tractament: producte, dosi, volum d'aigua, àrea, mètode i data."),
     ("No field has a forecast or current risk alert today.",
      "Avui cap camp té alerta de risc actual o prevista."),
+    ("No field has a current or forecast downy mildew alert today.",
+     "Avui cap camp té una alerta actual o prevista de míldiu."),
+    ("No field has a current or forecast powdery mildew alert today.",
+     "Avui cap camp té una alerta actual o prevista d'oïdi."),
     ("No alert among refreshed fields; some fields are not refreshed yet.",
      "No hi ha cap alerta entre els camps actualitzats; alguns camps encara no s'han actualitzat."),
     ("Fields not refreshed yet:", "Camps encara no actualitzats:"),
     ("not refreshed", "no actualitzats"),
     ("Action: routine scouting only; no forecast-driven treatment preparation from the model.",
      "Acció: només inspecció rutinària; el model no demana preparar tractament per la previsió."),
+    ("Action: routine scouting only; no forecast-driven treatment preparation from this model.",
+     "Acció: només inspecció rutinària; aquest model no demana preparar cap tractament segons la previsió."),
+    ("Action: inspecció rutinària only; no forecast-driven treatment preparation from this model.",
+     "Acció: només inspecció rutinària; aquest model no demana preparar cap tractament segons la previsió."),
     ("No high-risk alert. Continue normal monitoring.",
      "Sense alerta d'alt risc. Continueu el seguiment normal."),
     ("No alt-risk alert. Continue normal monitoring.",
@@ -201,6 +236,10 @@ CA_REPLACEMENTS = [
     ("to receive both disease plots for one field", "per rebre els dos gràfics de malaltia d'un camp"),
     ("downy and powdery plots are attached for the alert field(s)",
      "els gràfics de míldiu i oïdi estan adjunts per als camps amb alerta"),
+    ("Only downy mildew plots are attached for the alert field(s).",
+     "Només s'adjunten els gràfics de míldiu dels camps amb alerta."),
+    ("Only powdery mildew plots are attached for the alert field(s).",
+     "Només s'adjunten els gràfics d'oïdi dels camps amb alerta."),
     ("verify first sulfur/protection record", "verifiqueu el primer registre de sofre/protecció"),
     ("no treatment from risk alone", "sense tractament només pel risc"),
     ("protection check", "comprovació de protecció"),
@@ -283,6 +322,11 @@ def localize_text(text, language):
         out,
     )
     out = re.sub(r"\bon (\d{4}-\d{2}-\d{2})", r"el \1", out)
+    out = re.sub(
+        r"\bfirst >=([0-9]+)% el (\d{4}-\d{2}-\d{2})",
+        r"primer dia amb >=\1% el \2",
+        out,
+    )
     out = re.sub(r"\breaches ([0-9.]+%) el (\d{4}-\d{2}-\d{2})", r"arriba a \1 el \2", out)
     out = re.sub(r"\bis ([0-9.]+%) el (\d{4}-\d{2}-\d{2}) and", r"és \1 el \2 i", out)
     out = re.sub(r"\bbefore (\d{4}-\d{2}-\d{2})", r"abans del \1", out)
@@ -890,10 +934,12 @@ def update_dashboard_files(params):
         payload["skip_predict"] = params["skip_predict"]
     if params.get("skip_forecast"):
         payload["skip_forecast"] = params["skip_forecast"]
+    if params.get("allow_fallback_plot"):
+        payload["allow_fallback_plot"] = params["allow_fallback_plot"]
     result = call_skill("vineyard_disease_risk", payload, 180)
     stdout = dashboard_stdout(result)
     plot = stdout.get("plot") if isinstance(stdout, dict) else ""
-    expected = disease_plot_path(repo, disease, params.get("output_dir"))
+    expected = disease_plot_path(repo, disease, params.get("output_dir"), params.get("field") or "")
     if plot and os.path.abspath(plot) != os.path.abspath(expected):
         if isinstance(stdout, dict):
             stdout["plot"] = ""
@@ -944,17 +990,24 @@ def store_field_cache(params, dashboard):
     field_state = dashboard_state_path(repo, disease, output_dir, field)
     field_report = dashboard_report_path(repo, disease, output_dir, field)
     field_plot = disease_plot_path(repo, disease, output_dir, field)
+    generic_report = dashboard_report_path(repo, disease, output_dir)
+    generic_plot = disease_plot_path(repo, disease, output_dir)
 
     os.makedirs(output_dir, exist_ok=True)
     source_plot = stdout.get("plot") or state.get("plot_path") or disease_plot_path(repo, disease, output_dir)
     source_report = stdout.get("report") or os.path.join(output_dir, f"dashboard_report_{safe_disease_name(disease)}.md")
     if source_plot and os.path.exists(source_plot):
         copy_if_different(source_plot, field_plot)
+        copy_if_different(os.path.splitext(source_plot)[0] + ".svg", os.path.splitext(field_plot)[0] + ".svg")
         state["plot_path"] = field_plot
         stdout["plot"] = field_plot
     if source_report and os.path.exists(source_report):
         copy_if_different(source_report, field_report)
         stdout["report"] = field_report
+    if configured_fields(repo) == [field]:
+        copy_if_different(field_plot, generic_plot)
+        copy_if_different(os.path.splitext(field_plot)[0] + ".svg", os.path.splitext(generic_plot)[0] + ".svg")
+        copy_if_different(field_report, generic_report)
     state["field_cache"] = True
     state["field_cache_created_at"] = dt.datetime.now(dt.UTC).isoformat()
     with open(field_state, "w", encoding="utf-8") as handle:
@@ -994,18 +1047,32 @@ def cached_dashboard(params):
     updated_at = state.get("updated_at") or ""
     if not updated_at.startswith(dt.date.today().isoformat()):
         return None
-    today = dt.date.today().isoformat()
+    today_date = dt.date.today()
+    today = today_date.isoformat()
+    yesterday = (today_date - dt.timedelta(days=1)).isoformat()
     history = state.get("history") or []
-    if not history or str(history[-1].get("day", ""))[:10] != today:
+    if not history:
         return None
     forecast = state.get("forecast") or []
     if not forecast:
+        return None
+    latest_day = str(history[-1].get("day", ""))[:10]
+    forecast_days = [str(row.get("day") or "")[:10] for row in forecast if isinstance(row, dict)]
+    forecast_covers_today = any(day >= today for day in forecast_days)
+    if latest_day != today and not (latest_day == yesterday and forecast_covers_today):
         return None
     model_layer_freshness = state.get("model_layer_freshness") or {}
     if model_layer_freshness.get("forecast_current") is False:
         return None
     requested_days = int(params.get("days", 31))
-    requested_start = (dt.date.today() - dt.timedelta(days=requested_days - 1)).isoformat()
+    if latest_day == yesterday and forecast_covers_today:
+        anchor_day = today_date
+    else:
+        try:
+            anchor_day = dt.date.fromisoformat(latest_day)
+        except Exception:
+            anchor_day = today_date
+    requested_start = (anchor_day - dt.timedelta(days=requested_days - 1)).isoformat()
     if str(state.get("start") or "9999-99-99") > requested_start:
         return None
     latest = history[-1]
@@ -1266,9 +1333,9 @@ def fast_cached_standard_report(params, dashboard):
             )
         elif forecast_severity in {"high", "watch"} and forecast_day:
             guidance = (
-                f"CHECK PROTECTION: today's UC risk is low, but the forecast reaches {forecast_severity} "
-                f"on {forecast_day}. Inspect canopy and confirm active protection before that date; "
-                "do not treat automatically from PMI alone."
+                f"CHECK PROTECTION: today's UC risk is low, but powdery weather suitability reaches "
+                f"{forecast_severity} on {forecast_day}. Inspect canopy and confirm active protection "
+                "before that date; do not treat automatically from PMI alone."
             )
         elif pmi_due:
             guidance = (
@@ -1359,6 +1426,27 @@ def fast_cached_standard_report(params, dashboard):
 
 
 def compact_report_summary(report):
+    compact_keys = {
+        "goidanich_daily_risk",
+        "rossi_risk",
+        "powdery_uc_risk",
+        "powdery_pmi",
+        "forecast_prediction_message",
+    }
+    if not report.get("dashboard_state") and any(key in report for key in compact_keys):
+        summary = dict(report)
+        disease = str(summary.get("disease") or "")
+        if not disease:
+            plot_hint = " ".join(
+                str(summary.get(key) or "")
+                for key in ("plot", "plot_path", "send_photo_path", "send_image_path", "source_image_path")
+            ).lower()
+            if "powdery_mildew" in plot_hint:
+                summary["disease"] = "powdery_mildew"
+            elif "downy_mildew" in plot_hint:
+                summary["disease"] = "downy_mildew"
+        return {key: value for key, value in summary.items() if value not in (None, "", [])}
+
     state = report.get("dashboard_state") or {}
     history = state.get("history") or []
     latest = history[-1] if history else {}
@@ -1387,14 +1475,21 @@ def compact_report_summary(report):
             forecast_rain_10d += rain
         if rain >= 1.0 and not first_rain_day:
             first_rain_day = str(row.get("day") or "")[:10]
-    disease = report.get("disease") or (report.get("report") or {}).get("disease") or ""
+    plot_path = report.get("send_photo_path") or report.get("send_image_path") or report.get("plot_path") or ""
+    disease = report.get("disease") or (report.get("report") or {}).get("disease") or state.get("disease") or ""
+    if not disease:
+        plot_hint = str(plot_path).lower()
+        if "powdery_mildew" in plot_hint:
+            disease = "powdery_mildew"
+        elif "downy_mildew" in plot_hint:
+            disease = "downy_mildew"
     forecast_prediction = forecast_prediction_from_state(state, disease)
     summary = {
         "status": report.get("status"),
         "field": report.get("field"),
         "disease": disease,
         "source": report.get("source") or "generated",
-        "plot": report.get("send_photo_path") or report.get("send_image_path") or report.get("plot_path"),
+        "plot": plot_path,
         "date": str(latest.get("day") or "")[:10],
         "station": latest.get("station"),
         "goidanich_daily_risk": latest.get("baseline_risk"),
@@ -1456,7 +1551,7 @@ def forecast_prediction_from_state(state, disease):
     forecast = state.get("forecast") if isinstance(state, dict) else []
     if disease == "powdery_mildew":
         key = "powdery_projection"
-        label = "Powdery UC disease forecast"
+        label = "Powdery weather-suitability forecast"
     else:
         key = "goidanich_daily_projection"
         label = "Downy daily disease forecast"
@@ -1577,23 +1672,29 @@ def low_risk_summary_message(field, reports, repo_path=None):
     return "\n".join(lines)
 
 
-def recent_treatments(repo_path, field, limit=3):
+def recent_treatments(repo_path, field, limit=3, disease=""):
     db_path = os.path.join(repo_path or "/root/.picoclaw/workspace/goidanich", "goidanich.db")
     if not os.path.exists(db_path):
         return []
     try:
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
+        disease_clause = " AND disease_id = ?" if disease else ""
+        parameters = [field]
+        if disease:
+            parameters.append(disease)
+        parameters.append(int(limit))
         rows = conn.execute(
-            """
+            f"""
             SELECT timestamp, disease_id, notes, metadata
             FROM farmer_feedback
             WHERE field_id = ?
               AND feedback_type = 'treatment'
+              {disease_clause}
             ORDER BY timestamp DESC
             LIMIT ?
             """,
-            (field, int(limit)),
+            parameters,
         ).fetchall()
     except Exception:
         return []
@@ -1620,8 +1721,8 @@ def recent_treatments(repo_path, field, limit=3):
     return out
 
 
-def treatment_history_line(repo_path, field):
-    treatments = recent_treatments(repo_path, field, 2)
+def treatment_history_line(repo_path, field, disease=""):
+    treatments = recent_treatments(repo_path, field, 2, disease=disease)
     if not treatments:
         return "No treatment record is stored for this field. Please confirm recent applications."
     latest = treatments[0]
@@ -1779,7 +1880,7 @@ def risk_alert_summary_message(field, reports, alert_reports, high_threshold, re
                     lines.append(
                         f"⚠️ {title}: forecast weather-suitability for UC powdery mildew{start} "
                         f"reaches {format_percent(future.get('risk'))} on {future.get('day')} "
-                        "(watch context, not a continuation of today's UC risk)."
+                        "(watch context, not disease probability and not a rain infection event)."
                     )
                 else:
                     start = ""
@@ -2034,6 +2135,8 @@ def standard_report(params):
     return {
         "status": "success" if composed.get("status") == "success" else "partial",
         "mode": "standard_report",
+        "field": params.get("field", ""),
+        "disease": params.get("disease") or "downy_mildew",
         "prediction": prediction,
         "current_status": status,
         "language": language,
@@ -2069,6 +2172,494 @@ def standard_report(params):
             "watch": "50-69.9%: moderate/watch risk; inspect this week",
             "high": ">=70%: high risk; inspect now and consider treatment only after field confirmation",
         },
+    }
+
+
+def evaluate_single_disease_alert(report, params, disease):
+    state = report.get("dashboard_state") or {}
+    history = state.get("history") or []
+    latest = history[-1] if history else {}
+    if not latest:
+        return {"status": "skipped", "notify": False, "reason": "no latest row"}
+    notify_mode = str(params.get("notify_mode") or "").lower()
+    alert = call_skill("risk_alert_policy", {
+        "status": {"result": {"rows": [latest]}},
+        "disease": disease,
+        "memory_path": params.get("memory_path") or f"/tmp/vineyard_alert_memory_{disease}.json",
+        "high_threshold": params.get("high_threshold", 70),
+        "watch_threshold": params.get("watch_threshold", 50),
+        "delta_threshold": params.get("delta_threshold", 15),
+        "cooldown_hours": params.get("cooldown_hours", 24),
+        "update_memory": notify_mode in {"risk_only", "alerts_only"},
+    }, 30)
+    current_notify = bool(alert.get("notify"))
+    future = forecast_high_signal(report, params.get("high_threshold", 70))
+    if future.get("notify"):
+        return {
+            **alert,
+            "notify": True,
+            "severity": "high",
+            "current_notify": current_notify,
+            "reason": (
+                f"forecast {future.get('key')} reaches "
+                f"{format_percent(future.get('risk'))} on {future.get('day')}"
+            ),
+            "forecast_alert": future,
+        }
+    return {**alert, "current_notify": current_notify}
+
+
+def single_disease_field_message(field, report, alert, repo_path):
+    disease = report.get("disease") or "downy_mildew"
+    summary = compact_report_summary(report)
+    field_label = configured_field_label(repo_path, field)
+    day = summary.get("date") or dt.date.today().isoformat()
+    station = summary.get("station") or ""
+    future = forecast_high_signal(report, 70)
+    marker = "⚠️" if alert.get("notify") else "🟢"
+    if disease == "powdery_mildew":
+        title = "Powdery mildew"
+        current = (
+            f"{marker} Powdery UC risk: {format_percent(summary.get('powdery_uc_risk'))}; "
+            f"PMI {float(summary.get('powdery_pmi') or 0):.1f}."
+        )
+        if summary.get("powdery_pmi_treatment_due"):
+            signal, detail = powdery_action_signal(summary.get("powdery_uc_risk"), True)
+            signal_line = f"Powdery signal: {signal} - {detail}."
+        else:
+            signal_line = "Powdery signal: no protection check from the current UC/PMI layers."
+    else:
+        title = "Downy mildew"
+        current = (
+            f"{marker} Goidanich daily risk: {format_percent(summary.get('goidanich_daily_risk'))}; "
+            f"Rossi {format_percent(summary.get('rossi_risk') or 0)}."
+        )
+        signal_line = "Downy signal: DOWNY ALERT." if alert.get("notify") else "Downy signal: NO DOWNY ALERT."
+    lines = [
+        f"🍇 {title} - {field_label}",
+        f"Date: {day}" + (f" | Station: {station}" if station else ""),
+        current,
+        signal_line,
+    ]
+    prediction = summary.get("forecast_prediction_message")
+    if prediction:
+        lines.append(f"Disease forecast: {prediction}")
+    elif future.get("notify"):
+        lines.append(
+            f"Disease forecast: {title} reaches {format_percent(future.get('risk'))} "
+            f"on {future.get('day')}."
+        )
+    lines.append(rain_window_text([summary]))
+    lines.append(treatment_readiness_message([summary], [report] if alert.get("notify") else []))
+    lines.append(treatment_history_line(repo_path, field, disease=disease))
+    return "\n".join(lines)
+
+
+def single_disease_fleet_message(
+    repo_path, disease, fields, alert_reports, ok_reports, missing_reports, language="en"
+):
+    language = normalize_language(language) or "en"
+    names = {
+        "ca": {
+            "downy_mildew": "míldiu",
+            "powdery_mildew": "oïdi",
+            "date": "Data",
+            "checked": "S'han revisat {count} {field_word}: {alerts} amb alertes, {ok} sense alertes",
+            "not_refreshed_count": ", {count} no actualitzats",
+            "attention": "Camps que necessiten atenció: {labels}.",
+            "plots": "Només s'adjunten els gràfics {disease} dels camps amb alerta.",
+            "no_alert": "Avui cap camp té una alerta actual o prevista de {disease}.",
+            "action": "Acció: només inspecció rutinària; aquest model no indica preparar cap tractament segons la previsió.",
+            "missing": "Camps encara no actualitzats: {labels}.",
+        },
+        "es": {
+            "downy_mildew": "mildiu",
+            "powdery_mildew": "oídio",
+            "date": "Fecha",
+            "checked": "Se han revisado {count} {field_word}: {alerts} con alertas, {ok} sin alertas",
+            "not_refreshed_count": ", {count} sin actualizar",
+            "attention": "Campos que requieren atención: {labels}.",
+            "plots": "Solo se adjuntan los gráficos de {disease} de los campos con alerta.",
+            "no_alert": "Hoy ningún campo tiene una alerta actual o prevista de {disease}.",
+            "action": "Acción: solo inspección rutinaria; este modelo no indica preparar un tratamiento según la predicción.",
+            "missing": "Campos aún no actualizados: {labels}.",
+        },
+        "en": {
+            "downy_mildew": "downy mildew",
+            "powdery_mildew": "powdery mildew",
+            "date": "Date",
+            "checked": "Checked {count} {field_word}: {alerts} with alerts, {ok} without alerts",
+            "not_refreshed_count": ", {count} not refreshed",
+            "attention": "Fields needing attention: {labels}.",
+            "plots": "Only {disease} plots are attached for the alert field(s).",
+            "no_alert": "No field has a current or forecast {disease} alert today.",
+            "action": "Action: routine scouting only; this model does not indicate forecast-driven treatment preparation.",
+            "missing": "Fields not refreshed yet: {labels}.",
+        },
+    }
+    words = names.get(language, names["en"])
+    disease_name = words[disease]
+    plot_disease_name = disease_name
+    if language == "ca":
+        plot_disease_name = {
+            "downy_mildew": "de míldiu",
+            "powdery_mildew": "d'oïdi",
+        }[disease]
+    title = disease_name.capitalize()
+    all_reports = alert_reports + ok_reports + missing_reports
+    day = next((field_report_day(report) for report in all_reports if field_report_day(report)), "")
+    lines = [f"🍇 {title}"]
+    if day:
+        lines.append(f"{words['date']}: {day}")
+    if language == "ca":
+        field_word = "camp" if len(fields) == 1 else "camps"
+    elif language == "es":
+        field_word = "campo" if len(fields) == 1 else "campos"
+    else:
+        field_word = "field" if len(fields) == 1 else "fields"
+    checked = words["checked"].format(
+        count=len(fields), field_word=field_word,
+        alerts=len(alert_reports), ok=len(ok_reports),
+    )
+    if missing_reports:
+        checked += words["not_refreshed_count"].format(count=len(missing_reports))
+    lines.append(checked + ".")
+    if alert_reports:
+        labels = [configured_field_label(repo_path, report.get("field")) for report in alert_reports]
+        lines.append(words["attention"].format(labels=", ".join(labels)))
+        summaries = []
+        for report in alert_reports:
+            summaries.extend(
+                item for item in field_report_summaries(report)
+                if item.get("disease") in (None, "", disease)
+            )
+        risk_key = "powdery_uc_risk" if disease == "powdery_mildew" else "goidanich_daily_risk"
+        current_values = []
+        for summary in summaries:
+            try:
+                current_values.append(float(summary.get(risk_key)))
+            except (TypeError, ValueError):
+                pass
+        current_max = max(current_values) if current_values else 0.0
+        first_high_days = sorted(
+            str(summary.get("forecast_prediction_first_high_day") or "")[:10]
+            for summary in summaries
+            if summary.get("forecast_prediction_first_high_day")
+        )
+        first_watch_days = sorted(
+            str(summary.get("forecast_prediction_first_watch_day") or "")[:10]
+            for summary in summaries
+            if summary.get("forecast_prediction_first_watch_day")
+        )
+        first_forecast_day = (first_high_days or first_watch_days or [""])[0]
+        pmi_due = disease == "powdery_mildew" and any(
+            bool(summary.get("powdery_pmi_treatment_due")) for summary in summaries
+        )
+
+        if language == "ca":
+            if current_max >= 70:
+                lines.append(
+                    f"🔴 Risc alt avui ({current_max:.0f}%). Les condicions ja són favorables al {disease_name}."
+                )
+            elif current_max >= 50:
+                lines.append(
+                    f"🟠 Risc moderat avui ({current_max:.0f}%). Cal comprovar el camp abans que la pressió augmenti."
+                )
+            else:
+                lines.append("🟡 El risc actual és baix, però la previsió activa una vigilància.")
+            if first_forecast_day:
+                lines.append(f"Previsió: les condicions poden ser favorables a partir del {first_forecast_day}.")
+            if disease == "powdery_mildew":
+                protection = " Reviseu també la data i la cobertura de l'última protecció." if pmi_due else ""
+                lines.append(
+                    "Acció avui: inspeccioneu fulles i raïms, sobretot les zones ombrejades i poc ventilades."
+                    + protection
+                    + " Tracteu només si la inspecció i l'historial de protecció ho justifiquen."
+                )
+            else:
+                lines.append(
+                    "Acció avui: inspeccioneu les zones humides del dosser i reviseu la protecció recent. "
+                    "No tracteu només per la previsió."
+                )
+        elif language == "es":
+            if current_max >= 70:
+                lines.append(f"🔴 Riesgo alto hoy ({current_max:.0f}%). Las condiciones ya favorecen el {disease_name}.")
+            elif current_max >= 50:
+                lines.append(f"🟠 Riesgo moderado hoy ({current_max:.0f}%). Conviene revisar el campo antes de que aumente la presión.")
+            else:
+                lines.append("🟡 El riesgo actual es bajo, pero la predicción activa una vigilancia.")
+            if first_forecast_day:
+                lines.append(f"Predicción: las condiciones pueden ser favorables a partir del {first_forecast_day}.")
+            if disease == "powdery_mildew":
+                protection = " Revise también la fecha y la cobertura de la última protección." if pmi_due else ""
+                lines.append(
+                    "Acción hoy: inspeccione hojas y racimos, especialmente las zonas sombreadas y poco ventiladas."
+                    + protection
+                    + " Trate solo si la inspección y el historial de protección lo justifican."
+                )
+            else:
+                lines.append(
+                    "Acción hoy: inspeccione las zonas húmedas del dosel y revise la protección reciente. "
+                    "No trate únicamente por la predicción."
+                )
+        else:
+            if current_max >= 70:
+                lines.append(f"🔴 High risk today ({current_max:.0f}%). Conditions already favor {disease_name}.")
+            elif current_max >= 50:
+                lines.append(f"🟠 Moderate risk today ({current_max:.0f}%). Check the field before pressure increases.")
+            else:
+                lines.append("🟡 Current risk is low, but the forecast calls for watchful scouting.")
+            if first_forecast_day:
+                lines.append(f"Forecast: favorable conditions may begin on {first_forecast_day}.")
+            if disease == "powdery_mildew":
+                protection = " Also check the date and coverage of the last protection." if pmi_due else ""
+                lines.append(
+                    "Action today: inspect leaves and bunches, especially shaded and poorly ventilated areas."
+                    + protection
+                    + " Treat only when scouting and the protection record support it."
+                )
+            else:
+                lines.append(
+                    "Action today: inspect humid canopy areas and review recent protection. "
+                    "Do not treat from the forecast alone."
+                )
+        lines.append(words["plots"].format(disease=plot_disease_name))
+    elif not missing_reports:
+        lines.append(words["no_alert"].format(disease=disease_name))
+        lines.append(words["action"])
+    if missing_reports:
+        labels = [configured_field_label(repo_path, report.get("field")) for report in missing_reports]
+        lines.append(words["missing"].format(labels=", ".join(labels)))
+    return "\n".join(lines)
+
+
+def single_disease_report(params):
+    disease = str(params.get("disease") or "").lower()
+    if disease not in {"downy_mildew", "powdery_mildew"}:
+        return {
+            "status": "error",
+            "mode": "single_disease_report",
+            "message": "disease must be downy_mildew or powdery_mildew",
+            "attachments": [],
+            "media": [],
+        }
+    repo = params.get("repo_path") or "/root/.picoclaw/workspace/goidanich"
+    field = params.get("field") or ""
+    language = preferred_language(repo, field, params)
+    notify_mode = str(params.get("notify_mode") or "").lower()
+    send_low_summary = str(
+        params.get("send_low_summary") or params.get("low_summary") or "false"
+    ).lower() == "true"
+    package_notification = str(params.get("package_notification", "true")).lower() not in {"0", "false", "no"}
+
+    if not field:
+        fields = configured_fields(repo)
+        delivery_group = params.get("delivery_group") or (
+            f"vineyard:{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}:{disease}"
+        )
+        cache_only = bool(params.get("cache_only")) or (len(fields) > 2 and not params.get("force_refresh"))
+        field_reports = [
+            single_disease_report({
+                **params,
+                "field": current_field,
+                "cache_only": cache_only,
+                "package_notification": False,
+                "delivery_group": delivery_group,
+            })
+            for current_field in fields
+        ]
+        alert_reports = [report for report in field_reports if report.get("has_alert")]
+        missing_reports = [
+            report for report in field_reports
+            if not report.get("has_alert") and report_has_incomplete_cache(report)
+        ]
+        ok_reports = [
+            report for report in field_reports
+            if not report.get("has_alert") and not report_has_incomplete_cache(report)
+        ]
+        message = single_disease_fleet_message(
+            repo, disease, fields, alert_reports, ok_reports, missing_reports, language,
+        )
+        if notify_mode in {"risk_only", "alerts_only"}:
+            source_reports = alert_reports
+        else:
+            source_reports = alert_reports or ok_reports
+        all_media = []
+        for report in source_reports:
+            for item in report.get("media") or report.get("attachments") or []:
+                if (item.get("disease") or disease) != disease:
+                    continue
+                isolated_item = dict(item)
+                isolated_item["disease"] = disease
+                all_media.append(isolated_item)
+        all_media = unique_by_path(all_media)
+        media = localize_media(all_media if len(fields) <= 2 else all_media[:2], language)
+        if not alert_reports and notify_mode in {"risk_only", "alerts_only"}:
+            media = []
+        primary = media[0].get("path") if media else ""
+        should_emit = bool(alert_reports or send_low_summary or notify_mode not in {"risk_only", "alerts_only"})
+        notification = {"status": "skipped", "reason": "notify=false"}
+        if package_notification and should_emit and (
+            str(params.get("notify", "false")).lower() == "true"
+            or notify_mode in {"risk_only", "alerts_only"}
+        ):
+            notification = call_skill("farmer_notify", {
+                "title": localize_text(
+                    "Powdery mildew overview" if disease == "powdery_mildew" else "Downy mildew overview",
+                    language,
+                ),
+                "message": message,
+                "caption": short_caption("Vineyard risk report", message),
+                "text_after_photo": message if media else "",
+                "plot_path": primary,
+                "image_path": primary,
+                "attachments": media,
+                "media": media,
+                "delivery_group": delivery_group,
+                "dispatch_role": f"{disease}_overview",
+                "disease": disease,
+                "alert_diseases": [disease] if alert_reports else [],
+                "alert_fields": [report.get("field") for report in alert_reports],
+                "has_alert": bool(alert_reports),
+                "language": language,
+                "outbox_dir": params.get("outbox_dir") or "/tmp/picoclaw_outbox",
+                "channel": params.get("channel") or "picoclaw_telegram",
+            }, 30)
+        return {
+            "status": "cache_missing" if missing_reports and not (alert_reports or ok_reports) else "success",
+            "mode": "single_disease_report",
+            "disease": disease,
+            "field_scope": "all_fields",
+            "fields": fields,
+            "field_reports": [compact_field_report(report) for report in field_reports],
+            "alert_fields": [report.get("field") for report in alert_reports],
+            "ok_fields": [report.get("field") for report in ok_reports],
+            "cache_missing_fields": [report.get("field") for report in missing_reports],
+            "has_alert": bool(alert_reports),
+            "alert_diseases": [disease] if alert_reports else [],
+            "notify": should_emit,
+            "language": language,
+            "send_text": message if should_emit else "",
+            "send_image_path": primary,
+            "send_photo_path": primary,
+            "attachments": media,
+            "media": media,
+            "telegram": {
+                "method": "sendMediaGroup" if len(media) > 1 else "sendPhoto" if primary else "sendMessage",
+                "photo": primary,
+                "caption": short_caption("Vineyard risk report", message),
+                "text_after_photo": message if media else message if should_emit else "",
+                "media": media,
+            },
+            "notification": notification,
+            "must_attach_image": bool(media),
+            "must_send_text": bool(should_emit and message),
+            "must_send_exactly": True,
+        }
+
+    report = standard_report({**params, "field": field, "disease": disease, "notify": False})
+    if report.get("status") != "success":
+        return {
+            **report,
+            "mode": "single_disease_report",
+            "field": field,
+            "disease": disease,
+            "has_alert": False,
+            "alert_diseases": [],
+        }
+    alert = evaluate_single_disease_alert(report, params, disease)
+    report["risk_alert_policy"] = alert
+    has_alert = bool(alert.get("notify"))
+    compact = compact_report_summary(report)
+    if notify_mode not in {"risk_only", "alerts_only"}:
+        isolated_media = []
+        for item in report.get("media") or report.get("attachments") or []:
+            if (item.get("disease") or disease) != disease:
+                continue
+            isolated_item = dict(item)
+            isolated_item["disease"] = disease
+            isolated_media.append(isolated_item)
+        primary = isolated_media[0].get("path") if isolated_media else ""
+        telegram = dict(report.get("telegram") or {})
+        telegram.update({
+            "method": "sendPhoto" if primary else "sendMessage",
+            "photo": primary,
+            "media": isolated_media,
+        })
+        return {
+            **report,
+            "mode": "single_disease_report",
+            "has_alert": has_alert,
+            "alert_diseases": [disease] if has_alert else [],
+            "reports": [compact],
+            "send_image_path": primary,
+            "send_photo_path": primary,
+            "attachments": isolated_media,
+            "media": isolated_media,
+            "telegram": telegram,
+            "must_attach_image": bool(isolated_media),
+        }
+    should_emit = bool(has_alert or send_low_summary)
+    message = localize_text(single_disease_field_message(field, report, alert, repo), language)
+    media = localize_media(report.get("media") or report.get("attachments") or [], language) if has_alert else []
+    isolated_media = []
+    for item in media:
+        if (item.get("disease") or disease) != disease:
+            continue
+        isolated_item = dict(item)
+        isolated_item["disease"] = disease
+        isolated_media.append(isolated_item)
+    media = isolated_media
+    primary = media[0].get("path") if media else ""
+    notification = {"status": "skipped", "reason": "notify=false"}
+    if package_notification and should_emit and (
+        str(params.get("notify", "false")).lower() == "true" or has_alert
+    ):
+        notification = call_skill("farmer_notify", {
+            "title": localize_text("Vineyard treatment watch" if has_alert else "Vineyard risk summary", language),
+            "message": message,
+            "caption": short_caption("Vineyard risk report", message),
+            "text_after_photo": message if media else "",
+            "plot_path": primary,
+            "image_path": primary,
+            "attachments": media,
+            "media": media,
+            "delivery_group": params.get("delivery_group") or "",
+            "dispatch_role": f"{disease}_alert" if has_alert else f"{disease}_ok",
+            "field": field,
+            "disease": disease,
+            "has_alert": has_alert,
+            "alert_diseases": [disease] if has_alert else [],
+            "language": language,
+            "outbox_dir": params.get("outbox_dir") or "/tmp/picoclaw_outbox",
+            "channel": params.get("channel") or "picoclaw_telegram",
+        }, 30)
+    return {
+        "status": "success",
+        "mode": "single_disease_report",
+        "field": field,
+        "disease": disease,
+        "has_alert": has_alert,
+        "alert_diseases": [disease] if has_alert else [],
+        "risk_alert_policy": alert,
+        "reports": [compact],
+        "language": language,
+        "send_text": message if should_emit else "",
+        "send_image_path": primary,
+        "send_photo_path": primary,
+        "attachments": media,
+        "media": media,
+        "telegram": {
+            "method": "sendPhoto" if primary else "sendMessage",
+            "photo": primary,
+            "caption": short_caption("Vineyard risk report", message),
+            "text_after_photo": message if should_emit else "",
+            "media": media,
+        },
+        "notification": notification,
+        "must_attach_image": bool(media),
+        "must_send_text": bool(should_emit and message),
+        "must_send_exactly": True,
     }
 
 
@@ -2657,10 +3248,10 @@ def main():
             lower = text.lower()
             params = {**env_params, "mode": "both_disease_report", "raw_text": text}
             if any(term in lower for term in ("powdery", "oidi", "oïdi", "oidium", "pmi")):
-                params["mode"] = "standard_report"
+                params["mode"] = "single_disease_report"
                 params["disease"] = "powdery_mildew"
             if any(term in lower for term in ("downy", "mildiu", "goidanich", "rossi")) and not any(term in lower for term in ("powdery", "oidi", "oïdi", "oidium", "pmi")):
-                params["mode"] = "standard_report"
+                params["mode"] = "single_disease_report"
                 params["disease"] = "downy_mildew"
             if params.get("mode") == "both_disease_report" and params.get("field"):
                 repo = params.get("repo_path") or "/root/.picoclaw/workspace/goidanich"
@@ -2702,6 +3293,8 @@ def main():
     elif mode == "package_farmer_alert":
         packaged = package_farmer_alert(params)
         result = {"mode": mode, **packaged}
+    elif mode in {"single_disease_report", "disease_report"}:
+        result = single_disease_report(params)
     elif mode in {"both_disease_report", "generic_report", "risc_report", "risk_report"}:
         result = both_disease_report(params)
     elif mode in {"standard_report", "farmer_report", "vineyard_guard", "send_standard_report", "telegram_report"}:

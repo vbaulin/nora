@@ -69,7 +69,8 @@ send_pending() {
     fi
     # shellcheck disable=SC1090
     . "$TELEGRAM_ENV"
-    export TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID
+    export TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID TELEGRAM_CHAT_IDS
+    export PICOCLAW_CONFIG PICOCLAW_TELEGRAM_INCLUDE_ALLOW_FROM
     "$SENDER" --once >> "$LOG" 2>&1 || true
 }
 
@@ -86,6 +87,16 @@ case "$local_hm" in
         else
             echo "=== $(date -Iseconds) alert deferred: refresh not complete ===" >> "$LOG"
         fi
+        ;;
+    083[5-9]|084[0-9])
+        if done_stamp alert && ! task_locked alert; then
+            run_once proactive "$SCRIPT" proactive --research
+        else
+            echo "=== $(date -Iseconds) proactive deferred: alert evaluation not complete ===" >> "$LOG"
+        fi
+        ;;
+    170[0-9]|171[0-4])
+        run_once proactive_evening "$SCRIPT" proactive
         ;;
 esac
 

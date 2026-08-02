@@ -69,6 +69,8 @@ farmer-feedback-capture
 report-guard
 vineyard-guard-scheduler
 vineyard-model-explainer
+black-rot-risk
+proactive-field-agent
 ```
 
 Their source directories may use underscores on disk, but each `SKILL.md`
@@ -76,7 +78,7 @@ Their source directories may use underscores on disk, but each `SKILL.md`
 
 ## Daily Operation
 
-Vineyard Guard runs three daily functions:
+Vineyard Guard runs four daily functions:
 
 1. **Supabase/network sync**: register board/fields, pull neighbour alerts,
    pull released model versions, and push farmer feedback.
@@ -84,32 +86,49 @@ Vineyard Guard runs three daily functions:
    and plots once per day per field/disease unless stale or feedback changed.
 3. **Farmer notification**: send a concise daily summary. Attach plots for
    high-risk/full reports or when the board has only a small number of fields.
+4. **Proactive field reflection**: ingest fresh model artifacts, confirmed
+   operations and field-related nano-os-agent experiments; queue one bounded
+   research question when evidence is insufficient; and create at most one
+   confirmable proposal per field.
 
 Low-risk messages should be short and treatment-focused. High-risk messages
 must include the full disease report and plot attachments.
 
-The scheduled jobs must remain enabled in
-`/root/.picoclaw/workspace/cron/jobs.json`:
+The production board uses the deterministic BusyBox tick, not LLM
+`agent_turn` cron jobs. `/etc/crontabs/root` runs:
 
 ```text
-vineyard_guard_supabase_sync              55 7 * * *
-vineyard_guard_supabase_sync_powdery      56 7 * * *
-vineyard_guard_daily_cache_refresh         0 8 * * *
-vineyard_guard_risk_only_telegram_alert    5 8 * * *
+*/5 * * * * /root/.picoclaw/workspace/scripts/vineyard_guard_tick.sh
 ```
 
-For multi-field boards, do not run the daily cache refresh as one all-field
-Telegram/gateway call. Use one `daily-vineyard-briefing` refresh job per field
-and schedule the Telegram summary after those jobs with `cache_only=true`.
-La Granada uses:
+The tick uses dated stamps and locks to execute Supabase sync, per-field
+three-disease cache refresh, one board Telegram summary, morning proactive
+reflection/research, and an evening operation-ingestion pass. Legacy
+`vineyard_guard_*` jobs in
+`/root/.picoclaw/workspace/cron/jobs.json` are disabled during deployment so
+the LLM cannot duplicate the deterministic schedule.
+
+The tick exports the POSIX Europe/Madrid daylight-saving rule before comparing
+local schedule windows:
 
 ```text
-vineyard_guard_daily_cache_refresh_<field>   0/8/16/24/32 8 * * *
-vineyard_guard_risk_only_telegram_alert      45 8 * * *  cache_only=true
+TZ=CET-1CEST,M3.5.0,M10.5.0/3
 ```
 
-The gateway init script must export `TZ=Europe/Madrid` so the morning schedule
-is interpreted in the field timezone.
+## Proactive Field Learning
+
+`proactive-field-agent` provides a small SQLite evidence memory at
+`/root/.picoclaw/workspace/proactive_field/proactive_field.db`. It keeps field
+profiles, current model observations, confirmed farmer operations,
+field-related nano-os-agent experiments, facts, research sources, proposals and
+farmer decisions as separate epistemic objects.
+
+The skill never writes a treatment. A high-priority proposal is packaged
+through the existing `farmer-notify` outbox and includes `Ref: PF-<id>`. An
+explicit farmer acceptance, rejection, deferral or correction is stored with
+`mode=record_decision`; product/application details still pass through the
+two-step feedback workflow below. See
+[`docs/waku-agent-proactive-field-integration.md`](docs/waku-agent-proactive-field-integration.md).
 
 ## Farmer Feedback
 
@@ -144,6 +163,50 @@ application event.
 
 The product catalog should exist locally for offline matching and sync with
 Supabase when new confirmed products are introduced.
+
+## Board And Parcel Metadata
+
+Board identity must not be inherited by cloning another card. Each physical
+board and logical field receives a stable, unique UUID derived from its own
+`board.id` or `field.id`. The Vineyard Guard SD-card provisioner writes these
+identities and the field context consumed by local models and Supabase
+registration.
+
+Required field context:
+
+- unique field id and display name;
+- GPS coordinate;
+- variety;
+- planting year or vine age.
+
+Recommended context:
+
+- management regime and irrigation/water regime;
+- weather station and municipality identifiers;
+- training system and row orientation;
+- phenology dates;
+- black-rot inoculum history and evidence source;
+- measured leaf-wetness sensor presence/channel;
+- SIGPAC recinto reference and returned attributes.
+
+SIGPAC is parcel context, not weather data. The provisioner queries the
+official MAPA/FEGA `AU.Sigpac:recinto` WMS layer and stores the returned use,
+surface, slope, irrigation coefficient, region, and altitude with source
+provenance. It does not use SIGPAC to choose a meteorological station. A GPS
+query may return adjacent recintos; unresolved matches must be reviewed rather
+than selected silently.
+
+Run the provisioner against a mounted SD-card rootfs:
+
+```bash
+python3 scripts/provision_vineyard_sd.py \
+  --manifest /path/to/board.json \
+  --rootfs /Volumes/rootfs \
+  --fetch-sigpac \
+  --require-sigpac
+```
+
+See [Vineyard board and SD-card provisioning](docs/vineyard-sd-card-provisioning.md).
 
 ## Hardware And Farm Health
 

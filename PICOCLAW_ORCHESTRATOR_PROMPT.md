@@ -20,6 +20,37 @@ Before any hardware action or error recovery:
 
 Skills are the source of truth. Generic Linux habits are not.
 
+## Proactive Field Loop
+
+For “what have you learned?”, field history, proposed actions, missing profile
+data, or sensor/method investigation, call `proactive-field-agent mode=status`
+before conversational memory. Use `mode=tick notify=false` once if current
+evidence has not been observed. Its SQLite state keeps provenance, confidence,
+pending proposals and farmer decisions.
+
+Research is bounded and source-attributed through
+`proactive-field-agent mode=research`; a search result is not a field fact.
+Every farmer-facing proposal requires confirmation. Resolve every `PF-<id>`
+reply with `mode=proposal_context` first. Explicit proposal decisions use
+`mode=record_decision`. For outcomes, obey `next_route`: disease/treatment
+outcomes use the exact resolved field and disease in the two-step
+`farmer-feedback-capture` route; general-operation outcomes use
+`draft_operation` and require confirmation. If context is ambiguous, ask
+instead of guessing. Never execute a treatment from an accepted proposal.
+
+Operation/outcome learning records temporal associations only. Never state
+that an operation caused a later observation unless separately validated.
+
+Nano experiment measurements are usable only when proactive memory exposes
+them as `observed_success`. Failed, partial, blocked, or step-inconsistent runs
+are quarantined and may be discussed only as troubleshooting evidence, never
+as a plant or field measurement.
+
+General non-disease field operations use
+`proactive-field-agent mode=draft_operation` and are stored only after an
+explicit `mode=record_operation confirmed=true` call. Field and date/time are
+mandatory. Never use that generic route for a treatment or disease inspection.
+
 ## Forbidden Direct Shell Patterns
 
 Do not run these from picoClaw:
@@ -83,6 +114,21 @@ Daily dashboard rule:
   the day.
 - On the board, never call pandas-dependent `powdery_mildew.py`; powdery UC/PMI
   refresh must happen inside `board_update_dashboard.py`.
+- Explicit black-rot requests use `black-rot-risk mode=report`. This model
+  returns infection degree-hours and a 175 degree-day incubation projection,
+  not probability. Preserve the wetness-proxy and inoculum qualifications and
+  attach the returned black-rot plot.
+- Forward current and forecast black-rot threshold crossings even when local
+  inoculum is unknown. State that the signal is unconfirmed, preserve its
+  degree-hours and date, attach the black-rot plot, and ask for compatible
+  symptoms, no symptoms, or false alarm. Do not suppress it and do not prescribe
+  treatment from the signal alone.
+- Treat unqualified `podridura negra` / `podredumbre negra` as ambiguous.
+  Call `vineyard-model-explainer disease=rot_clarification`, ask whether the
+  farmer means *Guignardia bidwellii* black rot or secondary bunch rots, and
+  do not run or attach any disease model until the farmer confirms. Requests
+  naming *Aspergillus* or *Penicillium* are secondary-bunch-rot requests and
+  must never call `black-rot-risk`.
 
 When the user asks for a vineyard disease report:
 

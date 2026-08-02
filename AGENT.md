@@ -45,6 +45,49 @@ If a user names a place, field, parcel, station, or variety, resolve it through
 config before answering. If config is missing or stale, call the relevant skill
 to refresh/regenerate data, then report the structured result.
 
+## Proactive Field Memory
+
+Use `proactive-field-agent` for questions about what the board has learned,
+past operations, incomplete field profiles, proposed observations, sensor or
+method research, and next actions. Start with:
+
+`call_skill proactive-field-agent {"mode":"status","state_dir":"/root/.picoclaw/workspace/proactive_field"}`
+
+If it has no current observations, call `mode=tick`, `notify=false` once. This
+memory is evidence-linked; distinguish dashboard observations,
+farmer-confirmed facts, source-attributed web research, and unconfirmed
+proposals. Never use session memory as a substitute.
+
+For every reply to `PF-<id>`, call `mode=proposal_context` first. An explicit
+accept/reject/defer/correct response then uses `mode=record_decision` with the
+ID and exact farmer note. For an outcome, follow `proposal_context.next_route`:
+disease/treatment outcomes start the two-step
+`farmer-feedback-capture confirmed=false` route, while general-operation
+outcomes start `proactive-field-agent mode=draft_operation` with the resolved
+field and operation type. Ask when ambiguous; never default to downy mildew.
+Acceptance records a decision only and does not execute a treatment. After
+confirmed feedback, call `proactive-field-agent mode=observe` to ingest it.
+
+When status returns a derived operation insight, describe it as an observed
+sequence, not a causal effect. Confirmed outcomes automatically close their
+matching follow-up proposal.
+
+Other field operations (poda/pruning, mowing, soil work, irrigation,
+fertilization, cover crop, harvest, planting, or sensor installation) use
+`proactive-field-agent mode=draft_operation`, followed by
+`mode=record_operation confirmed=true` only after the farmer confirms the
+field, date and structured details.
+
+Use `mode=research` for one bounded, source-attributed web search. Web snippets
+are candidates for review, never operational truth or an automatic treatment
+recommendation.
+
+Treat nano-os-agent experiment verdicts as a release gate. Only
+`observed_success` facts may support a description of a validated board
+capability. Failed, partial, blocked, or inconsistent runs are quarantined and
+may support troubleshooting research only; never use their measurements as
+field evidence.
+
 ## Goidanich Execution (THE GOLD STANDARD)
 When asked about disease risk, plots, field status, a vineyard place, a station,
 a variety, or vineyard monitoring, you MUST use nano-os-agent skills. Do not run
@@ -59,6 +102,26 @@ Correct skill routes:
    If `field` is omitted, the skill must run all fields from
    `agent_config.yaml`. Use one disease only when the user explicitly asks for
    downy or powdery/oidium.
+   Explicit downy and powdery requests use
+   `call_skill daily-vineyard-briefing {"mode":"single_disease_report","disease":"downy_mildew|powdery_mildew","days":31,"notify":false,"board_only":true,"channel":"picoclaw_telegram"}`
+   and must return only the requested disease text and PNG. Downy mildew,
+   powdery mildew, and grapevine black rot are evaluated independently. The daily board
+   briefing may contain three isolated sections, but only an alerting disease
+   may contribute its plot.
+   An explicit grapevine black-rot / `Guignardia bidwellii` request uses
+   `call_skill black-rot-risk {"mode":"report","days":31}`. Treat its
+   infection index as degree-hours, never as a probability percentage, and
+   preserve its wetness-source and inoculum-status qualifications.
+   If the black-rot model crosses its current or forecast threshold while
+   inoculum is unknown, send the signal and plot as unconfirmed evidence and
+   ask the farmer to report compatible symptoms, no symptoms, or false alarm.
+   Unknown presence must not suppress a model signal.
+   The unqualified local terms `podridura negra` and `podredumbre negra` are
+   ambiguous. Before running any disease model, call
+   `vineyard-model-explainer {"disease":"rot_clarification","raw_text":"<farmer message>"}`
+   and ask whether the farmer means grapevine black rot caused by
+   *Guignardia bidwellii* or secondary grape bunch rots associated with
+   *Aspergillus*, *Penicillium*, or other opportunistic fungi.
    This route is for risk/report/plot/status requests. It is NOT the route for
    product advice, treatment choice, or recording a farmer action.
 1. Fresh board prediction:

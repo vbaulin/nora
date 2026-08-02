@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 420" role="img" aria-labelledby="title desc">
+  <title id="title">Evidence-gated proactive experiment loop</title>
+  <desc id="desc">PicoClaw selects a capability, nano-os-agent executes it, evidence passes a release gate, and only then may a bounded human-confirmed proposal be produced.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#2f7d55"/>
+    </marker>
+    <marker id="arrow-muted" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#77857d"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="420" rx="16" fill="#f5f7f5"/>
+  <text x="52" y="52" fill="#17231c" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="29" font-weight="760">From a question to a defensible next action</text>
+  <text x="52" y="82" fill="#526158" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18">Reasoning can propose. Deterministic checks decide what becomes evidence.</text>
+
+  <path d="M232 183 H303 M509 183 H580 M786 183 H857" fill="none" stroke="#2f7d55" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M960 252 C960 343 707 353 707 285" fill="none" stroke="#77857d" stroke-width="2.5" stroke-dasharray="8 7" marker-end="url(#arrow-muted)"/>
+  <path d="M655 285 C655 353 403 343 403 252" fill="none" stroke="#2f7d55" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+  <g>
+    <rect x="52" y="118" width="180" height="134" rx="8" fill="#ffffff" stroke="#b8c6bd" stroke-width="1.5"/>
+    <text x="72" y="149" fill="#2f7d55" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="15">PICOCLAW</text>
+    <text x="72" y="184" fill="#17231c" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="22" font-weight="700">Select</text>
+    <text x="72" y="213" fill="#526158" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="17">Inspect skills, tasks,</text>
+    <text x="72" y="236" fill="#526158" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="17">state, and limits</text>
+  </g>
+
+  <g>
+    <rect x="303" y="118" width="206" height="134" rx="8" fill="#ffffff" stroke="#2f7d55" stroke-width="2"/>
+    <text x="323" y="149" fill="#2f7d55" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="15">NANO-OS-AGENT</text>
+    <text x="323" y="184" fill="#17231c" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="22" font-weight="700">Execute</text>
+    <text x="323" y="213" fill="#526158" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="17">Run declared steps,</text>
+    <text x="323" y="236" fill="#526158" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="17">retries, and timeouts</text>
+  </g>
+
+  <g>
+    <rect x="580" y="118" width="206" height="134" rx="8" fill="#ffffff" stroke="#b8c6bd" stroke-width="1.5"/>
+    <text x="600" y="149" fill="#2f7d55" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="15">EVIDENCE</text>
+    <text x="600" y="184" fill="#17231c" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="22" font-weight="700">Record</text>
+    <text x="600" y="213" fill="#526158" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="17">Measurements, artifacts,</text>
+    <text x="600" y="236" fill="#526158" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="17">provenance, verdict</text>
+  </g>
+
+  <g>
+    <rect x="857" y="118" width="291" height="134" rx="8" fill="#fffaf0" stroke="#c38b2b" stroke-width="1.5"/>
+    <text x="877" y="149" fill="#a26d16" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="15">RELEASE GATE</text>
+    <text x="877" y="184" fill="#17231c" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="22" font-weight="700">Keep or quarantine</text>
+    <text x="877" y="213" fill="#526158" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="17">Failed or partial evidence</text>
+    <text x="877" y="236" fill="#526158" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="17">cannot enter advice</text>
+  </g>
+
+  <g>
+    <rect x="510" y="300" width="390" height="82" rx="8" fill="#173e2a"/>
+    <text x="532" y="329" fill="#a7e1be" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="15">PROACTIVE OUTPUT</text>
+    <text x="532" y="360" fill="#ffffff" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="20" font-weight="700">One bounded proposal, confirmed before action</text>
+  </g>
+
+  <text x="935" y="330" fill="#6e7a73" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="16">quarantine</text>
+  <text x="942" y="352" fill="#6e7a73" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="16">and diagnose</text>
+</svg>

@@ -35,13 +35,60 @@ request:
 If no current skill/tool/task evidence was collected in the same turn, do not
 answer board facts from chat memory.
 
+## Proactive Evidence And Learning Route
+
+`proactive-field-agent` is the board's evidence memory and bounded
+observe-propose-confirm loop. It does not replace disease models or
+`farmer-feedback-capture`.
+
+For questions about what the board has learned, field history, missing field
+parameters, operations, possible improvements, sensors to investigate, or the
+next proposed action:
+
+1. call `proactive-field-agent {"mode":"status"}`;
+2. if current observations have not yet been ingested, call
+   `proactive-field-agent {"mode":"tick","notify":false}` once;
+3. answer from returned profiles, observations, operations, derived insights,
+   facts, proposals, decisions, and source-attributed research only;
+4. distinguish an observation, a farmer-confirmed fact, a web source, and a
+   proposal in the answer;
+5. never present a proposal as an executed operation.
+
+If a farmer replies to a proactive message containing `Ref: PF-<id>`, first
+call `proactive-field-agent mode=proposal_context` with the raw reply. For an
+explicit acceptance, rejection, deferral, or correction, call
+`mode=record_decision` with that proposal ID and the farmer's exact note. For
+an inspection outcome (`cap símptoma`, compatible symptoms, false alarm, and
+equivalents), follow `proposal_context.next_route`: disease/treatment outcomes
+begin `farmer-feedback-capture confirmed=false`; general-operation outcomes
+begin `proactive-field-agent mode=draft_operation` with the resolved field and
+operation type. Ask when context is ambiguous. An accepted proposal does not
+authorize automatic treatment.
+
+Confirmed operations without a later confirmed outcome may produce one
+`operation_follow_up` proposal after a bounded delay. A later outcome closes
+that proposal and is stored only as an observed temporal association with
+`causal_claim=false`, never as proof that the operation caused the result.
+
+Internet research uses `proactive-field-agent mode=research` or
+`mode=ingest_research`. Search snippets are candidate evidence. Preserve source
+URLs and never turn them directly into a product, dose, or treatment order.
+Product/application messages still follow the mandatory two-step
+`farmer-feedback-capture` route; after confirmed storage, call
+`proactive-field-agent mode=observe` so the operation enters field memory.
+
+Nano experiment results are release-gated. Use only `observed_success` facts
+to describe a validated board capability. Failed, partial, blocked, or
+step-inconsistent experiments are quarantined, excluded from farmer advice,
+and may generate only a bounded troubleshooting research review.
+
 ## Mandatory Vineyard Telegram Route
 
 For any Telegram/user request about vineyard risk, `risc`, mildew, downy,
 powdery, oidi, mildiu, forecast, plot, or a generic vineyard/Goidanich report:
 
 1. Do not answer from memory.
-2. Call skill `daily-vineyard-briefing` with:
+2. For a generic mildew report, call skill `daily-vineyard-briefing` with:
    `{"mode":"both_disease_report","days":31,"notify":false,"board_only":true,"channel":"picoclaw_telegram"}`
 3. Use the returned `send_text`, `attachments`, `media`, and `telegram` fields
    exactly.
@@ -52,6 +99,43 @@ powdery, oidi, mildiu, forecast, plot, or a generic vineyard/Goidanich report:
    not generic `risk`.
 6. Any answer saying May 24 or powdery 15% when current state has
    `powdery_risk` around 90% is invalid and must not be sent.
+
+The three disease families are independent. For an explicit downy or powdery
+request, call `daily-vineyard-briefing` with
+`mode=single_disease_report` and `disease=downy_mildew` or
+`disease=powdery_mildew`; return only that disease's text and PNG. Never attach
+another disease's plot. Black rot remains the separate `black-rot-risk` route.
+The scheduled daily job evaluates downy mildew, powdery mildew, and black rot
+independently, then may place their three isolated summaries into one board
+briefing to avoid Telegram flooding. Only diseases with an active alert may
+contribute plots to that briefing.
+
+For an explicit black-rot / `Guignardia bidwellii` request, call
+`black-rot-risk {"mode":"report","days":31}` instead. Black-rot output is an
+infection index in degree-hours plus incubation timing, not a percentage risk.
+Preserve `wetness_source` and `inoculum_status`, and attach every returned PNG.
+Do not infer confirmed disease from a weather infection event.
+
+A current or forecast black-rot threshold crossing must still reach the farmer
+when inoculum is unknown. Label it as an unconfirmed weather-model signal,
+preserve the degree-hours and date, attach the black-rot PNG, and ask for one of
+three field outcomes: compatible symptoms, no symptoms, or false alarm. Never
+silence the model signal solely because local presence is unverified, and never
+turn it into an automatic treatment recommendation.
+
+`Black rot` here means grapevine black rot caused by *Guignardia bidwellii*
+(syn. *Phyllosticta ampelicida*). In Catalan, always label it `Black rot de la
+vinya (Guignardia bidwellii)`, never plain `podridura negra`. Messages about
+`podridures secundàries`, *Aspergillus*, *Penicillium*, or other opportunistic
+bunch-rot fungi must not be interpreted as this model. The current deployment
+does not yet have a validated secondary-bunch-rot prediction model.
+
+The unqualified terms `podridura negra` and `podredumbre negra` are ambiguous
+in local usage. Do not route either phrase directly to `black-rot-risk`.
+Call `vineyard-model-explainer` with `disease=rot_clarification`, ask the
+farmer to choose the pathogen/disease complex, and wait for confirmation.
+Only explicit `black rot`, *Guignardia bidwellii*, or *Phyllosticta
+ampelicida* authorizes the black-rot model route.
 
 Product/treatment advice is not a generic report route:
 
@@ -162,6 +246,14 @@ alarm, grade, product, dose, lot, water volume, area, or farmer correction:
 
 If area or product quantity is missing, ask for it. If several products are
 mentioned, record every product as a separate structured item, not as a note.
+
+General field operations that are not treatments or disease inspections (for
+example pruning, mowing, soil work, irrigation, fertilization, cover-crop
+work, harvest, planting, or sensor installation) use
+`proactive-field-agent mode=draft_operation` first. Return its structured draft
+and confirmation question. Only after explicit confirmation call
+`mode=record_operation confirmed=true`. Field and date/time are mandatory.
+Never route a treatment through this generic operation path.
 
 # Self-Improvement Context for nano-os-agent
 

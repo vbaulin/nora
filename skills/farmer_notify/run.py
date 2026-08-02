@@ -205,7 +205,7 @@ def main():
             "method": method,
             "photo": attached_image_path,
             "caption": caption,
-            "text_after_photo": text_after_photo if image_path else "",
+            "text_after_photo": text_after_photo if media else "",
             "media": media,
         },
         "must_attach_image": bool(attached_image_path),

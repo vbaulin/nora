@@ -39,6 +39,7 @@ telegram.env
 # Python
 __pycache__/
 *.py[cod]
+_site/
 
 # Go
 vendor/

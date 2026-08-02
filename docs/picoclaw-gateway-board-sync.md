@@ -10,24 +10,39 @@ break `/api/pico/info` and `/ready`.
 
 ## Verified Board State
 
-Current validated board:
+Current validated boards (2026-08-01):
 
 ```text
-board: 192.168.36.102
+boards: 192.168.36.102 (La Granada), 192.168.36.151 (Avgvstvs Forum)
 launcher: /opt/picoclaw/picoclaw-launcher
 gateway: /opt/picoclaw/picoclaw
-gateway version label: vineyard-guard-tool-first-20260612
+gateway version label: vineyard-guard-proactive-field-20260801.2
 launcher version label: vineyard-guard-task-runner-20260612
 launcher runtime UI: /runtime
 launcher nano-os-agent UI: /nano-os-agent
 launcher task compatibility route: /task-runner
 nano one-shot executor: /root/nano-os-agent/nano-os-agent --once <task.yaml>
-gateway checksum: 3517901aa586826a86db04ad6ca0c9c5c50e8428b986eaa50bb152bc211a7410
+gateway checksum: 240231327d8119beb1353dbb37c61a49a76f0236f015eac502de5485acab7607
+daily briefing skill checksum: d7b0c2a594394723e49a7879edb3384e060a7ea6b75d969cdb19091681b0707d
+vineyard scheduler checksum: fc7ac7d95f0b846a078534cbabee87332a26ee6a6969a60d18130af3ea3ed58c
 launcher checksum: 97a9f756b8d384ce0ab4dc464f6d966b79a8a781cd7916c5b95c4f71f72ad1c6
 nano-os-agent checksum: c7ddc09b6d0e4dd7636a0726718b4a9ea4e37358cfea8e6e7ff06e3ed10a8415
 dashboard password: rootroot
 gateway init timezone: TZ=Europe/Madrid
 ```
+
+The three disease routes are independent:
+
+```text
+explicit downy request:  daily-vineyard-briefing mode=single_disease_report disease=downy_mildew
+explicit powdery request: daily-vineyard-briefing mode=single_disease_report disease=powdery_mildew
+explicit black-rot request: black-rot-risk mode=report disease=black_rot
+```
+
+Each route returns only its own disease text and PNG media. The daily scheduler
+evaluates all three routes independently, then may aggregate their short
+summaries into one board briefing. Only diseases that trigger their own alert
+policy contribute plots to that scheduled notification.
 
 Expected runtime checks:
 
@@ -43,15 +58,19 @@ Expected result:
 ✓ Channels enabled: [pico telegram]
 ```
 
-The currently verified Vineyard Guard jobs are enabled and scheduled in Madrid
-local time:
+The currently verified boards use the BusyBox cron daemon to call a small
+deterministic tick every five minutes:
 
 ```text
-vineyard_guard_supabase_sync              55 7 * * *
-vineyard_guard_supabase_sync_powdery      56 7 * * *
-vineyard_guard_daily_cache_refresh         0 8 * * *
-vineyard_guard_risk_only_telegram_alert    5 8 * * *
+*/5 * * * * /root/.picoclaw/workspace/scripts/vineyard_guard_tick.sh
 ```
+
+The tick calls `vineyard_guard_cron.py`, which refreshes and synchronizes
+`downy_mildew`, `powdery_mildew`, and `black_rot` separately before composing
+the daily board summary. It then runs `proactive-field-agent`: one morning
+observe/propose cycle with at most one queued research query, and one evening
+operation-ingestion cycle. Native PicoClaw jobs in `jobs.json` remain disabled
+on these deployments to avoid duplicate Telegram deliveries.
 
 On boards with more than two vineyard fields, the all-field cache refresh must
 be split into single-field jobs. The Telegram summary should run after those
@@ -70,7 +89,7 @@ cannot time out.
 The board init script is:
 
 ```sh
-/etc/init.d/S30picoclaw_skill_mounts
+/etc/init.d/S96picoclaw_skill_mounts
 ```
 
 It must run before the PicoClaw gateway. It bind-mounts the vineyard and
@@ -86,6 +105,8 @@ farmer_feedback_capture
 report_guard
 vineyard_guard_scheduler
 vineyard_model_explainer
+black_rot_risk
+proactive_field_agent
 ```
 
 Use underscore directory names on disk when the nano-os-agent skill directory
@@ -142,6 +163,21 @@ It adds:
   current tool/skill evidence was collected in the turn;
 - treatment-advice routing that checks current Vineyard Guard state without
   sending full reports unless requested;
+- explicit downy- and powdery-mildew routing through
+  `daily-vineyard-briefing mode=single_disease_report`, with only the requested
+  disease text and media returned;
+- explicit black-rot routing through `black-rot-risk`, with only black-rot
+  report text and media returned for black-rot plot requests, while unknown
+  inoculum never suppresses a threshold signal;
+- an ambiguity guard for unqualified `podridura negra` / `podredumbre negra`:
+  the gateway asks whether the farmer means *Guignardia bidwellii* or a
+  secondary bunch rot before any model runs;
+- native `proactive-field-agent` routes for current field memory, bounded web
+  research, `PF-*` proposal decisions, multilingual inspection outcomes, and
+  confirmation-first general field operations; `proposal_context` resolves an
+  outcome to exactly one field/disease or asks rather than guessing;
+- word-boundary matching for treatment lot numbers, so the word `plot` is not
+  misclassified as farmer feedback;
 - authenticated `GET /api/task-runner/status`;
 - authenticated `POST /api/task-runner/tasks/run`;
 - authenticated artifact serving and deletion for allowed task/result
@@ -160,17 +196,25 @@ WORK=/private/tmp/sipeed-picoclaw-rebuild
 rm -rf "$WORK"
 git clone https://github.com/sipeed/picoclaw "$WORK"
 cd "$WORK"
-git apply /Users/vbaulin/antigr/picoClaw/patches/sipeed-picoclaw-structured-telegram.patch
-git apply /Users/vbaulin/antigr/picoClaw/patches/sipeed-picoclaw-runtime-dashboard.patch
+git checkout 49183d7e8daed0dba89ddbb6fcb60089401d9680
 git apply /Users/vbaulin/antigr/picoClaw/patches/sipeed-picoclaw-task-runner-tool-first.patch
+git apply \
+  --include=pkg/commands/cmd_start.go \
+  --include=pkg/env.go \
+  --include=pkg/gateway/gateway.go \
+  /Users/vbaulin/antigr/picoClaw/patches/sipeed-picoclaw-structured-telegram.patch
 ```
 
-If the local Go runtime is slightly older than upstream `go.mod`, adjust only
-the throwaway clone. Do not commit this compatibility edit:
+The patch is tested against upstream commit
+`49183d7e8daed0dba89ddbb6fcb60089401d9680` (2026-07-23). The task-runner
+patch already contains the runtime dashboard and the agent-side
+structured-delivery changes. Apply only the three non-overlapping gateway
+files from the older structured Telegram patch; applying all three complete
+patches would duplicate hunks and fail.
 
-```sh
-perl -0pi -e 's/^go 1\.25\.11$/go 1.25.10/m' go.mod
-```
+Do not edit or downgrade upstream `go.mod`. Its pinned Go toolchain is part of
+the tested source. Use `GOTOOLCHAIN=auto` on the build host so Go downloads the
+exact toolchain when it is not already installed.
 
 Build the launcher frontend/backend:
 
@@ -180,7 +224,7 @@ PATH=/Users/vbaulin/.nvm/versions/node/v22.12.0/bin:$PATH pnpm install --frozen-
 PATH=/Users/vbaulin/.nvm/versions/node/v22.12.0/bin:$PATH pnpm build:backend
 
 cd "$WORK"
-GOTOOLCHAIN=local CGO_ENABLED=0 GOOS=linux GOARCH=riscv64 \
+GOTOOLCHAIN=auto CGO_ENABLED=0 GOOS=linux GOARCH=riscv64 \
   go build -v -tags goolm,stdjson -ldflags "-s -w" \
   -o /private/tmp/picoclaw-launcher-riscv64 ./web/backend
 ```
@@ -190,10 +234,29 @@ Build the gateway:
 ```sh
 cd "$WORK"
 go run scripts/copydir.go workspace cmd/picoclaw/internal/onboard/workspace
-GOTOOLCHAIN=local CGO_ENABLED=0 GOOS=linux GOARCH=riscv64 \
-  go build -v -tags goolm,stdjson -ldflags "-s -w" \
+VERSION=vineyard-guard-proactive-field-20260801.2
+GOTOOLCHAIN=auto CGO_ENABLED=0 GOOS=linux GOARCH=riscv64 \
+  go build -v -tags goolm,stdjson \
+  -ldflags "-s -w -X github.com/sipeed/picoclaw/pkg/config.Version=$VERSION" \
   -o /private/tmp/picoclaw-gateway-riscv64 ./cmd/picoclaw
 ```
+
+The verified deployed build for this change is a stripped, statically linked
+RISC-V ELF executable:
+
+```text
+/private/tmp/picoclaw-gateway-riscv64  240231327d8119beb1353dbb37c61a49a76f0236f015eac502de5485acab7607
+```
+
+The 2026-08-01 build is a 34 MB RISC-V `rva20u64` static executable built
+with embedded version `vineyard-guard-proactive-field-20260801.2`. This build
+also makes proactive proposal decisions fail closed: negated, conflicting, or
+field-outcome replies resolve proposal context and cannot be persisted as an
+acceptance.
+
+This checksum was verified after installation on both boards. Rebuilds may
+legitimately have a different checksum;
+verify the embedded version string and rerun the tests before installation.
 
 Build nano-os-agent from this repository when the web Task Runner is required:
 
@@ -267,11 +330,44 @@ chmod +x /root/nano-os-agent/nano-os-agent
 '
 ```
 
+After copying the repository runtime, run `scripts/sync_vineyard_board.sh`.
+The sync now has three mandatory proactive-field gates and exits nonzero when
+any of them fails:
+
+1. PicoClaw `skills list` must expose `proactive-field-agent` under its
+   hyphenated skill name.
+2. `mode=self_test` must report `installed=true`. Its separate
+   `operational_ready` value may remain false only when the daily disease cache
+   is stale or incomplete and therefore requires the normal refresh cycle.
+3. An evidence-only `mode=observe notify=false` call must discover at least one
+   configured field and complete successfully.
+
+These checks do not send Telegram messages or create farmer decisions. A live
+acceptance test still requires the next deterministic morning/evening tick,
+one resulting outbox package, successful Telegram delivery, and a confirmed
+`PF-<id>` reply routed back through `proposal_context`.
+
+For reliable autonomous web research, create a board-local credential file
+that is never copied into the repository:
+
+```sh
+install -m 600 /dev/null /root/.picoclaw/search.env
+printf '%s\n' 'TAVILY_API_KEY=<key>' >> /root/.picoclaw/search.env
+# Or use BRAVE_SEARCH_API_KEY instead.
+```
+
+The proactive skill reads only those two whitelisted key names. Its self-test
+reports `tavily`, `brave`, or `duckduckgo_html_or_lite_fallback` as provider
+names and never returns the key values. The keyless path retries the same
+bounded query against DuckDuckGo Lite when the HTML endpoint returns a
+challenge page or no parseable results.
+
 Current deployed checksums:
 
 ```text
 /root/nano-os-agent/nano-os-agent  c7ddc09b6d0e4dd7636a0726718b4a9ea4e37358cfea8e6e7ff06e3ed10a8415
-/opt/picoclaw/picoclaw           3517901aa586826a86db04ad6ca0c9c5c50e8428b986eaa50bb152bc211a7410
+/opt/picoclaw/picoclaw           240231327d8119beb1353dbb37c61a49a76f0236f015eac502de5485acab7607
+/root/nano-os-agent/skills/proactive_field_agent/run.py  ce8127ae4e411ab0209d9b7a5696a22fd3611175ca31e10cecab5c3e70363acf
 /opt/picoclaw/picoclaw-launcher  97a9f756b8d384ce0ab4dc464f6d966b79a8a781cd7916c5b95c4f71f72ad1c6
 ```
 
@@ -287,6 +383,32 @@ TELEGRAM_BOT_TOKEN=...
 TELEGRAM_CHAT_ID=...
 ```
 
+The deterministic Vineyard Guard sender delivers to `TELEGRAM_CHAT_ID` and to
+numeric Telegram users listed in the channel's `allow_from` configuration. In
+a direct Telegram conversation, the user id is also the chat id; therefore the
+same allow-list that authorizes a farmer to use the bot also authorizes daily
+proactive reports to that farmer. A configured negative chat id remains the
+group destination, and the direct recipients are added rather than replacing
+the group.
+
+Additional explicit recipients can be configured without changing PicoClaw's
+channel allow-list:
+
+```text
+TELEGRAM_CHAT_IDS=551729816,-1001234567890
+```
+
+Set `PICOCLAW_TELEGRAM_INCLUDE_ALLOW_FROM=false` only when scheduled reports
+must be restricted to the explicit `TELEGRAM_CHAT_ID`/`TELEGRAM_CHAT_IDS`
+destinations. The sender records successful delivery per chat, so retrying one
+failed destination does not duplicate messages in destinations that already
+accepted the report.
+
+For each scheduled Vineyard Guard cycle, the sender selects the consolidated
+fleet overview when it exists. That overview includes the relevant plot media;
+per-field detail packages from the same cycle are retained as on-demand
+artifacts and are not pushed as additional Telegram messages.
+
 The board init script `/etc/init.d/S97picoclaw_gateway` must source
 `telegram.env` and export the new variable:
 
@@ -301,6 +423,64 @@ fi
 
 Without this compatibility export, gateway restarts can silently start only the
 Pico channel, while Telegram appears configured in `config.json`.
+
+## WhatsApp Channel Setup
+
+WhatsApp is not a drop-in Telegram clone. Telegram bot delivery only needs a
+bot token and chat id. Official WhatsApp delivery requires a WhatsApp Business
+Cloud API account, a phone number id, an access token, and usually an approved
+message template for proactive scheduled alerts.
+
+Use this order when enabling the native WhatsApp channel on a board:
+
+1. In Meta Business / WhatsApp Cloud API, create or select the WhatsApp app and
+   phone number.
+2. Record the phone number id, access token, business account id if required by
+   the PicoClaw channel panel, and a webhook verify token.
+3. In the PicoClaw web dashboard, enable the WhatsApp channel and enter those
+   credentials in the native WhatsApp channel settings.
+4. Configure the webhook callback URL shown by the PicoClaw WhatsApp channel
+   panel. The callback must be reachable from Meta; a LAN-only board address is
+   not sufficient for inbound WhatsApp messages.
+5. Restart the gateway and verify the runtime log contains WhatsApp in the
+   active channel list.
+6. Send a real inbound WhatsApp message to the configured business number and
+   confirm the gateway receives it before relying on scheduled alerts.
+
+For Vineyard Guard, scheduled reports currently use the Telegram-specific
+outbox sender:
+
+```text
+/root/.picoclaw/workspace/scripts/telegram_outbox_sender.py
+```
+
+Therefore WhatsApp chat activation alone is not enough for daily Vineyard Guard
+alerts unless the native PicoClaw WhatsApp channel consumes the structured
+`send_text` / `attachments` / `media` payload directly. If it does not, add a
+separate WhatsApp outbox sender or replace the sender with a generic channel
+sender that supports both:
+
+```text
+pending JSON -> Telegram Bot API
+pending JSON -> WhatsApp Cloud API
+```
+
+Keep Telegram and WhatsApp channel names explicit in scheduler jobs. Existing
+Telegram jobs use:
+
+```json
+"channel": "picoclaw_telegram"
+```
+
+A WhatsApp job should use the channel name expected by the gateway, for example:
+
+```json
+"channel": "picoclaw_whatsapp"
+```
+
+Do not commit WhatsApp tokens, phone number ids, webhook tokens, or recipient
+numbers to the repository. Store them in the board PicoClaw config or a local
+env file owned by root.
 
 ## Authenticated Webapp Checks
 
@@ -446,7 +626,10 @@ For risk/report/plot/forecast/mildew requests:
 - use fresh cached `dashboard_state`, `dashboard_report`, and PNG files when
   they are current for today;
 - regenerate once only when cache files or model layers are stale/missing;
-- send both disease plots for generic high-risk or requested full reports;
+- send the mildiu and oïdi plots for generic high-risk or requested full
+  reports;
+- for an explicit black-rot, `Guignardia`, or `Bidwellii` request, use
+  `black-rot-risk` and attach only its returned black-rot PNG files;
 - send one concise daily summary when risk is low;
 - never paste raw JSON to Telegram;
 - do not use session memory as a risk source.

@@ -1,8 +1,8 @@
 diff --git a/pkg/agent/agent.go b/pkg/agent/agent.go
-index 90745e5d..5be5560b 100644
+index 26abe90..fe89843 100644
 --- a/pkg/agent/agent.go
 +++ b/pkg/agent/agent.go
-@@ -100,6 +100,7 @@ type processOptions struct {
+@@ -106,6 +106,7 @@ type processOptions struct {
  	AllowInterimPicoPublish bool                   // Whether pico tool-call interim text can be published when SendResponse is false
  	SuppressToolFeedback    bool                   // Whether to suppress inline tool feedback messages
  	NoHistory               bool                   // If true, don't load session history (for heartbeat)
@@ -11,7 +11,7 @@ index 90745e5d..5be5560b 100644
  	InboundContext          *bus.InboundContext    // Normalized inbound facts for events/hooks
  	RouteResult             *routing.ResolvedRoute // Route decision snapshot for events/hooks
 diff --git a/pkg/agent/agent_message.go b/pkg/agent/agent_message.go
-index 419664ed..b1d4a7d4 100644
+index 419664e..b1d4a7d 100644
 --- a/pkg/agent/agent_message.go
 +++ b/pkg/agent/agent_message.go
 @@ -205,6 +205,26 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
@@ -42,10 +42,10 @@ index 419664ed..b1d4a7d4 100644
  		opts.ForcedSkills = append(opts.ForcedSkills, pending...)
  		logger.InfoCF("agent", "Applying pending skill override",
 diff --git a/pkg/agent/agent_outbound.go b/pkg/agent/agent_outbound.go
-index f5de6fa4..22848c3f 100644
+index b19ea75..c1118f1 100644
 --- a/pkg/agent/agent_outbound.go
 +++ b/pkg/agent/agent_outbound.go
-@@ -74,6 +74,13 @@ func (al *AgentLoop) PublishResponseIfNeeded(ctx context.Context, channel, chatI
+@@ -73,6 +73,13 @@ func (al *AgentLoop) PublishResponseIfNeeded(ctx context.Context, channel, chatI
  		return
  	}
  
@@ -60,7 +60,7 @@ index f5de6fa4..22848c3f 100644
  		Context:    bus.NewOutboundContext(channel, chatID, ""),
  		SessionKey: sessionKey,
 diff --git a/pkg/agent/context.go b/pkg/agent/context.go
-index 74c278f3..fbbd4b77 100644
+index 74c278f..fbbd4b7 100644
 --- a/pkg/agent/context.go
 +++ b/pkg/agent/context.go
 @@ -158,6 +158,8 @@ func (cb *ContextBuilder) getIdentity(includeToolUseRule bool) string {
@@ -85,10 +85,10 @@ index 74c278f3..fbbd4b77 100644
  ## Workspace
  Your workspace is at: %s
 diff --git a/pkg/agent/pipeline_execute.go b/pkg/agent/pipeline_execute.go
-index 81fc06ec..b39e85f1 100644
+index 59e3331..38921a1 100644
 --- a/pkg/agent/pipeline_execute.go
 +++ b/pkg/agent/pipeline_execute.go
-@@ -620,6 +620,14 @@ toolLoop:
+@@ -615,6 +615,14 @@ toolLoop:
  			toolResult = tools.ErrorResult("hook returned nil tool result")
  		}
  
@@ -104,7 +104,7 @@ index 81fc06ec..b39e85f1 100644
  			parts := make([]bus.MediaPart, 0, len(toolResult.Media))
  			for _, ref := range toolResult.Media {
 diff --git a/pkg/agent/pipeline_finalize.go b/pkg/agent/pipeline_finalize.go
-index d42f1091..1d874cd2 100644
+index d42f109..1d874cd 100644
 --- a/pkg/agent/pipeline_finalize.go
 +++ b/pkg/agent/pipeline_finalize.go
 @@ -4,12 +4,27 @@ package agent
@@ -147,10 +147,10 @@ index d42f1091..1d874cd2 100644
  		finalMsg := providers.Message{
 diff --git a/pkg/agent/vineyard_structured_delivery.go b/pkg/agent/vineyard_structured_delivery.go
 new file mode 100644
-index 00000000..1ff21615
+index 0000000..b922245
 --- /dev/null
 +++ b/pkg/agent/vineyard_structured_delivery.go
-@@ -0,0 +1,454 @@
+@@ -0,0 +1,784 @@
 +// PicoClaw - Ultra-lightweight personal AI agent
 +
 +package agent
@@ -165,6 +165,7 @@ index 00000000..1ff21615
 +	"path/filepath"
 +	"strings"
 +	"time"
++	"unicode"
 +
 +	"github.com/sipeed/picoclaw/pkg/bus"
 +	"github.com/sipeed/picoclaw/pkg/constants"
@@ -386,20 +387,27 @@ index 00000000..1ff21615
 +		return false, nil
 +	}
 +	skill, _, ok := forcedVineyardSkillRoute(msg.Channel, msg.Content)
-+	if !ok || skill != "daily-vineyard-briefing" {
++	if !ok || (skill != "daily-vineyard-briefing" && skill != "black-rot-risk") {
 +		return false, nil
 +	}
 +
-+	response, err := runVineyardBriefingSkill(ctx)
++	var response string
++	var err error
++	if skill == "black-rot-risk" {
++		response, err = runBlackRotRiskSkill(ctx)
++	} else {
++		response, err = runVineyardBriefingSkill(ctx, requestedMildewDisease(strings.ToLower(msg.Content)))
++	}
 +	if err != nil {
 +		logger.WarnCF("agent", "Direct vineyard report route failed",
 +			map[string]any{
 +				"channel": msg.Channel,
 +				"chat_id": msg.ChatID,
++				"skill":   skill,
 +				"error":   err.Error(),
 +			})
 +		al.PublishResponseIfNeeded(ctx, msg.Channel, msg.ChatID, sessionKey,
-+			fmt.Sprintf("Could not generate the vineyard plots from the board: %v", err))
++			fmt.Sprintf("Could not generate the requested vineyard plot from the board: %v", err))
 +		return true, nil
 +	}
 +
@@ -418,18 +426,26 @@ index 00000000..1ff21615
 +		map[string]any{
 +			"channel": msg.Channel,
 +			"chat_id": msg.ChatID,
++			"skill":   skill,
 +		})
 +	return true, nil
 +}
 +
-+func runVineyardBriefingSkill(ctx context.Context) (string, error) {
++func runVineyardBriefingSkill(ctx context.Context, disease string) (string, error) {
++	mode := "both_disease_report"
++	if disease == "downy_mildew" || disease == "powdery_mildew" {
++		mode = "single_disease_report"
++	}
 +	payload := map[string]any{
-+		"mode":       "both_disease_report",
++		"mode":       mode,
 +		"repo_path":  "/root/.picoclaw/workspace/goidanich",
 +		"days":       31,
 +		"notify":     false,
 +		"board_only": true,
 +		"channel":    "picoclaw_telegram",
++	}
++	if disease != "" {
++		payload["disease"] = disease
 +	}
 +	body, err := json.Marshal(payload)
 +	if err != nil {
@@ -472,6 +488,53 @@ index 00000000..1ff21615
 +	return "/root/nano-os-agent/skills/daily_vineyard_briefing/run.py"
 +}
 +
++func runBlackRotRiskSkill(ctx context.Context) (string, error) {
++	payload := map[string]any{
++		"mode":      "report",
++		"repo_path": "/root/.picoclaw/workspace/goidanich",
++		"days":      31,
++		"notify":    false,
++	}
++	body, err := json.Marshal(payload)
++	if err != nil {
++		return "", err
++	}
++
++	path := blackRotRiskSkillPath()
++	runCtx, cancel := context.WithTimeout(ctx, 6*time.Minute)
++	defer cancel()
++	cmd := exec.CommandContext(runCtx, path)
++	cmd.Stdin = bytes.NewReader(body)
++	cmd.Dir = filepath.Dir(path)
++	output, err := cmd.CombinedOutput()
++	if runCtx.Err() == context.DeadlineExceeded {
++		return "", fmt.Errorf("black-rot-risk timed out after 6 minutes")
++	}
++	if err != nil {
++		detail := strings.TrimSpace(string(output))
++		if detail == "" {
++			detail = err.Error()
++		}
++		return "", fmt.Errorf("%s", detail)
++	}
++	return string(output), nil
++}
++
++func blackRotRiskSkillPath() string {
++	if path := strings.TrimSpace(os.Getenv("PICOCLAW_BLACK_ROT_RISK_RUN")); path != "" {
++		return path
++	}
++	for _, path := range []string{
++		"/root/nano-os-agent/skills/black_rot_risk/run.py",
++		"/root/.picoclaw/workspace/skills/black_rot_risk/run.py",
++	} {
++		if stat, err := os.Stat(path); err == nil && !stat.IsDir() {
++			return path
++		}
++	}
++	return "/root/.picoclaw/workspace/skills/black_rot_risk/run.py"
++}
++
 +func forcedVineyardSkillRoute(channel, text string) (string, string, bool) {
 +	normalizedChannel := strings.ToLower(strings.TrimSpace(channel))
 +	if normalizedChannel != "telegram" && normalizedChannel != "pico" {
@@ -479,32 +542,209 @@ index 00000000..1ff21615
 +	}
 +
 +	lower := strings.ToLower(text)
++	if isProactiveDecisionRequest(lower) {
++		return "proactive-field-agent", forceProactiveDecisionPrompt(text), true
++	}
++	if isFarmerOutcomeFeedbackRequest(lower) {
++		return "farmer-feedback-capture", forceFarmerFeedbackPrompt(text), true
++	}
++	if hasProposalReference(lower) {
++		return "proactive-field-agent", forceProactiveReferencePrompt(text), true
++	}
++	if isAmbiguousRotRequest(lower) {
++		return "vineyard-model-explainer", forceRotClarificationPrompt(text), true
++	}
++	if isSecondaryBunchRotRequest(lower) && !isBlackRotRequest(lower) {
++		return "vineyard-model-explainer", forceSecondaryBunchRotPrompt(text), true
++	}
++	if isGeneralFieldOperationRequest(lower) {
++		return "proactive-field-agent", forceDraftOperationPrompt(text), true
++	}
++	if isProactiveResearchRequest(lower) {
++		return "proactive-field-agent", forceProactiveResearchPrompt(text), true
++	}
++	if isProactiveStatusRequest(lower) {
++		return "proactive-field-agent", forceProactiveStatusPrompt(text), true
++	}
 +	if isTreatmentAdviceRequest(lower) {
 +		return "daily-vineyard-briefing", forceTreatmentAdvicePrompt(text), true
 +	}
-+	if hasAnyMarker(lower, []string{
++	if hasStandaloneWord(lower, "lot") || hasAnyMarker(lower, []string{
 +		"spray", "sprayed", "applied", "treated", "treatment", "tractament",
 +		"tractat", "aplicat", "sulfat", "pulveritzat", "product", "dose",
-+		"lot", "water volume", "clean inspection", "false alarm", "grade",
-+		"grau", "grado", "detected", "not inspected",
++		"water volume", "clean inspection", "false alarm", "grade",
++		"grau", "grado", "detected", "not inspected", "no symptoms",
++		"without symptoms", "sin síntomas", "sin sintomas", "cap símptoma",
++		"cap simptoma", "sense símptomes", "sense simptomes", "fals avís",
++		"fals avis", "falsa alarma", "compatible symptoms", "símptomes compatibles",
++		"simptomes compatibles", "síntomas compatibles", "sintomas compatibles",
 +	}) {
 +		return "farmer-feedback-capture", forceFarmerFeedbackPrompt(text), true
++	}
++	if isBlackRotRequest(lower) {
++		return "black-rot-risk", forceBlackRotReportPrompt(text), true
 +	}
 +	if hasAnyMarker(lower, []string{
 +		"risc", "risk", "mildew", "downy", "powdery", "mildiu", "oidi", "oïdi",
 +		"pmi", "rossi", "plot", "plots", "graph", "chart", "grafica", "gràfica",
-+		"grafic", "gràfic", "grafico", "gráfico", "image", "imatge", "imagen",
++		"grafic", "gràfic", "grafico", "gráfico",
 +		"forecast", "goidanich", "avgvstvs",
 +	}) {
++		disease := requestedMildewDisease(lower)
++		if disease != "" {
++			return "daily-vineyard-briefing", forceSingleDiseaseReportPrompt(text, disease), true
++		}
 +		return "daily-vineyard-briefing", forceVineyardReportPrompt(text), true
 +	}
 +	if hasAnyMarker(lower, []string{
 +		"vineyard", "goidanich", "avgvstvs", "mildew", "downy", "powdery",
-+		"mildiu", "oidi", "oïdi", "temps", "weather", "camera", "photo",
++		"mildiu", "oidi", "oïdi", "temps", "weather", "camera",
 +	}) {
 +		return "", forceGeneralSkillFirstPrompt(text), true
 +	}
 +	return "", "", false
++}
++
++func isSecondaryBunchRotRequest(lower string) bool {
++	return hasAnyMarker(lower, []string{
++		"secondary bunch rot", "secondary bunch rots", "secondary grape rot",
++		"podridures secundàries", "podridura secundària",
++		"podredumbres secundarias", "podredumbre secundaria",
++		"aspergillus", "penicillium", "cladosporium", "clamidospora",
++	})
++}
++
++func isProactiveDecisionRequest(lower string) bool {
++	if !hasProposalReference(lower) || isFarmerOutcomeFeedbackRequest(lower) {
++		return false
++	}
++	classes := []bool{
++		hasAnyMarker(lower, []string{
++			"accept", "approve", "approved", "accepto", "acceptat", "aprovo",
++			"aprovat", "acepto", "aceptado", "aprobado", "d'acord", "de acuerdo",
++		}),
++		hasAnyMarker(lower, []string{
++			"reject", "rejected", "decline", "declined", "rebutjo", "rebutjat",
++			"descarto", "rechazo", "rechazado", "no accepto", "no acepto",
++			"no aprovo", "no apruebo", "no estic d'acord", "no hi estic d'acord",
++			"no estoy de acuerdo", "do not accept", "don't accept", "not accepted",
++		}),
++		hasAnyMarker(lower, []string{
++			"defer", "deferred", "later", "postpone", "postponed", "ajorn",
++			"més tard", "mes tard", "després", "despres", "posposa", "aplazar",
++			"más tarde", "mas tarde",
++		}),
++		hasAnyMarker(lower, []string{
++			"corrected", "correction", "corregit", "correcció", "correccio",
++			"corregido", "corrección", "correccion",
++		}),
++	}
++	matches := 0
++	for _, matched := range classes {
++		if matched {
++			matches++
++		}
++	}
++	// Negated acceptance intentionally matches accepted and rejected. Any
++	// conflicting or mixed cue must resolve proposal context and ask the farmer.
++	return matches == 1
++}
++
++func hasProposalReference(lower string) bool {
++	return hasAnyMarker(lower, []string{"pf-", "pf_", "pf "})
++}
++
++func isFarmerOutcomeFeedbackRequest(lower string) bool {
++	return hasAnyMarker(lower, []string{
++		"no symptoms", "without symptoms", "compatible symptoms", "false alarm",
++		"clean canopy", "clean inspection", "disease detected", "symptoms present",
++		"cap símptoma", "cap simptoma", "sense símptomes", "sense simptomes",
++		"símptomes compatibles", "simptomes compatibles", "fals avís", "fals avis",
++		"dosser net", "malaltia detectada",
++		"sin síntomas", "sin sintomas", "síntomas compatibles", "sintomas compatibles",
++		"falsa alarma", "dosel limpio", "enfermedad detectada",
++	})
++}
++
++func isGeneralFieldOperationRequest(lower string) bool {
++	return hasAnyMarker(lower, []string{
++		"prun", "poda", "esporga", "mow", "sega", "desbross", "desbro",
++		"till", "cultivat", "llaur", "laboreo", "subsol", "irrig", "regat",
++		"riego", "fertil", "abon", "compost", "esmena", "cover crop",
++		"coberta vegetal", "cubierta vegetal", "harvest", "verema", "vendimia",
++		"collita", "planting", "plantat", "plantado", "replant", "install sensor",
++		"sensor install", "instal·lar sensor", "instalar sensor", "datalogger",
++	})
++}
++
++func isProactiveResearchRequest(lower string) bool {
++	research := hasAnyMarker(lower, []string{
++		"research", "investigate", "search the web", "search internet", "literature",
++		"busca a internet", "cerca a internet", "investiga", "recerca", "find a solution",
++		"troba una solució", "busca una solución",
++	})
++	fieldContext := hasAnyMarker(lower, []string{
++		"field", "vineyard", "vinya", "viñedo", "soil", "sòl", "suelo", "sensor",
++		"crop", "cultiu", "cultivo", "canopy", "dosser", "planta",
++	})
++	return research && fieldContext
++}
++
++func isProactiveStatusRequest(lower string) bool {
++	return hasAnyMarker(lower, []string{
++		"what have you learned", "what has the board learned", "what do you know about the field",
++		"què has après", "que has apres", "què ha après la placa", "què saps del camp",
++		"qué has aprendido", "qué sabe la placa", "qué sabes del campo",
++		"field history", "historial del camp", "historial del campo", "pending proposal",
++		"proposta pendent", "propostes pendents", "propuesta pendiente", "proactive status",
++		"field observations", "observacions del camp", "observaciones del campo",
++	})
++}
++
++func isExplicitGrapevineBlackRotRequest(lower string) bool {
++	return hasAnyMarker(lower, []string{
++		"black rot", "black-rot", "blackrot",
++		"guignardia", "bidwellii", "phyllosticta ampelicida",
++	})
++}
++
++func isAmbiguousRotRequest(lower string) bool {
++	genericLocalName := hasAnyMarker(lower, []string{
++		"podridura negra", "podredumbre negra",
++	})
++	explicitBlackRot := isExplicitGrapevineBlackRotRequest(lower)
++	secondaryRot := isSecondaryBunchRotRequest(lower)
++	comparison := hasAnyMarker(lower, []string{
++		" o ", " or ", "refereixes", "refieres", "mean", "diferència",
++		"diferencia", "difference", "distinció", "distinción",
++	})
++	if genericLocalName && !explicitBlackRot {
++		return true
++	}
++	return explicitBlackRot && secondaryRot && comparison
++}
++
++func isBlackRotRequest(lower string) bool {
++	return isExplicitGrapevineBlackRotRequest(lower) && !isAmbiguousRotRequest(lower)
++}
++
++func requestedMildewDisease(lower string) string {
++	if isBlackRotRequest(lower) {
++		return ""
++	}
++	powdery := hasAnyMarker(lower, []string{
++		"powdery", "oidium", "oïdium", "oidi", "oïdi", "oidio", "oídio",
++	})
++	downy := hasAnyMarker(lower, []string{
++		"downy", "mildiu", "míldiu", "mildiú", "mildiou", "goidanich", "rossi",
++	})
++	if powdery && !downy {
++		return "powdery_mildew"
++	}
++	if downy && !powdery {
++		return "downy_mildew"
++	}
++	return ""
 +}
 +
 +func isTreatmentAdviceRequest(lower string) bool {
@@ -531,6 +771,17 @@ index 00000000..1ff21615
 +	return false
 +}
 +
++func hasStandaloneWord(text, word string) bool {
++	for _, token := range strings.FieldsFunc(text, func(r rune) bool {
++		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
++	}) {
++		if token == word {
++			return true
++		}
++	}
++	return false
++}
++
 +func appendMissingSkill(skills []string, skill string) []string {
 +	for _, existing := range skills {
 +		if strings.EqualFold(existing, skill) {
@@ -550,10 +801,89 @@ index 00000000..1ff21615
 +		"User request: " + raw
 +}
 +
++func forceSingleDiseaseReportPrompt(raw, disease string) string {
++	return "This is an explicit single-disease vineyard request. Do not answer from session memory. " +
++		"First call skill daily-vineyard-briefing with " +
++		fmt.Sprintf("{\"mode\":\"single_disease_report\",\"disease\":%q,\"days\":31,\"notify\":false,\"board_only\":true,\"channel\":\"picoclaw_telegram\"}. ", disease) +
++		"Use only the requested disease send_text and attachments/media. Do not attach or describe either of the other two diseases. " +
++		"If today's dashboard state and PNG are fresh, use the cached files from disk. Do not paste raw JSON or image paths. User request: " + raw
++}
++
++func forceBlackRotReportPrompt(raw string) string {
++	return "This is an explicit black-rot request. Do not answer from session memory and do not call the mildew/oidi combined report. " +
++		"First call skill black-rot-risk with " +
++		"{\"mode\":\"report\",\"days\":31,\"notify\":false}. " +
++		"Use only the returned black-rot send_text and black-rot attachments/media. Preserve wetness_source, inoculum_status, infection degree-hours, and incubation timing. " +
++		"Unknown or unverified local inoculum must not suppress a current or forecast model threshold signal. Present it as an unconfirmed weather-model signal and ask for compatible symptoms, no symptoms, or false-alarm feedback. " +
++		"Do not attach downy-mildew or powdery-mildew plots. User request: " + raw
++}
++
++func forceRotClarificationPrompt(raw string) string {
++	return "The local phrase podridura negra / podredumbre negra is ambiguous. " +
++		"Do not call black-rot-risk, a mildew report, or a treatment route. " +
++		"First call skill vineyard-model-explainer with " +
++		fmt.Sprintf("{\"disease\":\"rot_clarification\",\"raw_text\":%q}. ", raw) +
++		"Return its top-level send_text in the farmer's language and wait for a choice between " +
++		"grapevine black rot caused by Guignardia bidwellii and secondary grape bunch rots."
++}
++
++func forceSecondaryBunchRotPrompt(raw string) string {
++	return "This request concerns secondary grape bunch rots, not grapevine black rot. " +
++		"Do not call black-rot-risk. First call skill vineyard-model-explainer with " +
++		fmt.Sprintf("{\"disease\":\"secondary_rot\",\"raw_text\":%q}. ", raw) +
++		"State that no validated secondary-bunch-rot prediction model is currently deployed, " +
++		"and ask for organism/symptom evidence before treatment advice."
++}
++
++func forceProactiveDecisionPrompt(raw string) string {
++	return "This message refers to a proactive proposal. Do not answer from memory. " +
++		"Extract the integer from PF-<id> and an explicit accepted, rejected, deferred, or corrected decision. " +
++		"If the decision is ambiguous, call proactive-field-agent mode=status and ask one clarification question. " +
++		"Otherwise call skill proactive-field-agent with " +
++		"{\"mode\":\"record_decision\",\"proposal_id\":<id>,\"decision\":\"<decision>\",\"note\":\"<correction text if any>\",\"notify\":false}. " +
++		"Reply in the farmer's language. Never claim that a treatment or hardware action was executed. User request: " + raw
++}
++
++func forceProactiveReferencePrompt(raw string) string {
++	return "This message contains a proactive PF reference but does not state a clear decision or field outcome. Do not guess. " +
++		"First call skill proactive-field-agent with " +
++		fmt.Sprintf("{\"mode\":\"proposal_context\",\"raw_text\":%q,\"notify\":false}. ", raw) +
++		"If the result requires clarification, show its one concise question and stop. " +
++		"If next_route is farmer-feedback-capture, call that skill with confirmed=false and the resolved field/disease. " +
++		"If next_route is proactive-field-agent and next_mode is draft_operation, call that mode with the resolved field, operation_type, raw_text, and confirmed=false. " +
++		"In every case show the structured draft for confirmation. Do not record a decision, observation, or treatment yet."
++}
++
++func forceDraftOperationPrompt(raw string) string {
++	return "This is a general field-operation message, not a disease treatment record. Do not answer from memory and do not write it directly. " +
++		"First call skill proactive-field-agent with " +
++		fmt.Sprintf("{\"mode\":\"draft_operation\",\"raw_text\":%q,\"confirmed\":false,\"notify\":false}. ", raw) +
++		"Use its draft, missing fields, and confirmation_question. Ask the farmer to confirm field, operation, and date before saving. " +
++		"If the skill redirects to farmer-feedback-capture, follow that route instead."
++}
++
++func forceProactiveResearchPrompt(raw string) string {
++	return "This is an explicit bounded field-research request. Do not answer from memory. " +
++		"Call skill proactive-field-agent with " +
++		fmt.Sprintf("{\"mode\":\"research\",\"query\":%q,\"reason\":\"Farmer-requested bounded research\",\"notify\":false}. ", raw) +
++		"Summarize candidate sources and uncertainty in the farmer's language. Web snippets are evidence candidates, never treatment orders."
++}
++
++func forceProactiveStatusPrompt(raw string) string {
++	return "This asks what the board has learned or proposed. Do not answer from session memory. " +
++		"First call skill proactive-field-agent with {\"mode\":\"tick\",\"notify\":false}; then call it with {\"mode\":\"status\",\"notify\":false}. " +
++		"Summarize only current profiles, observations, confirmed facts, operations, proposals, and decisions in the farmer's language. " +
++		"Never paste raw JSON or imply that a proposal was executed. User request: " + raw
++}
++
 +func forceFarmerFeedbackPrompt(raw string) string {
 +	return "This is a farmer feedback/treatment message. Do not answer from memory and do not write directly. " +
-+		"First call skill farmer-feedback-capture with " +
++		"If the message contains a PF reference, or is a short outcome such as no symptoms, compatible symptoms, or false alarm, first call proactive-field-agent with " +
++		fmt.Sprintf("{\"mode\":\"proposal_context\",\"raw_text\":%q,\"notify\":false}. ", raw) +
++		"If it requires clarification, ask its question and stop. If next_route is proactive-field-agent, call its next_mode with the resolved field and operation_type, confirmed=false, then show that draft and stop. " +
++		"Otherwise call skill farmer-feedback-capture with " +
 +		"{\"raw_text\":\"<the farmer message>\",\"confirmed\":false}. " +
++		"Pass the resolved field/disease when available. Never default an unspecified disease to downy mildew; explicit Black rot / Guignardia feedback maps to black_rot. " +
 +		"Use the returned draft, missing fields, and confirmation_question to ask the farmer to confirm/correct in the same language. " +
 +		"Only after explicit confirmation call farmer-feedback-capture again with confirmed=true. " +
 +		"Preserve every product, product number, lot, quantity, water volume, treated area, method, target, and per-hectare normalized quantity. " +
@@ -605,8 +935,308 @@ index 00000000..1ff21615
 +		strings.Contains(lower, "15.0%") &&
 +		strings.Contains(lower, "personalized")
 +}
+diff --git a/pkg/agent/vineyard_structured_delivery_test.go b/pkg/agent/vineyard_structured_delivery_test.go
+new file mode 100644
+index 0000000..085e034
+--- /dev/null
++++ b/pkg/agent/vineyard_structured_delivery_test.go
+@@ -0,0 +1,244 @@
++package agent
++
++import (
++	"strings"
++	"testing"
++)
++
++func TestForcedVineyardSkillRoutePrefersExplicitBlackRot(t *testing.T) {
++	tests := []string{
++		"Show me the plot of black rot",
++		"Mostra el gràfic del Black rot de la vinya per Guignardia bidwellii",
++		"Muéstrame la gráfica del black rot por Guignardia bidwellii",
++		"Plot Guignardia bidwellii infection timing",
++	}
++	for _, input := range tests {
++		skill, prompt, ok := forcedVineyardSkillRoute("telegram", input)
++		if !ok {
++			t.Fatalf("expected a forced route for %q", input)
++		}
++		if skill != "black-rot-risk" {
++			t.Fatalf("expected black-rot-risk for %q, got %q", input, skill)
++		}
++		if !strings.Contains(prompt, "Do not attach downy-mildew or powdery-mildew plots") {
++			t.Fatalf("black-rot prompt lacks media isolation for %q", input)
++		}
++		if !strings.Contains(prompt, "must not suppress a current or forecast model threshold signal") {
++			t.Fatalf("black-rot prompt lacks unknown-inoculum signal policy for %q", input)
++		}
++	}
++}
++
++func TestForcedVineyardSkillRouteClarifiesAmbiguousLocalRotName(t *testing.T) {
++	tests := []string{
++		"Mostra el gràfic de podridura negra",
++		"Muéstrame la gráfica de podredumbre negra",
++		"És Aspergillus o black rot per Guignardia bidwellii?",
++	}
++	for _, input := range tests {
++		skill, prompt, ok := forcedVineyardSkillRoute("telegram", input)
++		if !ok || skill != "vineyard-model-explainer" {
++			t.Fatalf("expected rot clarification for %q, got ok=%v skill=%q", input, ok, skill)
++		}
++		if !strings.Contains(prompt, `"disease":"rot_clarification"`) ||
++			!strings.Contains(prompt, "Do not call black-rot-risk") {
++			t.Fatalf("clarification prompt is incomplete for %q: %q", input, prompt)
++		}
++	}
++}
++
++func TestForcedVineyardSkillRouteKeepsSecondaryRotOutOfGuignardia(t *testing.T) {
++	skill, prompt, ok := forcedVineyardSkillRoute(
++		"telegram",
++		"Tenim podridures secundàries principalment per Aspergillus niger",
++	)
++	if !ok || skill != "vineyard-model-explainer" {
++		t.Fatalf("expected secondary-rot explainer, got ok=%v skill=%q", ok, skill)
++	}
++	if !strings.Contains(prompt, `"disease":"secondary_rot"`) ||
++		!strings.Contains(prompt, "Do not call black-rot-risk") {
++		t.Fatalf("secondary-rot prompt is incomplete: %q", prompt)
++	}
++}
++
++func TestForcedVineyardSkillRouteKeepsGenericReportsCombined(t *testing.T) {
++	skill, _, ok := forcedVineyardSkillRoute("telegram", "Show the vineyard risk plots")
++	if !ok || skill != "daily-vineyard-briefing" {
++		t.Fatalf("expected generic vineyard report route, got ok=%v skill=%q", ok, skill)
++	}
++}
++
++func TestForcedVineyardSkillRouteKeepsMildewDiseaseSpecificRouting(t *testing.T) {
++	skill, prompt, ok := forcedVineyardSkillRoute("telegram", "Mostra el gràfic de míldiu")
++	if !ok || skill != "daily-vineyard-briefing" {
++		t.Fatalf("expected mildew briefing route, got ok=%v skill=%q", ok, skill)
++	}
++	if !strings.Contains(prompt, `"mode":"single_disease_report"`) ||
++		!strings.Contains(prompt, `"disease":"downy_mildew"`) {
++		t.Fatalf("expected isolated downy route, got %q", prompt)
++	}
++
++	skill, prompt, ok = forcedVineyardSkillRoute("telegram", "Mostra el gràfic d'oïdi")
++	if !ok || skill != "daily-vineyard-briefing" {
++		t.Fatalf("expected powdery briefing route, got ok=%v skill=%q", ok, skill)
++	}
++	if !strings.Contains(prompt, `"mode":"single_disease_report"`) ||
++		!strings.Contains(prompt, `"disease":"powdery_mildew"`) {
++		t.Fatalf("expected isolated powdery route, got %q", prompt)
++	}
++}
++
++func TestRequestedMildewDiseaseDoesNotCrossContaminate(t *testing.T) {
++	if got := requestedMildewDisease("plot black rot"); got != "" {
++		t.Fatalf("black rot must not route through mildew mode: %q", got)
++	}
++	if got := requestedMildewDisease("show vineyard risk plots"); got != "" {
++		t.Fatalf("generic report should remain generic: %q", got)
++	}
++}
++
++func TestForcedVineyardSkillRouteMatchesTreatmentLotAsAWord(t *testing.T) {
++	skill, _, ok := forcedVineyardSkillRoute("telegram", "I applied copper, lot LOT-42")
++	if !ok || skill != "farmer-feedback-capture" {
++		t.Fatalf("expected farmer feedback route, got ok=%v skill=%q", ok, skill)
++	}
++}
++
++func TestForcedVineyardSkillRouteUsesProactiveStatus(t *testing.T) {
++	skill, prompt, ok := forcedVineyardSkillRoute(
++		"telegram",
++		"Què ha après la placa sobre el camp?",
++	)
++	if !ok || skill != "proactive-field-agent" {
++		t.Fatalf("expected proactive status route, got ok=%v skill=%q", ok, skill)
++	}
++	if !strings.Contains(prompt, `"mode":"tick"`) || !strings.Contains(prompt, `"mode":"status"`) {
++		t.Fatalf("proactive status prompt lacks current-evidence calls: %q", prompt)
++	}
++}
++
++func TestForcedVineyardSkillRouteDraftsGeneralOperation(t *testing.T) {
++	skill, prompt, ok := forcedVineyardSkillRoute(
++		"telegram",
++		"Hem fet la poda avui al camp N1",
++	)
++	if !ok || skill != "proactive-field-agent" {
++		t.Fatalf("expected proactive operation route, got ok=%v skill=%q", ok, skill)
++	}
++	if !strings.Contains(prompt, `"mode":"draft_operation"`) ||
++		!strings.Contains(prompt, `"confirmed":false`) {
++		t.Fatalf("general operation must be drafted before write: %q", prompt)
++	}
++}
++
++func TestForcedVineyardSkillRouteRecordsProposalDecision(t *testing.T) {
++	skill, prompt, ok := forcedVineyardSkillRoute(
++		"telegram",
++		"PF-42: ho deixem per més tard",
++	)
++	if !ok || skill != "proactive-field-agent" {
++		t.Fatalf("expected proactive decision route, got ok=%v skill=%q", ok, skill)
++	}
++	if !strings.Contains(prompt, `"mode":"record_decision"`) ||
++		!strings.Contains(prompt, "Never claim that a treatment or hardware action was executed") {
++		t.Fatalf("proposal decision prompt is incomplete: %q", prompt)
++	}
++}
++
++func TestForcedVineyardSkillRouteFailsClosedOnNegatedOrConflictingDecision(t *testing.T) {
++	for _, input := range []string{
++		"PF-42: no accepto",
++		"PF-42: no estoy de acuerdo",
++		"PF-42: accepto, però més tard",
++	} {
++		skill, prompt, ok := forcedVineyardSkillRoute("telegram", input)
++		if !ok || skill != "proactive-field-agent" {
++			t.Fatalf("expected proactive context route for %q, got ok=%v skill=%q", input, ok, skill)
++		}
++		if !strings.Contains(prompt, `"mode":"proposal_context"`) ||
++			strings.Contains(prompt, `"mode":"record_decision"`) {
++			t.Fatalf("ambiguous decision must not be recorded for %q: %q", input, prompt)
++		}
++	}
++}
++
++func TestForcedVineyardSkillRouteDoesNotRecordProposalOutcomeAsDecision(t *testing.T) {
++	skill, prompt, ok := forcedVineyardSkillRoute("telegram", "PF-42: accepto, cap símptoma")
++	if !ok || skill != "farmer-feedback-capture" {
++		t.Fatalf("expected farmer outcome route, got ok=%v skill=%q", ok, skill)
++	}
++	if !strings.Contains(prompt, `"mode":"proposal_context"`) ||
++		strings.Contains(prompt, `"mode":"record_decision"`) {
++		t.Fatalf("field outcome must resolve context before any decision write: %q", prompt)
++	}
++}
++
++func TestForcedVineyardSkillRouteUsesFeedbackForProposalOutcome(t *testing.T) {
++	tests := []string{
++		"PF-12: cap símptoma",
++		"PF-12: fals avís",
++		"PF-12: síntomas compatibles",
++		"PF-12: no symptoms",
++	}
++	for _, input := range tests {
++		skill, prompt, ok := forcedVineyardSkillRoute("telegram", input)
++		if !ok || skill != "farmer-feedback-capture" {
++			t.Fatalf("expected farmer feedback route for %q, got ok=%v skill=%q", input, ok, skill)
++		}
++		if !strings.Contains(prompt, `"mode":"proposal_context"`) ||
++			!strings.Contains(prompt, "Never default an unspecified disease to downy mildew") ||
++			!strings.Contains(prompt, "If next_route is proactive-field-agent") {
++			t.Fatalf("feedback prompt lacks deterministic proposal context for %q: %q", input, prompt)
++		}
++	}
++}
++
++func TestForcedVineyardSkillRouteClarifiesBareProposalReference(t *testing.T) {
++	skill, prompt, ok := forcedVineyardSkillRoute("telegram", "PF-12: què és això?")
++	if !ok || skill != "proactive-field-agent" {
++		t.Fatalf("expected proactive clarification route, got ok=%v skill=%q", ok, skill)
++	}
++	if !strings.Contains(prompt, `"mode":"proposal_context"`) ||
++		!strings.Contains(prompt, "Do not record a decision") ||
++		!strings.Contains(prompt, "next_mode is draft_operation") {
++		t.Fatalf("bare PF reference must not be treated as a decision: %q", prompt)
++	}
++}
++
++func TestForcedVineyardSkillRouteDoesNotCaptureGenericImageRequests(t *testing.T) {
++	for _, input := range []string{
++		"describe this image",
++		"describe the image you load",
++		"descriu aquesta imatge",
++		"describe esta imagen",
++		"this is only a placeholder [image: photo], answer in text",
++	} {
++		if skill, _, ok := forcedVineyardSkillRoute("telegram", input); ok {
++			t.Fatalf("generic image request %q must not use vineyard route %q", input, skill)
++		}
++	}
++
++	skill, _, ok := forcedVineyardSkillRoute("telegram", "Mostra la imatge de l'oïdi")
++	if !ok || skill != "daily-vineyard-briefing" {
++		t.Fatalf("disease-qualified image request must retain vineyard route, got ok=%v skill=%q", ok, skill)
++	}
++}
++
++func TestForcedVineyardSkillRouteRecognizesShortMultilingualFieldOutcome(t *testing.T) {
++	for _, input := range []string{"cap símptoma", "sin síntomas", "compatible symptoms"} {
++		skill, _, ok := forcedVineyardSkillRoute("telegram", input)
++		if !ok || skill != "farmer-feedback-capture" {
++			t.Fatalf("expected feedback route for %q, got ok=%v skill=%q", input, ok, skill)
++		}
++	}
++}
++
++func TestForcedVineyardSkillRouteKeepsTreatmentFeedbackSeparateFromOperations(t *testing.T) {
++	skill, _, ok := forcedVineyardSkillRoute(
++		"telegram",
++		"He aplicat coure contra el míldiu",
++	)
++	if !ok || skill != "farmer-feedback-capture" {
++		t.Fatalf("expected treatment feedback route, got ok=%v skill=%q", ok, skill)
++	}
++}
+diff --git a/pkg/commands/cmd_start.go b/pkg/commands/cmd_start.go
+index 8b500aa..7980d4b 100644
+--- a/pkg/commands/cmd_start.go
++++ b/pkg/commands/cmd_start.go
+@@ -8,7 +8,7 @@ func startCommand() Definition {
+ 		Description: "Start the bot",
+ 		Usage:       "/start",
+ 		Handler: func(_ context.Context, req Request, _ *Runtime) error {
+-			return req.Reply("Hello! I am PicoClaw 🦞")
++			return req.Reply("PicoClaw 🍇 is the board orchestrator. I load local contracts and skills, and route hardware through nano-os-agent.")
+ 		},
+ 	}
+ }
+diff --git a/pkg/env.go b/pkg/env.go
+index b9a77da..f116f41 100644
+--- a/pkg/env.go
++++ b/pkg/env.go
+@@ -3,7 +3,7 @@
+ package pkg
+ 
+ const (
+-	Logo = "🦞"
++	Logo = "🍇"
+ 	// AppName is the name of the app
+ 	AppName = "PicoClaw"
+ 
+diff --git a/pkg/gateway/gateway.go b/pkg/gateway/gateway.go
+index 4159293..958f147 100644
+--- a/pkg/gateway/gateway.go
++++ b/pkg/gateway/gateway.go
+@@ -529,6 +529,8 @@ func setupAndStartServices(
+ 		fmt.Println("✓ Device event service started")
+ 	}
+ 
++	runningServices.HealthServer.SetReady(true)
++
+ 	return runningServices, nil
+ }
+ 
+@@ -536,6 +538,10 @@ func stopAndCleanupServices(runningServices *services, shutdownTimeout time.Dura
+ 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+ 	defer shutdownCancel()
+ 
++	if runningServices.HealthServer != nil {
++		runningServices.HealthServer.SetReady(false)
++	}
++
+ 	// reload should not stop channel manager
+ 	if !isReload && runningServices.ChannelManager != nil {
+ 		runningServices.ChannelManager.StopAll(shutdownCtx)
 diff --git a/web/backend/api/router.go b/web/backend/api/router.go
-index abd3196c..ac4414c2 100644
+index abd3196..ac4414c 100644
 --- a/web/backend/api/router.go
 +++ b/web/backend/api/router.go
 @@ -110,6 +110,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
@@ -622,7 +1252,7 @@ index abd3196c..ac4414c2 100644
  
 diff --git a/web/backend/api/task_runner.go b/web/backend/api/task_runner.go
 new file mode 100644
-index 00000000..27c73deb
+index 0000000..27c73de
 --- /dev/null
 +++ b/web/backend/api/task_runner.go
 @@ -0,0 +1,480 @@
@@ -1108,7 +1738,7 @@ index 00000000..27c73deb
 +}
 diff --git a/web/backend/api/vineyard_guard.go b/web/backend/api/vineyard_guard.go
 new file mode 100644
-index 00000000..1587294b
+index 0000000..1587294
 --- /dev/null
 +++ b/web/backend/api/vineyard_guard.go
 @@ -0,0 +1,1032 @@
@@ -2145,7 +2775,7 @@ index 00000000..1587294b
 +	return string(raw)
 +}
 diff --git a/web/backend/embed.go b/web/backend/embed.go
-index cf0c76bc..998f1c8f 100644
+index cf0c76b..998f1c8 100644
 --- a/web/backend/embed.go
 +++ b/web/backend/embed.go
 @@ -42,6 +42,10 @@ func registerEmbedRoutes(mux *http.ServeMux) {
@@ -2161,7 +2791,7 @@ index cf0c76bc..998f1c8f 100644
  				return
 diff --git a/web/frontend/src/api/task-runner.ts b/web/frontend/src/api/task-runner.ts
 new file mode 100644
-index 00000000..f6538349
+index 0000000..f653834
 --- /dev/null
 +++ b/web/frontend/src/api/task-runner.ts
 @@ -0,0 +1,68 @@
@@ -2235,7 +2865,7 @@ index 00000000..f6538349
 +}
 diff --git a/web/frontend/src/api/vineyard-guard.ts b/web/frontend/src/api/vineyard-guard.ts
 new file mode 100644
-index 00000000..2ae39b92
+index 0000000..2ae39b9
 --- /dev/null
 +++ b/web/frontend/src/api/vineyard-guard.ts
 @@ -0,0 +1,22 @@
@@ -2262,7 +2892,7 @@ index 00000000..2ae39b92
 +  return res.json() as Promise<VineyardGuardRuntimeStatus>
 +}
 diff --git a/web/frontend/src/components/app-sidebar.tsx b/web/frontend/src/components/app-sidebar.tsx
-index 1980e458..8e31fd2f 100644
+index 1980e45..8e31fd2 100644
 --- a/web/frontend/src/components/app-sidebar.tsx
 +++ b/web/frontend/src/components/app-sidebar.tsx
 @@ -4,8 +4,10 @@ import {
@@ -2332,7 +2962,7 @@ index 1980e458..8e31fd2f 100644
              url: "/config",
 diff --git a/web/frontend/src/components/task-runner/task-runner-page.tsx b/web/frontend/src/components/task-runner/task-runner-page.tsx
 new file mode 100644
-index 00000000..064cb644
+index 0000000..064cb64
 --- /dev/null
 +++ b/web/frontend/src/components/task-runner/task-runner-page.tsx
 @@ -0,0 +1,641 @@
@@ -2979,7 +3609,7 @@ index 00000000..064cb644
 +}
 diff --git a/web/frontend/src/components/vineyard-guard/vineyard-guard-page.tsx b/web/frontend/src/components/vineyard-guard/vineyard-guard-page.tsx
 new file mode 100644
-index 00000000..6447d1f5
+index 0000000..6447d1f
 --- /dev/null
 +++ b/web/frontend/src/components/vineyard-guard/vineyard-guard-page.tsx
 @@ -0,0 +1,460 @@
@@ -3444,7 +4074,7 @@ index 00000000..6447d1f5
 +  )
 +}
 diff --git a/web/frontend/src/routeTree.gen.ts b/web/frontend/src/routeTree.gen.ts
-index b2f85e82..bf4da6bf 100644
+index b2f85e8..bf4da6b 100644
 --- a/web/frontend/src/routeTree.gen.ts
 +++ b/web/frontend/src/routeTree.gen.ts
 @@ -9,6 +9,9 @@
@@ -3586,7 +4216,7 @@ index b2f85e82..bf4da6bf 100644
    ._addFileChildren(rootRouteChildren)
 diff --git a/web/frontend/src/routes/nano-os-agent.tsx b/web/frontend/src/routes/nano-os-agent.tsx
 new file mode 100644
-index 00000000..1a5a3879
+index 0000000..1a5a387
 --- /dev/null
 +++ b/web/frontend/src/routes/nano-os-agent.tsx
 @@ -0,0 +1,7 @@
@@ -3599,7 +4229,7 @@ index 00000000..1a5a3879
 +})
 diff --git a/web/frontend/src/routes/runtime.tsx b/web/frontend/src/routes/runtime.tsx
 new file mode 100644
-index 00000000..dda95cd3
+index 0000000..dda95cd
 --- /dev/null
 +++ b/web/frontend/src/routes/runtime.tsx
 @@ -0,0 +1,7 @@
@@ -3612,7 +4242,7 @@ index 00000000..dda95cd3
 +})
 diff --git a/web/frontend/src/routes/task-runner.tsx b/web/frontend/src/routes/task-runner.tsx
 new file mode 100644
-index 00000000..f008ae56
+index 0000000..f008ae5
 --- /dev/null
 +++ b/web/frontend/src/routes/task-runner.tsx
 @@ -0,0 +1,7 @@

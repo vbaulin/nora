@@ -14,8 +14,6 @@ instrument. PicoClaw reasons about goals and selects capabilities; nano-os-agent
 executes declared steps, handles retries and timeouts, records measurements and
 artifacts, and releases only results that satisfy explicit checks.
 
-The central separation is deliberate:
-
 > The LLM may design or revise an experiment. It does not babysit the hardware
 > loop or convert an unverified observation into a fact.
 

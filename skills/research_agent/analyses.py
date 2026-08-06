@@ -886,12 +886,17 @@ def scan_feedback(connection, context, limits=None):
     Two refusals on the same subject are not stubbornness; they are evidence
     that the board is asking the wrong question or asking it too often.
     """
+    # Decisions come from two places: findings this engine delivered, and
+    # answers an adapter collected elsewhere and echoed back with a subject.
     rows = connection.execute(
         """
-        SELECT f.subject AS subject, f.analysis AS analysis, COUNT(*) AS declines
-        FROM decisions d JOIN findings f ON f.id = d.finding_id
+        SELECT COALESCE(f.subject, d.subject) AS subject,
+               COALESCE(f.analysis, d.analysis) AS analysis,
+               COUNT(*) AS declines
+        FROM decisions d LEFT JOIN findings f ON f.id = d.finding_id
         WHERE d.decision IN ('rejected','corrected')
-        GROUP BY f.subject, f.analysis
+          AND COALESCE(f.subject, d.subject) IS NOT NULL
+        GROUP BY 1, 2
         HAVING COUNT(*) >= 2
         """
     ).fetchall()

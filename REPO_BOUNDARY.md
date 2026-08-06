@@ -158,18 +158,21 @@ that can happen when a board window allows, not a redesign:
 Step 5 is the real acceptance test for the split. An engine that needs the
 vineyard to start has not been separated from it.
 
-## Known Seam
+## Feedback Crosses the Boundary
 
-Farmer decisions are recorded by the adapter in `proactive_field.db`, while the
-engine records its own decisions in `research.db`. The engine's feedback scan
-therefore reacts to refusals of engine-delivered findings, not to refusals a
-farmer sent through Telegram. The vineyard adapter compensates with its own
-`alert_calibration` topic over the same evidence, so nothing is lost today.
+The adapter records farmer decisions in `proactive_field.db`; the engine keeps
+its own in `research.db`. An answer given over Telegram would otherwise never
+reach the engine that raised the question, and the one loop that makes the
+board ask less would be blind.
 
-Closing the seam is a migration step, not a redesign: have the adapter mirror
-each recorded decision into the engine with `research-agent
-mode=record_decision`, then delete the duplicate calibration topic. Do it when
-the vineyard skills move behind the app boundary, so the board changes once.
+`mirror_decision_to_research` echoes each decision into the engine as a
+subject-carrying row with no finding of its own, and the engine's feedback scan
+reads decisions from both origins. The echo is best effort: a board without the
+research skill installed records the decision exactly as before.
+
+The vineyard keeps its own `alert_calibration` topic for now. It reads the same
+evidence through the adapter's memory and is the natural thing to delete when
+the vineyard skills move behind the app boundary.
 
 ## Recommended Public Layout
 

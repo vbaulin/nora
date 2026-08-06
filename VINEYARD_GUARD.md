@@ -112,7 +112,16 @@ The production board uses the deterministic BusyBox tick, not LLM
 
 The tick uses dated stamps and locks to execute Supabase sync, per-field
 three-disease cache refresh, one board Telegram summary, morning proactive
-reflection/research, and an evening operation-ingestion pass. Legacy
+reflection/research, and an evening operation-ingestion pass.
+
+Those duties occupy about an hour a day. The rest of the day belongs to
+research: outside the 07:50–08:49 duty window the tick runs one budgeted
+`research-agent` cycle per hour through `run_interval`, which keeps a single
+epoch marker rather than accumulating stamp files. A cycle reads journals and
+the board's own record, is capped at three questions and twenty seconds, and
+sends nothing — anything a farmer should see is picked up by the next proactive
+cycle. Farmer decisions recorded here are echoed into the research engine, so
+repeated refusals become a question about the board's own alerting. Legacy
 `vineyard_guard_*` jobs in
 `/root/.picoclaw/workspace/cron/jobs.json` are disabled during deployment so
 the LLM cannot duplicate the deterministic schedule.

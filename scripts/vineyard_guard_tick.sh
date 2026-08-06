@@ -52,6 +52,41 @@ done_stamp() {
     [ -f "$STATE_DIR/.cron_${task}_${local_date}.done" ]
 }
 
+# Duties above happen once a day at a fixed time. run_interval is for work that
+# should simply repeat while the board is otherwise idle: it keeps one marker
+# holding the epoch of the last successful run, so no stamp files accumulate.
+run_interval() {
+    task="$1"
+    interval="$2"
+    shift 2
+    marker="$STATE_DIR/.cron_${task}.last"
+    lock="$STATE_DIR/.cron_${task}.lock"
+    now="$(date +%s)"
+    if [ -f "$marker" ]; then
+        last="$(cat "$marker" 2>/dev/null || echo 0)"
+        case "$last" in
+            ''|*[!0-9]*) last=0 ;;
+        esac
+        if [ "$((now - last))" -lt "$interval" ]; then
+            return 0
+        fi
+    fi
+    if ! mkdir "$lock" 2>/dev/null; then
+        return 0
+    fi
+    {
+        echo "=== $(date -Iseconds) ${task} start ==="
+        "$@"
+        rc=$?
+        echo "=== $(date -Iseconds) ${task} exit=${rc} ==="
+        if [ "$rc" -eq 0 ]; then
+            date +%s > "$marker"
+        fi
+        rmdir "$lock" 2>/dev/null || true
+        exit "$rc"
+    } >> "$LOG" 2>&1
+}
+
 task_locked() {
     task="$1"
     [ -d "$STATE_DIR/.cron_${task}.lock" ]
@@ -97,6 +132,18 @@ case "$local_hm" in
         ;;
     170[0-9]|171[0-4])
         run_once proactive_evening "$SCRIPT" proactive
+        ;;
+esac
+
+# The scheduled duties occupy about an hour of the day. The rest of it is spent
+# researching evidence the board already holds: one budgeted cycle per hour,
+# never during the morning duty window, and never sending anything itself.
+case "$local_hm" in
+    075[0-9]|08[0-4][0-9])
+        :
+        ;;
+    *)
+        run_interval research 3600 "$SCRIPT" research
         ;;
 esac
 

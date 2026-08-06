@@ -26,6 +26,11 @@ from pathlib import Path
 _SKILL_DIR = str(Path(__file__).resolve().parent)
 if _SKILL_DIR not in sys.path:
     sys.path.insert(0, _SKILL_DIR)
+# The research engine is a sibling skill. It is optional: a board without it
+# keeps working, it simply stops learning from refusals it collected here.
+_ENGINE_DIR = str(Path(_SKILL_DIR).parent / "research_agent")
+if _ENGINE_DIR not in sys.path:
+    sys.path.insert(0, _ENGINE_DIR)
 
 import investigations  # noqa: E402  (requires the sys.path bootstrap above)
 
@@ -2398,8 +2403,60 @@ def mode_decision(connection, params):
         "status": "success", "proposal_id": proposal["id"], "decision": decision,
         "note": note, "executed_action": False,
         "reopens_after": cooldown if decision == "rejected" else None,
+        "research_feedback": mirror_decision_to_research(proposal, decision, note, params),
         "message": "Decision recorded. No treatment or hardware action was executed automatically.",
     }
+
+
+def research_subject(field_id):
+    return f"vineyard:{field_id or 'board'}"
+
+
+def proposal_analysis(proposal):
+    """The research subject this proposal's answer is evidence about."""
+    kind = str(proposal.get("kind") or "")
+    if kind.startswith(INVESTIGATION_KIND_PREFIX):
+        return kind[len(INVESTIGATION_KIND_PREFIX):].split(":", 1)[0]
+    return kind or "proposal"
+
+
+def mirror_decision_to_research(proposal, decision, note, params):
+    """Echo a farmer decision into the research engine.
+
+    The farmer answers over Telegram, so the engine that raised the underlying
+    question never sees the reply unless it is echoed. Two refusals on one
+    subject are what make the board ask whether it should be sending fewer
+    messages at all, so this is the loop that lets it stop.
+
+    Best effort by design: a board without the research skill installed keeps
+    working exactly as before.
+    """
+    state_dir = (
+        params.get("research_state_dir")
+        or os.environ.get("NORA_STATE_DIR")
+        or "/root/.picoclaw/workspace/research"
+    )
+    try:
+        import engine as research_engine
+    except ImportError as exc:
+        return {"mirrored": False, "reason": f"research engine unavailable: {exc}"}
+    try:
+        connection = research_engine.connect(state_dir)
+        try:
+            record = research_engine.record_external_decision(
+                connection,
+                research_subject(proposal.get("field_id")),
+                proposal_analysis(proposal),
+                decision,
+                option_id=params.get("option_id"),
+                note=note or None,
+                source="proactive-field-agent",
+            )
+        finally:
+            connection.close()
+    except Exception as exc:  # storage on another skill's state directory
+        return {"mirrored": False, "reason": str(exc)}
+    return {"mirrored": True, "state_dir": state_dir, **record}
 
 
 def proposal_investigation_id(proposal):

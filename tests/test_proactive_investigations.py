@@ -14,6 +14,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -323,6 +324,52 @@ class LeafWetnessInvestigationTest(InvestigationTestCase):
             MODULE.proposal_by_id(connection, opened["id"])["status"], "completed",
         )
         self.assertEqual(self.tick(connection)["proposals"], [])
+
+    def test_a_refusal_is_echoed_to_the_research_engine(self):
+        """The farmer answers on Telegram; the engine must still hear it."""
+        self.write_series(overrides={
+            self.day(30): self.ambiguous(),
+            self.day(12): self.ambiguous(),
+        })
+        connection = self.connection()
+        proposal = self.tick(connection)["proposals"][0]
+        research_dir = self.root / "research"
+        result = MODULE.mode_decision(connection, {
+            "proposal_id": proposal["id"],
+            "decision": "rejected",
+            "note": "ara no",
+            "research_state_dir": str(research_dir),
+        })
+        echo = result["research_feedback"]
+        self.assertTrue(echo["mirrored"], echo)
+        self.assertEqual(echo["subject"], "vineyard:field_1")
+        self.assertEqual(echo["analysis"], "leaf_wetness_proxy")
+        stored = sqlite3.connect(research_dir / "research.db").execute(
+            "SELECT subject, analysis, decision, source FROM decisions"
+        ).fetchall()
+        self.assertEqual(
+            stored, [("vineyard:field_1", "leaf_wetness_proxy", "rejected",
+                      "proactive-field-agent")],
+        )
+
+    def test_a_missing_research_engine_does_not_break_the_decision(self):
+        self.write_series(overrides={
+            self.day(30): self.ambiguous(),
+            self.day(12): self.ambiguous(),
+        })
+        connection = self.connection()
+        proposal = self.tick(connection)["proposals"][0]
+        with mock.patch.dict(sys.modules, {"engine": None}):
+            result = MODULE.mode_decision(connection, {
+                "proposal_id": proposal["id"],
+                "decision": "rejected",
+                "research_state_dir": str(self.root / "research"),
+            })
+        self.assertEqual(result["status"], "success")
+        self.assertFalse(result["research_feedback"]["mirrored"])
+        self.assertEqual(
+            MODULE.proposal_by_id(connection, proposal["id"])["status"], "rejected",
+        )
 
     def test_investigation_reply_routes_to_the_option_choice_not_to_a_disease_record(self):
         self.write_series(overrides={

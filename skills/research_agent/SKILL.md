@@ -109,7 +109,9 @@ signals and human feedback
   returns only open findings a human should see.
 - `record_decision`: store `accepted`, `rejected`, `deferred` or `corrected`
   for a finding, with the chosen `option_id`. `watch=true` on an acceptance
-  arms a watch.
+  arms a watch. An adapter that delivered a finding elsewhere echoes the answer
+  back through `engine.record_external_decision(subject, analysis, ...)`, so
+  feedback collected over Telegram or a dashboard still counts.
 - `arm_watch` / `watches`: manage confirmed future actions.
 - `self_test`: report registry, packs, journals and stored counts.
 

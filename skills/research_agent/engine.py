@@ -171,7 +171,7 @@ def connect(state_dir):
         );
         CREATE TABLE IF NOT EXISTS decisions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            finding_id INTEGER NOT NULL,
+            finding_id INTEGER,
             decision TEXT NOT NULL,
             option_id TEXT,
             note TEXT,
@@ -180,6 +180,13 @@ def connect(state_dir):
         );
         """
     )
+    # An adapter that delivered a finding to a person records the answer here
+    # too, so feedback given over Telegram reaches the engine that raised the
+    # question. Such a row has no finding of its own and carries its subject.
+    existing = {row[1] for row in connection.execute("PRAGMA table_info(decisions)")}
+    for column in ("subject", "analysis"):
+        if column not in existing:
+            connection.execute(f"ALTER TABLE decisions ADD COLUMN {column} TEXT")
     connection.execute(
         "INSERT INTO meta(key, value) VALUES('schema_version', ?) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -421,6 +428,28 @@ def mark_finding(connection, finding_id, status):
     connection.commit()
 
 
+def record_external_decision(connection, subject, analysis, decision, option_id=None,
+                             note=None, source="adapter"):
+    """Record an answer a person gave through an adapter, not through the engine.
+
+    Vineyard Guard delivers findings over Telegram and stores the reply in its
+    own memory. Without this echo the engine would never learn that its
+    questions are being declined, and the one loop that makes it stop asking
+    would be blind.
+    """
+    now = iso_now()
+    connection.execute(
+        "INSERT INTO decisions(finding_id, subject, analysis, decision, option_id,"
+        " note, source, created_at) VALUES(?,?,?,?,?,?,?,?)",
+        (None, subject, analysis, decision, option_id, note, source, now),
+    )
+    connection.commit()
+    return {
+        "subject": subject, "analysis": analysis, "decision": decision,
+        "option_id": option_id, "recorded_at": now,
+    }
+
+
 def record_decision(connection, finding_id, decision, option_id=None, note=None,
                     source="human"):
     """Store what the human decided, and honour a refusal as an answer."""
@@ -429,9 +458,12 @@ def record_decision(connection, finding_id, decision, option_id=None, note=None,
         return None
     now = iso_now()
     connection.execute(
-        "INSERT INTO decisions(finding_id, decision, option_id, note, source, created_at)"
-        " VALUES(?,?,?,?,?,?)",
-        (finding["id"], decision, option_id, note, source, now),
+        "INSERT INTO decisions(finding_id, subject, analysis, decision, option_id,"
+        " note, source, created_at) VALUES(?,?,?,?,?,?,?,?)",
+        (
+            finding["id"], finding.get("subject"), finding.get("analysis"),
+            decision, option_id, note, source, now,
+        ),
     )
     status = {
         "accepted": "accepted", "rejected": "declined",

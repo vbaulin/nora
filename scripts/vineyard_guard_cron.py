@@ -106,6 +106,14 @@ def call_proactive(params):
     )
 
 
+def call_research(params):
+    return run_json(
+        [os.path.join(SKILLS, "research_agent", "run.py")],
+        payload=params,
+        timeout=120,
+    )
+
+
 def refresh_forecast_once():
     script = os.path.join(REPO, "forecast_projection.py")
     if not os.path.exists(script):
@@ -425,9 +433,52 @@ def mode_proactive(args):
     return 0
 
 
+def mode_research(args):
+    """One budgeted research cycle over evidence the board already holds.
+
+    This is the idle-hours duty. It reads journals and the board's own record,
+    answers what it can, and produces no message: anything a person should see
+    is picked up by the next proactive cycle.
+    """
+    result = call_research({
+        "mode": "cycle",
+        "repo_path": REPO,
+        "state_dir": "/root/.picoclaw/workspace/research",
+        "journal_dirs": args.journal_dirs,
+        "evidence_journal": "/root/nano-os-agent/experiments.jsonl",
+        "max_questions": args.research_max_questions,
+        "max_seconds": args.research_max_seconds,
+    })
+    payload = result.get("stdout") or {}
+    if not result.get("ok") or payload.get("status") != "success":
+        print("Research cycle failed.")
+        print(result.get("stderr") or json.dumps(payload, ensure_ascii=False)[:1600])
+        return 1
+    summary = {
+        "packs": payload.get("packs") or [],
+        "raised": payload.get("raised") or [],
+        "investigated": [
+            {
+                "subject": item.get("subject"),
+                "analysis": item.get("analysis"),
+                "verdict": item.get("verdict"),
+            }
+            for item in payload.get("investigated") or []
+        ],
+        "reportable": len(payload.get("reportable") or []),
+        "elapsed_seconds": payload.get("elapsed_seconds"),
+    }
+    print("Research cycle completed.")
+    print(json.dumps(summary, ensure_ascii=False))
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=["supabase", "refresh", "alert", "black-rot", "proactive"])
+    parser.add_argument(
+        "mode",
+        choices=["supabase", "refresh", "alert", "black-rot", "proactive", "research"],
+    )
     parser.add_argument("--days", type=int, default=31)
     parser.add_argument("--outbox", default="/tmp/picoclaw_outbox")
     parser.add_argument("--high-threshold", type=float, default=70)
@@ -435,6 +486,9 @@ def main():
     parser.add_argument("--delta-threshold", type=float, default=15)
     parser.add_argument("--proactive-notify-threshold", type=int, default=70)
     parser.add_argument("--research", action="store_true")
+    parser.add_argument("--journal-dirs", default="/tmp/monitors")
+    parser.add_argument("--research-max-questions", type=int, default=3)
+    parser.add_argument("--research-max-seconds", type=float, default=20)
     args = parser.parse_args()
     if args.mode == "supabase":
         return mode_supabase(args)
@@ -444,6 +498,8 @@ def main():
         return mode_black_rot(args)
     if args.mode == "proactive":
         return mode_proactive(args)
+    if args.mode == "research":
+        return mode_research(args)
     return mode_alert(args)
 
 

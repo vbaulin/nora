@@ -301,6 +301,55 @@ class DecisionAndWatchTest(ResearchTestCase):
         self.assertEqual(calibration["metrics"]["negative"], 5)
 
 
+class AdapterFeedbackTest(ResearchTestCase):
+    """An answer given over Telegram must reach the engine that asked."""
+
+    def test_an_echoed_refusal_counts_as_feedback(self):
+        connection = self.connection()
+        for _ in range(2):
+            ENGINE.record_external_decision(
+                connection, "vineyard:field_1", "leaf_wetness_proxy", "rejected",
+                note="not now", source="proactive-field-agent",
+            )
+        alerts = self.write_journal("alerts.jsonl", [
+            {"timestamp": (self.now - dt.timedelta(days=day)).isoformat()}
+            for day in (20, 15, 10, 5)
+        ])
+        outcomes = self.write_journal("outcomes.jsonl", [
+            {"timestamp": (self.now - dt.timedelta(days=day - 1)).isoformat(),
+             "outcome": "clean"}
+            for day in (20, 15, 10, 5)
+        ])
+        context = self.context(calibration_sources={
+            "vineyard:field_1": {
+                "alerts": {"kind": "journal", "path": str(alerts)},
+                "outcomes": {"kind": "journal", "path": str(outcomes)},
+                "positive_labels": ["confirmed"], "negative_labels": ["clean"],
+            },
+        })
+        raised = ANALYSES.scan_feedback(connection, context)
+        self.assertEqual(
+            [(item["subject"], item["analysis"]) for item in raised],
+            [("vineyard:field_1", "outcome_calibration")],
+        )
+        finding = ENGINE.run_question(
+            connection, raised[0], ANALYSES.BUILTIN_ANALYSES, context,
+        )
+        self.assertEqual(finding["verdict"], ENGINE.VERDICT_MATERIAL)
+        self.assertEqual(finding["metrics"]["negative"], 4)
+
+    def test_one_refusal_is_not_yet_a_pattern(self):
+        connection = self.connection()
+        ENGINE.record_external_decision(
+            connection, "vineyard:field_1", "leaf_wetness_proxy", "rejected",
+        )
+        context = self.context(calibration_sources={
+            "vineyard:field_1": {"alerts": {"kind": "inline", "records": []},
+                                 "outcomes": {"kind": "inline", "records": []}},
+        })
+        self.assertEqual(ANALYSES.scan_feedback(connection, context), [])
+
+
 class SafetyTest(ResearchTestCase):
     def test_a_broken_pack_does_not_stop_the_others(self):
         good = self.root / "packs" / "good"

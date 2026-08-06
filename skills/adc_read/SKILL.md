@@ -5,6 +5,7 @@ command: ./run.sh
 input_format: env
 output_format: json
 timeout: 5
+requires_hardware: true
 parameters:
   - name: channel
     type: string

@@ -1,19 +1,22 @@
 ---
-title: Build an Autonomous Research Agent
-summary: A code-guided tutorial for turning an idle edge board into an instrument that asks its own questions and answers most of them alone.
+title: Build an Autonomous Research Executor
+summary: Software that runs experiments, keeps the evidence honest, and asks you only when the answer would change something.
 order: 0
 eyebrow: nora tutorial
 ---
 
-# Build an Autonomous Research Agent
+# Build an Autonomous Research Executor
 
-nora runs experiments on small hardware and keeps the evidence honest. It is
-not a vineyard product, a camera product, or a chatbot. It is a research
-implementer: you describe an experiment, it runs it deterministically, and it
-studies what came back.
+nora runs experiments, keeps the evidence honest, and asks you only when the
+answer would change something.
 
-The domain is yours. A vineyard board and a bench rig with a light sensor run
-the same engine and differ only in configuration.
+It is not a chatbot. Nothing here waits for a prompt: you describe an
+experiment once, a deterministic runtime performs it on a schedule, and the
+results are studied without anyone opening a conversation.
+
+The domain is yours. A vineyard board, a bench rig with a light sensor, and a
+cloud VM watching an uploaded dataset run the same engine and differ only in
+configuration.
 
 ## The whole idea in one picture
 
@@ -69,6 +72,30 @@ pile up against 100 instead of passing it, checked whether that pile-up is a
 real wall or just the top of a range, and produced a finding it cannot settle
 alone. `temp_c` varied normally, so it produced nothing — which is most of the
 job.
+
+## Where it runs
+
+You just ran it on a laptop. Nothing about the engine assumes a board.
+
+| | Small board | Laptop | Cloud VM |
+|---|---|---|---|
+| Task executor | yes | yes | yes |
+| Research engine and analyses | yes | yes | yes |
+| Domain packs and adapters | yes | yes | yes |
+| Camera, NPU, I2C, GPIO, audio | yes | no | no |
+| Where measurements come from | attached sensors | files you provide | APIs, uploads, a database |
+
+The executor is one static Go binary — `GOOS=linux GOARCH=amd64` for an
+ordinary cloud VM, `arm64` for Oracle Ampere or a Raspberry Pi, `riscv64` for
+the LicheeRV Nano — and the research engine is standard-library Python. Skills
+that need peripherals declare `requires_hardware: true` and are skipped with a
+stated reason on a host that has none, instead of failing inside a driver.
+
+The board matters when the experiment is physical: a canopy, a fermenter, a
+machine that vibrates. When measurements arrive over the network, the same
+runtime does the same work on a VM that costs nothing.
+[`deploy/`](https://github.com/vbaulin/nora/tree/main/deploy) has the systemd
+unit, the container file, and the Oracle Cloud walkthrough.
 
 ## Why it works this way
 

@@ -5,6 +5,7 @@ command: ./run.sh
 input_format: env
 output_format: json
 timeout: 10
+requires_hardware: true
 ---
 # Hardware Diagnostic Skill
 Reports the presence of Cvitek SDK libraries and SDR sensor firmware.

@@ -5,6 +5,7 @@ command: ./run.sh
 input_format: env
 output_format: json
 timeout: 20
+requires_hardware: true
 parameters:
   - name: bus
     type: string

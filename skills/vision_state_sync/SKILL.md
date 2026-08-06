@@ -5,6 +5,7 @@ command: ./run.sh
 input_format: env
 output_format: json
 timeout: 90
+requires_hardware: true
 ---
 # Vision State Synchronizer
 High-level skill that orchestrates a full vision cycle:

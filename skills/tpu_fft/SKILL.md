@@ -5,6 +5,7 @@ command: ./run.sh
 input_format: env
 output_format: json
 timeout: 10
+requires_hardware: true
 ---
 # TPU-Accelerated FFT
 Performs a Fast Fourier Transform on input signal data using `libcvimath.so`.

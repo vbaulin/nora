@@ -5,6 +5,7 @@ command: ./run.sh
 input_format: env
 output_format: json
 timeout: 60
+requires_hardware: true
 ---
 # capture_video
 Captures a short video clip using ffmpeg or maix-video.

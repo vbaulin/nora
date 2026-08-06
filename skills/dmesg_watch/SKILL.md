@@ -5,6 +5,9 @@ command: ./run.sh
 input_format: env
 output_format: json
 timeout: 10
+# Reports Cvitek driver and sensor messages from the kernel ring buffer. On a
+# host with no such devices there is nothing for it to watch.
+requires_hardware: true
 parameters:
   - name: lines
     type: string

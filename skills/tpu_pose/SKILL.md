@@ -5,6 +5,7 @@ command: ./run.sh
 input_format: env
 output_format: json
 timeout: 60
+requires_hardware: true
 ---
 # TPU Pose Estimation
 Detects human body keypoints (17 points) using native NPU acceleration.

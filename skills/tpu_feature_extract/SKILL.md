@@ -5,6 +5,7 @@ command: ./run.sh
 input_format: env
 output_format: json
 timeout: 30
+requires_hardware: true
 ---
 # TPU Feature Extractor
 Converts an image into a high-dimensional mathematical vector (Embedding).

@@ -1,13 +1,23 @@
-# Tutorial: Build a Proactive Scientific Companion
+# Tutorial: Build an Autonomous Research Executor
 
 ## From deterministic measurement to evidence-based dialogue
 
-This tutorial explains how PicoClaw and nano-os-agent turn a small board into
-a proactive scientific instrument. The system does not merely wait for a chat
-question, and it does not let an LLM operate hardware continuously. It runs
-bounded experiments, records evidence, detects a defined change or knowledge
-gap, proposes one next action, and waits for confirmation when that action has
-consequences.
+This is the single-page operator version. The chaptered tutorial, with
+diagrams and a laptop quickstart, is at
+[vbaulin.github.io/nora](https://vbaulin.github.io/nora/).
+
+nora runs experiments, keeps the evidence honest, and asks you only when the
+answer would change something. It is not a chatbot: it does not wait for a
+chat question, and it does not let an LLM operate hardware continuously. It
+runs bounded experiments, records evidence, studies what came back, proposes
+one next action, and waits for confirmation when that action has consequences.
+
+The runtime is not tied to the board. The executor is a static Go binary that
+builds for x86-64, ARM and RISC-V, and the research engine is
+standard-library Python, so the same tree runs on a small board, a laptop, or
+a cloud VM — see [`deploy/`](../deploy/README.md). A board matters when the
+experiment is physical; when the measurements arrive over the network, the
+work is identical.
 
 Vineyard Guard is the complete worked application later in the tutorial. Its
 farmer interaction demonstrates the general method; agriculture is not the

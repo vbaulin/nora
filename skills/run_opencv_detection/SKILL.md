@@ -5,6 +5,7 @@ command: ./run.sh
 input_format: stdin
 output_format: json
 timeout: 60
+requires_hardware: true
 parameters:
   - name: mode
     type: string

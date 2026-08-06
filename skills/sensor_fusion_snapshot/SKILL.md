@@ -5,6 +5,7 @@ command: ./run.sh
 input_format: env
 output_format: json
 timeout: 20
+requires_hardware: true
 ---
 # sensor_fusion_snapshot
 Collects lightweight environmental/system context without waking the LLM:

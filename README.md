@@ -5,15 +5,15 @@
 <p align="center">
   <a href="go.mod"><img alt="Go 1.21" src="https://img.shields.io/badge/Go-1.21-0b1410?style=flat-square&logo=go&logoColor=72d99b"></a>
   <a href="https://wiki.sipeed.com/hardware/en/lichee/RV_Nano/1_intro.html"><img alt="RISC-V SG2002" src="https://img.shields.io/badge/RISC--V-SG2002-0b1410?style=flat-square&logo=riscv&logoColor=72d99b"></a>
-  <a href="docs/tutorial-proactive-field-companion.md"><img alt="Proactive agent tutorial" src="https://img.shields.io/badge/tutorial-proactive_agent-173e2a?style=flat-square"></a>
+  <a href="docs/tutorial-proactive-field-companion.md"><img alt="Research executor tutorial" src="https://img.shields.io/badge/tutorial-research_executor-173e2a?style=flat-square"></a>
   <a href="https://vbaulin.github.io/nora/"><img alt="GitHub Pages" src="https://img.shields.io/badge/docs-GitHub_Pages-173e2a?style=flat-square"></a>
 </p>
 
-**nora** (nano-os-agent) turns a small RISC-V board into a persistent
-scientific instrument. PicoClaw reasons about goals and selects capabilities;
-the executor runs declared steps, handles retries and timeouts, records
-measurements and artifacts, and releases only results that satisfy explicit
-checks. Between samples, the research engine studies what was recorded.
+**nora** (nano-os-agent) is an autonomous research executor. PicoClaw reasons
+about goals and selects capabilities; the executor runs declared steps, handles
+retries and timeouts, records measurements and artifacts, and releases only
+results that satisfy explicit checks. Between samples, the research engine
+studies what was recorded.
 
 > The LLM may design or revise an experiment. It does not babysit the hardware
 > loop or convert an unverified observation into a fact.
@@ -21,6 +21,12 @@ checks. Between samples, the research engine studies what was recorded.
 nora is a general research implementer, not a product for one field. The same
 engine runs a bench rig and a vineyard; a domain arrives as a pack of
 parameters. See [REPO_BOUNDARY.md](REPO_BOUNDARY.md) for the layering.
+
+It is also not tied to one host. The executor is a static Go binary for
+x86-64, ARM and RISC-V, and the research engine is standard-library Python, so
+the same tree runs on a LicheeRV Nano, a laptop, or a cloud VM. Skills that
+need peripherals declare `requires_hardware: true` and are skipped with a
+stated reason where there are none. See [`deploy/`](deploy/README.md).
 
 [Read the tutorial](https://vbaulin.github.io/nora/) or use the
 [single-page operator tutorial](docs/tutorial-proactive-field-companion.md).
@@ -103,11 +109,13 @@ gateway-facing [orchestrator prompt](PICOCLAW_ORCHESTRATOR_PROMPT.md).
 
 ## First Experiment
 
-Build the static RISC-V binary:
+Build the static binary for the host you have:
 
 ```bash
-GOOS=linux GOARCH=riscv64 CGO_ENABLED=0 \
-  go build -o nano-os-agent main.go
+GOOS=linux GOARCH=riscv64 CGO_ENABLED=0 go build -o nano-os-agent main.go  # LicheeRV Nano
+GOOS=linux GOARCH=amd64   CGO_ENABLED=0 go build -o nora main.go           # cloud VM
+GOOS=linux GOARCH=arm64   CGO_ENABLED=0 go build -o nora main.go           # Ampere, Graviton, Pi
+go build -o nora main.go                                                   # your machine
 ```
 
 Run one read-only task on a configured board:
@@ -192,10 +200,10 @@ Runtime preference is native Go for deterministic primitives, vendor C/C++ for
 camera and zero-copy NPU paths, compiled Go helpers for CPU analysis, and Python
 for vendor bindings or early prototypes.
 
-## Proactive Scientific Companion
+## Proactive Interaction
 
-The companion converts a stream of measurements into a sparse sequence of
-useful interactions. Its unit of work is not a conversation turn, but an
+The adapter converts a stream of measurements into a sparse sequence of useful
+interactions. Its unit of work is not a conversation turn, but an
 evidence-linked proposal with a subject, reason, priority, provenance, and
 next observation.
 
@@ -302,7 +310,7 @@ and the [SD-card provisioning guide](docs/vineyard-sd-card-provisioning.md).
 
 ## Further Reading
 
-- [Tutorial: build a proactive scientific companion](docs/tutorial-proactive-field-companion.md)
+- [Tutorial: build an autonomous research executor](docs/tutorial-proactive-field-companion.md)
 - [Autonomous task patterns](AUTONOMOUS_TASKS.md)
 - [Self-improving runtime design](SELF-IMPROVING.md)
 - [Skill reconciliation](SKILLS_RECONCILIATION.md)

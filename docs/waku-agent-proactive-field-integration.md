@@ -2,7 +2,7 @@
 
 For the general experiment, learning, and interaction architecture followed by
 the Vineyard Guard deployment example, see
-[Tutorial: build a proactive scientific companion](tutorial-proactive-field-companion.md).
+[Tutorial: build an autonomous research executor](tutorial-proactive-field-companion.md).
 
 ## Patterns Adopted
 

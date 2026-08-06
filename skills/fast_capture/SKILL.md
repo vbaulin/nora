@@ -5,6 +5,7 @@ command: ./run.sh
 input_format: env
 output_format: json
 timeout: 30
+requires_hardware: true
 ---
 # Fast Native Image Capture
 Captures a frame using the native Cvitek ISP binaries. Extremely low RAM footprint.

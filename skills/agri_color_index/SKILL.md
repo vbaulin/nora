@@ -5,6 +5,7 @@ command: run.py
 input_format: stdin
 output_format: json
 timeout: 30
+requires_hardware: true
 ---
 # Ripeness & Color Analysis
 Calculates color histograms and mean HSL values to track grape ripening.

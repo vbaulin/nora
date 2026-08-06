@@ -5,6 +5,7 @@ command: ./run.py
 input_format: env
 output_format: json
 timeout: 30
+requires_hardware: true
 parameters:
   - name: duration
     type: int

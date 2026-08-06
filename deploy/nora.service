@@ -1,0 +1,40 @@
+[Unit]
+Description=nora autonomous research executor
+Documentation=https://vbaulin.github.io/nora/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nora
+Group=nora
+WorkingDirectory=/opt/nora
+ExecStart=/opt/nora/nora
+Restart=on-failure
+RestartSec=10
+
+# A host without hardware skills needs no privileges at all.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+ReadWritePaths=/opt/nora/state /opt/nora/monitors
+
+# Uncomment on a host where devices are passed through and hardware skills
+# should run. PrivateDevices must be disabled for this to have any effect.
+# Environment=NORA_HARDWARE=1
+
+# Keep the runtime honest about its footprint on a small instance.
+MemoryMax=512M
+CPUQuota=50%
+
+[Install]
+WantedBy=multi-user.target

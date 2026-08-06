@@ -5,6 +5,7 @@ command: npu_inspect
 input_format: env
 output_format: json
 timeout: 10
+requires_hardware: true
 ---
 # NPU Information
 Checks for Cvitek/Sophgo TPU device and logs driver status.

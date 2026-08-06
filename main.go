@@ -253,6 +253,11 @@ type SkillConfig struct {
 	Timeout      int          `yaml:"timeout"`
 	Parameters   []SkillParam `yaml:"parameters"`
 	Returns      []string     `yaml:"returns"`
+	// RequiresHardware marks a skill that talks to board peripherals: camera,
+	// NPU/TPU, audio capture, I2C, GPIO, ADC. The same runtime also runs on a
+	// laptop or a cloud VM, where such a skill is skipped with a stated reason
+	// rather than failing inside a driver.
+	RequiresHardware bool `yaml:"requires_hardware"`
 }
 
 type SkillParam struct {
@@ -598,6 +603,15 @@ func (e *Engine) executeExternalSkill(name string, params map[string]interface{}
 	config, err := e.loadSkillConfig(name)
 	if err != nil {
 		return nil, fmt.Errorf("skill %q not found: %v", name, err)
+	}
+	if config.RequiresHardware && !hasBoardHardware() {
+		log.Printf("⏭️  Skill %q skipped: requires board hardware, none present on this host", name)
+		return map[string]interface{}{
+			"status": "skipped",
+			"reason": "requires board hardware (camera, NPU, I2C, GPIO, or audio capture); none present on this host",
+			"skill":  name,
+			"hint":   "run this skill on the board, or set NORA_HARDWARE=1 if devices are passed through",
+		}, nil
 	}
 	t := resolveTimeout(timeout, config.Timeout, e.Program.Constraints.MaxTimeout)
 	params = e.applySkillDefaults(config, params)
@@ -2271,6 +2285,33 @@ func (e *Engine) readMCPResource(uri string) interface{} {
 	}
 }
 
+// hasBoardHardware reports whether this host exposes the peripherals a
+// hardware skill needs. The executor is portable — the same binary runs on the
+// LicheeRV Nano, a laptop, and a cloud VM — so the question is answered from
+// the host rather than assumed from the build target.
+//
+// Presence of any camera, I2C bus, GPIO chip, or ALSA capture device is taken
+// as a board-like host. NORA_HARDWARE=1 or 0 overrides the probe for hosts
+// that pass devices through indirectly.
+func hasBoardHardware() bool {
+	if forced, ok := os.LookupEnv("NORA_HARDWARE"); ok {
+		switch strings.ToLower(strings.TrimSpace(forced)) {
+		case "1", "true", "yes", "on":
+			return true
+		case "0", "false", "no", "off":
+			return false
+		}
+	}
+	for _, pattern := range []string{
+		"/dev/video*", "/dev/i2c-*", "/dev/gpiochip*", "/dev/snd/pcmC*c",
+	} {
+		if matches, _ := filepath.Glob(pattern); len(matches) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func (e *Engine) checkVideoDevs() {
 	matches, _ := filepath.Glob("/dev/video*")
 	if len(matches) == 0 {
@@ -3186,7 +3227,15 @@ func (e *Engine) executeTask(t *Task) {
 				stepSuccesses++
 				stepsPassed++
 				e.appendResult(t.ID, step.ID, "keep", step.Action)
-				log.Printf("  ✅ Step %s succeeded (%d/%d)", step.ID, iteration, iterations)
+				// A skipped step passed its expectations but measured nothing.
+				// Reporting it as a success would overstate what this run
+				// actually produced.
+				if status, _ := lastResult["status"].(string); status == "skipped" {
+					reason, _ := lastResult["reason"].(string)
+					log.Printf("  ⏭️  Step %s skipped (%d/%d): %s", step.ID, iteration, iterations, reason)
+				} else {
+					log.Printf("  ✅ Step %s succeeded (%d/%d)", step.ID, iteration, iterations)
+				}
 			} else {
 				stepFailures++
 				e.appendMonitorObservation(repeatJournalPath(step), t.ID, step, iteration, success, result, err)

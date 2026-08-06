@@ -5,6 +5,7 @@ command: ./run.sh
 input_format: env
 output_format: json
 timeout: 90
+requires_hardware: true
 parameters:
   - name: output_dir
     type: string

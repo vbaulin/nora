@@ -5,6 +5,7 @@ command: ./run.sh
 input_format: env
 output_format: json
 timeout: 60
+requires_hardware: true
 ---
 # Agricultural Disease Detection (TPU)
 Uses a specialized NPU model to detect common vine diseases (e.g., Mildew, Botrytis).

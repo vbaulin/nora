@@ -5,6 +5,7 @@ command: ./run.sh
 input_format: env
 output_format: json
 timeout: 60
+requires_hardware: true
 ---
 # TPU Face Detection
 High-speed face and landmark detection using the native NPU.

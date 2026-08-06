@@ -24,6 +24,16 @@ DEFAULT_STATE_DIR = "/root/.picoclaw/workspace/research"
 DEFAULT_JOURNAL_DIRS = ("/tmp/monitors",)
 DEFAULT_EVIDENCE_JOURNAL = "/root/nano-os-agent/experiments.jsonl"
 
+# Host defaults for a deployment that is not the board. An explicit parameter
+# always wins; these only replace the board paths above when nothing was given.
+# See deploy/cloud.env.example.
+ENVIRONMENT_DEFAULTS = {
+    "NORA_STATE_DIR": "state_dir",
+    "NORA_JOURNAL_DIRS": "journal_dirs",
+    "NORA_EVIDENCE_JOURNAL": "evidence_journal",
+    "GOIDANICH_REPO": "repo_path",
+}
+
 
 def read_params():
     raw = ""
@@ -47,6 +57,10 @@ def read_params():
         if argument.startswith("--") and "=" in argument:
             key, value = argument[2:].split("=", 1)
             params[key.replace("-", "_")] = value
+    for variable, key in ENVIRONMENT_DEFAULTS.items():
+        value = os.environ.get(variable, "").strip()
+        if value:
+            params.setdefault(key, value)
     return params
 
 

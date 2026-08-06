@@ -5,6 +5,7 @@ command: ./run.sh
 input_format: env
 output_format: json
 timeout: 60
+requires_hardware: true
 ---
 # TPU Native Detection Skill
 Executes high-speed YOLOv8 detection using the Cvitek TDL SDK.

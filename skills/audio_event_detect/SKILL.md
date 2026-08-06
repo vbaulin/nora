@@ -5,6 +5,7 @@ command: ./run.py
 input_format: stdin
 output_format: json
 timeout: 20
+requires_hardware: true
 parameters:
   - name: audio_path
     type: string

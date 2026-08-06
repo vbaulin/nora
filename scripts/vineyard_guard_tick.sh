@@ -137,9 +137,9 @@ esac
 
 # The scheduled duties occupy about an hour of the day. The rest of it is spent
 # researching evidence the board already holds: one budgeted cycle per hour,
-# never during the morning duty window, and never sending anything itself.
+# never inside a duty window, and never sending anything itself.
 case "$local_hm" in
-    075[0-9]|08[0-4][0-9])
+    075[0-9]|08[0-4][0-9]|170[0-9]|171[0-4])
         :
         ;;
     *)

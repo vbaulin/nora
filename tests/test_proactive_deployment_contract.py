@@ -27,10 +27,11 @@ class ProactiveDeploymentContractTest(unittest.TestCase):
         tick = (ROOT / "scripts" / "vineyard_guard_tick.sh").read_text(encoding="utf-8")
         self.assertIn("run_interval()", tick)
         self.assertIn("run_interval research 3600", tick)
-        # The research cycle must not compete with the morning duty window.
+        # The research cycle must not compete with a duty window.
         window = tick.index("run_interval research")
         guard = tick[:window]
         self.assertIn("075[0-9]|08[0-4][0-9]", guard)
+        self.assertIn("170[0-9]|171[0-4]", guard)
         cron = (ROOT / "scripts" / "vineyard_guard_cron.py").read_text(encoding="utf-8")
         self.assertIn('"research"', cron)
         self.assertIn("def mode_research", cron)

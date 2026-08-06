@@ -91,4 +91,12 @@ Proactivity should not become message flooding. The reference adapter:
 - attaches only artifacts belonging to the relevant alert disease;
 - never treats an accepted proposal as proof that an operation occurred.
 
-Next: [add bounded research and skill adaptation](06-research-and-adaptation.md).
+## A question is the last step, not the first
+
+Everything above describes how to ask well. The stronger discipline is to ask
+rarely, because the board answered the question itself. A raw threshold
+crossing is not yet a reason to interrupt anyone: the next chapter shows how
+the same evidence is investigated first, and how a conclusion that changes no
+decision stays silent.
+
+Next: [research the evidence on idle time](06-research-and-adaptation.md).

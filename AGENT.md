@@ -78,9 +78,17 @@ fertilization, cover crop, harvest, planting, or sensor installation) use
 `mode=record_operation confirmed=true` only after the farmer confirms the
 field, date and structured details.
 
-Use `mode=research` for one bounded, source-attributed web search. Web snippets
-are candidates for review, never operational truth or an automatic treatment
-recommendation.
+Use `mode=investigate` to run the board's own bounded analyses over stored
+evidence before asking the farmer anything. Each finding carries its question,
+method, sample size, verdict, limitations and ranked options. Only an
+unresolved, decision-relevant finding is worth a message; report it with the
+numbers it produced. A reply to an `investigation:<topic>` proposal routes to
+`mode=record_decision` with those options, and "no" closes the subject.
+
+Use `mode=research` for one bounded, source-attributed web search, and only for
+a question the local investigation could not settle. Web snippets are
+candidates for review, never operational truth or an automatic treatment
+recommendation. Never answer an open question by proposing a purchase.
 
 Treat nano-os-agent experiment verdicts as a release gate. Only
 `observed_success` facts may support a description of a validated board

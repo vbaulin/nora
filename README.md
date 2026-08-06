@@ -9,16 +9,42 @@
   <a href="https://vbaulin.github.io/nora/"><img alt="GitHub Pages" src="https://img.shields.io/badge/docs-GitHub_Pages-173e2a?style=flat-square"></a>
 </p>
 
-**nano-os-agent** turns a small RISC-V board into a persistent scientific
-instrument. PicoClaw reasons about goals and selects capabilities; nano-os-agent
-executes declared steps, handles retries and timeouts, records measurements and
-artifacts, and releases only results that satisfy explicit checks.
+**nora** (nano-os-agent) turns a small RISC-V board into a persistent
+scientific instrument. PicoClaw reasons about goals and selects capabilities;
+the executor runs declared steps, handles retries and timeouts, records
+measurements and artifacts, and releases only results that satisfy explicit
+checks. Between samples, the research engine studies what was recorded.
 
 > The LLM may design or revise an experiment. It does not babysit the hardware
 > loop or convert an unverified observation into a fact.
 
-[Read the proactive-agent tutorial](https://vbaulin.github.io/nora/) or use the
+nora is a general research implementer, not a product for one field. The same
+engine runs a bench rig and a vineyard; a domain arrives as a pack of
+parameters. See [REPO_BOUNDARY.md](REPO_BOUNDARY.md) for the layering.
+
+[Read the tutorial](https://vbaulin.github.io/nora/) or use the
 [single-page operator tutorial](docs/tutorial-proactive-field-companion.md).
+
+## Research on Idle Time
+
+A sampling board is idle almost all the time. `skills/research_agent` spends a
+few of those seconds raising questions from the journals the tasks wrote,
+answering them with bounded analyses, and handing back only what a human should
+decide. It runs on a laptop too:
+
+```bash
+printf '%s' '{"mode":"cycle","state_dir":"/tmp/nora/state","journal_dirs":"/tmp/monitors"}' | ./skills/research_agent/run.sh
+```
+
+| Verdict | Meaning | Reaches a human |
+| --- | --- | --- |
+| `material_unresolved` | Real, decision-relevant, unanswerable locally | Yes |
+| `not_material` | Real, but it changed no decision | No |
+| `resolved_local` | Already answered by evidence on the board | No |
+| `insufficient_data` | The analysis could not run | No |
+
+A board that cannot check something has discovered nothing, and must not turn
+its own blind spot into a request for attention or hardware.
 
 ## Evidence Before Explanation
 
@@ -57,7 +83,9 @@ Supabase synchronization, and human confirmation under field conditions.
 |---|---|
 | **PicoClaw** | Interpret intent, inspect skills and current artifacts, choose a capability, and explain released evidence. |
 | **nano-os-agent** | Execute task steps and native skills with expectations, retries, timeouts, metrics, and journals. |
-| **Application adapter** | Convert domain artifacts into observations and define bounded proposal and confirmation rules. |
+| **Research engine** | Raise questions from journals and feedback, answer them with bounded analyses, and keep the verdicts and their limits. |
+| **Domain pack** | Declare the questions a field always cares about, as parameters for those analyses. |
+| **Application adapter** | Convert domain artifacts into observations, deliver findings, and define bounded proposal and confirmation rules. |
 
 Hardware access follows one route:
 

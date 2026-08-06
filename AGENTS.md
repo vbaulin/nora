@@ -65,13 +65,36 @@ begin `proactive-field-agent mode=draft_operation` with the resolved field and
 operation type. Ask when context is ambiguous. An accepted proposal does not
 authorize automatic treatment.
 
+A reply to an `investigation:<topic>` proposal resolves to
+`next_mode=record_decision` and returns the finding's ranked options. Map the
+farmer's answer to one option and record it; a refusal is a valid answer and
+closes the subject for the season. Never re-ask a question the board can answer
+from its own data, and never present buying hardware as the way to resolve an
+open question.
+
 Confirmed operations without a later confirmed outcome may produce one
 `operation_follow_up` proposal after a bounded delay. A later outcome closes
 that proposal and is stored only as an observed temporal association with
 `causal_claim=false`, never as proof that the operation caused the result.
 
+Local investigation comes before any external search and before any farmer
+question. `proactive-field-agent mode=investigate` runs the bounded analyses
+over stored evidence (model series, peer board signals, the board's own alert
+record) and returns each finding's question, method, sample size, verdict,
+limitations and options. Only a `material_unresolved` verdict may reach the
+farmer; `not_material`, `resolved_local` and `insufficient_data` stay in
+evidence memory. Report findings with their numbers, not as impressions.
+
+For board-wide research that is not vineyard-specific, use `research-agent`.
+`mode=cycle` is the scheduled idle-time loop, `mode=reportable` lists the
+findings a human should see, and `mode=findings` returns the stored evidence
+for any subject. It never sends a message: an adapter delivers. When answering
+"what has the board been looking at", read `research-agent mode=findings` and
+`proactive-field-agent mode=status` — never session memory.
+
 Internet research uses `proactive-field-agent mode=research` or
-`mode=ingest_research`. Search snippets are candidate evidence. Preserve source
+`mode=ingest_research`, and only for the question a local investigation could
+not settle. Search snippets are candidate evidence. Preserve source
 URLs and never turn them directly into a product, dose, or treatment order.
 Product/application messages still follow the mandatory two-step
 `farmer-feedback-capture` route; after confirmed storage, call

@@ -1,35 +1,147 @@
 ---
-title: Research, Failure, and Adaptation
-summary: Use attributed sources and failed experiments to design the next test, not to bypass validation.
+title: Research the Evidence on Idle Time
+summary: How the board raises its own questions, answers most of them alone, and interrupts a human only for the rest.
 order: 6
 eyebrow: Chapter 6
 ---
 
-# Research, Failure, and Adaptation
+# Research the Evidence on Idle Time
 
-An autonomous experiment station eventually encounters an unknown sensor, a
-failed protocol, or an observation not covered by the current skill set. The
-safe response is not to broaden authority. It is to create a bounded research
-question and retain the resulting sources as candidate evidence.
+A board that samples once an hour is idle for fifty-nine minutes. Those minutes
+are enough to answer questions about data already on disk. This chapter is the
+engine that spends them: `skills/research_agent`.
 
-## Research route
+It is domain-neutral. It knows about questions, analyses, findings, verdicts
+and watches, and nothing about what the numbers mean.
 
-The proactive adapter separates four stages:
+## The loop
 
-1. `next_research` returns one queued question.
-2. `research` performs one bounded search through a configured provider.
-3. `ingest_research` stores externally collected results with URLs and source
-   metadata.
-4. A `research_review` proposal asks whether the candidate should be compared
-   with the local problem.
+![Signals and feedback become a question, a bounded analysis produces a finding, and the verdict decides who hears about it](../../assets/readme/research-loop.svg)
 
-Search snippets never become confirmed facts, product selections, doses, or
-hardware operations by themselves.
+Three properties make this research rather than alerting:
+
+- The question exists before the answer, and is stored with its provenance.
+- The analysis reports what it *cannot* establish alongside what it can.
+- A conclusion that changes no decision is a result, and stays silent.
+
+## Where questions come from
+
+**Signals.** A scan reads the tail of each monitor journal and looks for shapes
+worth a closer look: a source that stopped reporting, a level that moved beyond
+its own noise, a channel piling up against a limit. The scan concludes nothing;
+it raises a question and hands it to an analysis.
+
+**Human feedback.** Two refusals on the same subject are not stubbornness. They
+are evidence that the board is asking the wrong question, or asking it too
+often, so the engine opens a question about its own alerting threshold.
+
+**Packs.** A domain declares the questions it always cares about. See
+[chapter 8](08-vineyard-guard.md).
+
+## The six shapes it looks for
+
+Every analysis is a shape in the data. Learn the six pictures and you know what
+the board can notice.
+
+![Six analyses drawn as the data shape each one detects](../../assets/readme/analysis-shapes.svg)
+
+| Analysis | Question it answers |
+| --- | --- |
+| `level_shift` | Did the level move beyond its own noise? |
+| `ceiling_saturation` | Is a channel piling up against a limit? |
+| `data_gap` | Did a source go quiet? |
+| `threshold_materiality` | Did the uncertainty ever change a decision? |
+| `source_disagreement` | Do two sources that should agree, agree? |
+| `outcome_calibration` | Are the board's own alerts earning their interruptions? |
+
+Each reads a JSONL journal or a local SQLite table, so anything nora already
+records is a valid input. Most domain questions turn out to be one of these six
+wearing different words.
+
+## A worked study
+
+Take the quickstart journal from the [index](index.md) and ask one question
+directly instead of waiting for the scan:
+
+```bash
+printf '%s' '{"mode":"investigate","state_dir":"/tmp/nora-demo/state","analysis":"level_shift","subject":"light_probe","params":{"source":{"kind":"journal","path":"/tmp/nora-demo/monitors/light_probe.jsonl"},"key":"temp_c"}}' | ./skills/research_agent/run.sh
+```
+
+```json
+{"status": "success", "mode": "investigate",
+ "summary": [{"subject": "light_probe", "analysis": "level_shift",
+              "verdict": "not_material", "sample_size": 48}]}
+```
+
+`not_material` is the answer, and nobody is interrupted by it. The stored
+finding still carries the numbers that produced it:
+
+```bash
+printf '%s' '{"mode":"findings","state_dir":"/tmp/nora-demo/state","limit":1}' | ./skills/research_agent/run.sh
+```
+
+The `metrics` object holds `median_before`, `median_after`, `shift`,
+`within_half_deviation` and `shift_threshold`. Anyone can check the reasoning
+without rerunning it.
+
+### Why the spread is measured within each half
+
+A shift detector that measures noise across the whole window is defeated by the
+shift itself: the step inflates the very spread it is compared against, and a
+real change scores as ordinary variation. The engine measures the deviation
+inside each half separately, so a step between two stable halves is significant
+no matter how large it is.
+
+This is the kind of detail that decides whether an autonomous researcher is
+useful or merely busy.
+
+## Verdicts and silence
+
+| Verdict | What happens |
+| --- | --- |
+| `material_unresolved` | Handed to an adapter, with options ordered by cost |
+| `not_material` | Stored; the question is marked answered |
+| `resolved_local` | Stored; the evidence already answered it |
+| `insufficient_data` | Stored as an internal gap; never a human message |
+
+An analysis that could not run is not a discovery. A board that lacks the data
+to check something must not convert its blind spot into a request for
+attention, budget, or hardware.
+
+## Budget
+
+One cycle is bounded by questions, seconds, files and lines:
+
+```json
+{"mode":"cycle","max_questions":3,"max_seconds":20,"max_files":12,"max_lines":400}
+```
+
+`tasks/029_autonomous_research_cycle.yaml` runs one every fifteen minutes and
+journals the result. The defaults are sized so the research never competes with
+sampling on a 256 MB board.
+
+## Asking, and not insisting
+
+A finding that reaches a human arrives with its numbers, with options ordered
+by cost, and with "nothing for now" as a legitimate answer. The engine records
+the reply:
+
+```bash
+printf '%s' '{"mode":"record_decision","state_dir":"/tmp/nora-demo/state","finding_id":1,"decision":"accepted","option_id":"check_source","watch":true,"note":"probe is capped at 100"}' | ./skills/research_agent/run.sh
+```
+
+An acceptance may arm a **watch**: a future action a human confirmed once. When
+the same pattern returns, the watch fires and disarms. A refusal closes the
+question for the season instead of rescheduling it, because "no" is an answer.
+
+Hardware is never the first way to close a question, and never the only one. A
+suggestion to buy something belongs at the end of a list whose first entry is
+free, and it is not repeated after a refusal.
 
 ## Failure as diagnostic evidence
 
-A failed or partial nano-os-agent experiment is quarantined from advice, but it
-can create an internal investigation. The investigation should be narrow:
+A failed or partial task run is quarantined from advice, but it can open a
+narrow investigation:
 
 ```text
 Observed failure:
@@ -42,38 +154,23 @@ Next experiment:
   read-only bus discovery followed by identity-register validation
 ```
 
-The process preserves the original failure and prevents a web answer from being
-misreported as a local success.
+The original failure is preserved, and a web answer never becomes a local
+success.
 
-## Learning a sensor skill
+## When local evidence is not enough
 
-A reasonable skill-learning sequence is:
-
-1. Inspect existing hardware capabilities and task history.
-2. Read the sensor datasheet and board electrical constraints.
-3. Create a read-only draft skill with a structured output contract.
-4. Validate device identity and plausible ranges.
-5. Repeat under known conditions and record artifacts.
-6. Promote only after declared checks pass.
-7. Add the promoted skill to a monitor task.
-8. Revalidate after wiring, firmware, or hardware changes.
-
-This is how the system may discover and use additional hardware without making
-uncontrolled bus writes.
-
-## Protocol adaptation
-
-Adaptation may change *when* or *what* to measure within declared bounds. A
-microscope monitor can sample faster after a registered change point. A machine
-monitor can add an audio capture after vibration drift. The journal must record
-the trigger, previous protocol, revised protocol, and eventual verdict.
+An external search is for the question the local analysis could not settle, and
+it asks the scientific question. "Is a 95% humidity threshold a validated
+wetness proxy?" is research. "Which humidity sensors should I buy?" is
+shopping. Source-attributed results become candidate evidence for review, never
+instructions, product selections, or confirmed facts.
 
 ## Model learning remains separate
 
 Application models have their own training data, fitted parameters, evaluation,
 release status, and version. Neither a promoted skill nor an LLM explanation is
-a trained scientific model. This distinction matters when boards exchange
-model deltas or when a fallback model is used before enough confirmed local
-labels exist.
+a trained scientific model, and neither is a finding. This distinction matters
+when boards exchange model deltas or when a fallback model is used before
+enough confirmed local labels exist.
 
-Next: [run the platform and extend one experiment](07-run-an-experiment.md).
+Next: [run and extend a first experiment](07-run-an-experiment.md).

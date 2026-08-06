@@ -1,0 +1,42 @@
+- id: autonomous_research_cycle
+  name: "Autonomous Research Cycle"
+  priority: 4
+  status: template
+  # A sampling board is idle almost all the time. This task spends a few of
+  # those seconds every quarter hour reading the journals the other tasks
+  # wrote, raising questions from what changed, and answering the oldest ones.
+  # It sends nothing: an adapter decides whether a finding is worth a message.
+  steps:
+    - id: research_cycle
+      action: call_skill
+      save_as: research
+      parameters:
+        skill_name: research_agent
+        mode: cycle
+        state_dir: /root/.picoclaw/workspace/research
+        journal_dirs: /tmp/monitors
+        evidence_journal: /root/nano-os-agent/experiments.jsonl
+        max_questions: 3
+        max_seconds: 20
+      expect:
+        status: success
+      timeout: 60
+      on_fail: continue
+      repeat:
+        interval_sec: 900
+        max_iterations: 96
+        journal_path: /tmp/monitors/research_cycle.jsonl
+        continue_on_fail: true
+    - id: list_reportable_findings
+      action: call_skill
+      parameters:
+        skill_name: research_agent
+        mode: reportable
+        state_dir: /root/.picoclaw/workspace/research
+        limit: 10
+      expect:
+        status: success
+      timeout: 30
+      on_fail: continue
+  success_criteria:
+    - test -f /root/.picoclaw/workspace/research/research.db

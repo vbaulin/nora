@@ -24,7 +24,12 @@ uncertain intent -> declared task -> deterministic execution -> evidence
 |---|---|---|
 | PicoClaw | Intent interpretation, capability selection, explanation, and chat/Telegram interaction | Continuous hardware loops or unverified board facts |
 | nano-os-agent | Task execution, retries, timeouts, expectations, metrics, journals, and MCP tools | Open-ended scientific interpretation |
+| Research engine | Bounded analyses over recorded evidence, and the verdict each one supports | Domain meaning, message delivery, or any action |
 | Application adapter | Domain observations, proposal rules, and confirmed domain events | Universal hardware control or unrestricted action |
+
+Note where the research engine sits. It reasons about data, deterministically
+and within a budget, which is exactly the part of "reasoning" that does not
+need an LLM at all.
 
 The distinction is implemented in the repository contracts
 ([AGENTS.md](https://github.com/vbaulin/nora/blob/main/AGENTS.md) and

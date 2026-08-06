@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 480" role="img" aria-labelledby="layers-title layers-desc">
+  <title id="layers-title">How a domain plugs in</title>
+  <desc id="layers-desc">Four layers. The engine holds domain-neutral analyses. A pack declares a domain's questions as parameters. An adapter phrases findings for a person and records the answer. The private application holds the models and data. The vineyard column shows what each layer contains in practice.</desc>
+  <defs>
+    <marker id="dl-arrow" markerWidth="9" markerHeight="9" refX="7.5" refY="4.5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="#2f7d55"/>
+    </marker>
+  </defs>
+  <style>
+    .layer { fill: #ffffff; stroke: #d4ddd7; stroke-width: 1.5; }
+    .layer-core { fill: #e3f1e8; stroke: #2f7d55; stroke-width: 1.5; }
+    .h { font: 600 19px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; fill: #17231c; }
+    .s { font: 400 14px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; fill: #5a6860; }
+    .path { font: 400 13px ui-monospace, SFMono-Regular, Menlo, monospace; fill: #8a978f; }
+    .between { font: 500 13px system-ui, sans-serif; fill: #2f7d55; }
+    .col { font: 600 14px system-ui, sans-serif; fill: #8a978f; letter-spacing: 0.06em; }
+    .flow { stroke: #2f7d55; stroke-width: 2; fill: none; marker-end: url(#dl-arrow); }
+  </style>
+
+  <text class="col" x="60" y="34">NORA — ANY DOMAIN</text>
+  <text class="col" x="760" y="34">VINEYARD, IN PRACTICE</text>
+
+  <rect class="layer-core" x="60" y="52" width="600" height="86" rx="8"/>
+  <text class="h" x="84" y="86">Research engine</text>
+  <text class="s" x="84" y="112">questions, analyses, verdicts, watches — knows no domain</text>
+  <text class="path" x="84" y="131">skills/research_agent</text>
+
+  <rect class="layer" x="760" y="52" width="400" height="86" rx="8"/>
+  <text class="s" x="784" y="84">threshold_materiality</text>
+  <text class="s" x="784" y="106">ceiling_saturation</text>
+  <text class="s" x="784" y="128">outcome_calibration</text>
+
+  <line class="flow" x1="360" y1="142" x2="360" y2="176"/>
+  <text class="between" x="376" y="166">a pack declares questions as parameters</text>
+
+  <rect class="layer" x="60" y="180" width="600" height="86" rx="8"/>
+  <text class="h" x="84" y="214">Domain pack</text>
+  <text class="s" x="84" y="240">which columns, which threshold, which subject — no analysis code</text>
+  <text class="path" x="84" y="259">skills/proactive_field_agent/pack.py</text>
+
+  <rect class="layer" x="760" y="180" width="400" height="86" rx="8"/>
+  <text class="s" x="784" y="212">infection_index vs potential_infection_index</text>
+  <text class="s" x="784" y="234">threshold 85 degree-hours</text>
+  <text class="s" x="784" y="256">max_humi against a 95% criterion</text>
+
+  <line class="flow" x1="360" y1="270" x2="360" y2="304"/>
+  <text class="between" x="376" y="294">the engine hands back reportable findings</text>
+
+  <rect class="layer" x="60" y="308" width="600" height="86" rx="8"/>
+  <text class="h" x="84" y="342">Adapter</text>
+  <text class="s" x="84" y="368">says it in your language, delivers it, records what you chose</text>
+  <text class="path" x="84" y="387">skills/proactive_field_agent</text>
+
+  <rect class="layer" x="760" y="308" width="400" height="86" rx="8"/>
+  <text class="s" x="784" y="340">Catalan message with the numbers</text>
+  <text class="s" x="784" y="362">Telegram outbox, Ref: PF-17</text>
+  <text class="s" x="784" y="384">reply becomes a recorded decision</text>
+
+  <line class="flow" x1="360" y1="398" x2="360" y2="424"/>
+
+  <rect class="layer" x="60" y="428" width="600" height="44" rx="8"/>
+  <text class="h" x="84" y="457">Private application</text>
+  <text class="s" x="330" y="457">models, field data, history</text>
+
+  <rect class="layer" x="760" y="428" width="400" height="44" rx="8"/>
+  <text class="s" x="784" y="457">goidanich: disease models and the field database</text>
+</svg>

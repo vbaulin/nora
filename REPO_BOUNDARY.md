@@ -1,16 +1,22 @@
-# Repository Boundary: nano-os-agent, PicoClaw, and Goidanich
+# Repository Boundary: nora, PicoClaw, and Goidanich
 
-This repository can be published as the open `nano-os-agent` runtime only if
-private Vineyard Guard deployment state remains outside the public tree.
+nora is a general research implementer: a deterministic task executor, a skill
+runtime, and an engine that studies the evidence those tasks produce. A domain
+such as viticulture is an application on top of it, never part of its
+definition.
+
+This repository can be published as the open `nora` (nano-os-agent) runtime
+only if private Vineyard Guard deployment state remains outside the public tree.
 
 ## Intended Split
 
 ```text
-open repository: nano-os-agent
+open repository: nora
   main.go
   task executor and --once mode
   generic hardware skills
-  generic task templates
+  research engine (skills/research_agent) and its domain-neutral analyses
+  generic task templates, including the autonomous research cycle
   PicoClaw integration patches and runbooks
   optional app integration contracts
 
@@ -22,6 +28,33 @@ private repository: goidanich
   farmer feedback/product catalog when deployment-specific
   treatment history and generated reports/plots
 ```
+
+## Domain Layering
+
+The split is enforced by layering before it is enforced by directories:
+
+```text
+nora research engine            domain-neutral: questions, analyses, verdicts,
+  skills/research_agent         watches. Knows nothing about any field.
+        |
+        |  pack.py declares questions as parameters
+        v
+domain pack                     skills/proactive_field_agent/pack.py maps the
+                                vineyard onto generic analyses. No analysis code.
+        |
+        |  reportable findings
+        v
+domain adapter                  proactive-field-agent phrases findings for the
+                                farmer, delivers, and records the decision.
+        |
+        v
+private application             goidanich: disease models, field data, history.
+```
+
+A pack that declares vineyard questions contains parameters, not analyses. That
+is the test of whether the boundary is real: if a domain needs new analysis code
+in the engine, either the shape is genuinely new and belongs to every domain, or
+the layering has been broken.
 
 PicoClaw is the gateway and UI layer. It can remain as an upstream patch set in
 this repository unless a maintained PicoClaw fork is created.
@@ -84,15 +117,59 @@ skills/report_guard
 skills/risk_alert_policy
 skills/vineyard_guard_scheduler
 skills/vineyard_model_explainer
+skills/proactive_field_agent
 tasks/024_vineyard_disease_daily_update.yaml
 tasks/025_vineyard_federated_neighbour_refresh.yaml
 tasks/026_vineyard_disease_cron_daily.yaml
 tasks/027_daily_vineyard_briefing.yaml
+tasks/028_proactive_field_reflection.yaml
 ```
 
 Do not publish those files until they are reviewed. They are safe to keep in
 the working tree for the current board because PicoClaw skill discovery and the
 daily schedule expect them.
+
+These are domain-neutral and belong to the open runtime:
+
+```text
+skills/research_agent
+tasks/029_autonomous_research_cycle.yaml
+```
+
+## Migration Path
+
+The layering above is already in place, so moving files is a mechanical change
+that can happen when a board window allows, not a redesign:
+
+1. Move the vineyard skills to `apps/vineyard_guard/skills/` and the vineyard
+   tasks to `apps/vineyard_guard/tasks/`, keeping `pack.py` beside its adapter.
+2. Point `research_agent`'s pack discovery at the app directory by passing
+   `pack_dirs`, or by adding the app path to the default scan list. No engine
+   code changes: pack discovery is by convention, not by registry.
+3. Update `scripts/sync_vineyard_board.sh` skill lists, bind mounts, and
+   discovery symlinks to the new source paths. Board runtime paths under
+   `/root/nano-os-agent/skills` can stay identical, so the tick, the cron, and
+   PicoClaw discovery do not change.
+4. Run the deployment contract tests, then sync one board and confirm
+   `research-agent self_test` still lists `vineyard_guard` under `checks.packs`.
+5. Boot a board without Goidanich mounted: the engine must run with zero packs
+   and the launcher must show Vineyard Guard as unavailable rather than failing.
+
+Step 5 is the real acceptance test for the split. An engine that needs the
+vineyard to start has not been separated from it.
+
+## Known Seam
+
+Farmer decisions are recorded by the adapter in `proactive_field.db`, while the
+engine records its own decisions in `research.db`. The engine's feedback scan
+therefore reacts to refusals of engine-delivered findings, not to refusals a
+farmer sent through Telegram. The vineyard adapter compensates with its own
+`alert_calibration` topic over the same evidence, so nothing is lost today.
+
+Closing the seam is a migration step, not a redesign: have the adapter mirror
+each recorded decision into the engine with `research-agent
+mode=record_decision`, then delete the duplicate calibration topic. Do it when
+the vineyard skills move behind the app boundary, so the board changes once.
 
 ## Recommended Public Layout
 

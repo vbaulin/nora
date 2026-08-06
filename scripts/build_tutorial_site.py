@@ -69,7 +69,9 @@ def rewrite_links(body: str) -> str:
         "../applications/vineyard-disease-risk-models.md",
         f"{REPO_URL}/blob/main/docs/applications/vineyard-disease-risk-models.md",
     )
-    return re.sub(r"\((\d{2}-[a-z0-9-]+)\.md([#)])", r"(\1.html\2", body)
+    body = re.sub(r"\((\d{2}-[a-z0-9-]+)\.md([#)])", r"(\1.html\2", body)
+    # Chapters may link back to the tutorial home page.
+    return re.sub(r"\(index\.md([#)])", r"(index.html\1", body)
 
 
 def render_markdown(body: str) -> str:
@@ -162,14 +164,14 @@ def render_page(pages: list[Page], page: Page) -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="{html.escape(page.summary)}">
   <meta name="theme-color" content="#0b1410">
-  <title>{html.escape(page.title)} / nano-os-agent</title>
+  <title>{html.escape(page.title)} / nora</title>
   <link rel="stylesheet" href="assets/site.css">
 </head>
 <body class="{home_class.strip()}">
   <a class="skip-link" href="#content">Skip to content</a>
   <div class="reading-progress" aria-hidden="true"><span style="width:{progress}%"></span></div>
   <header class="topbar">
-    <a class="brand" href="index.html"><span class="brand-mark">N</span><span>nano-os-agent</span></a>
+    <a class="brand" href="index.html"><span class="brand-mark">N</span><span>nora</span></a>
     <nav class="top-links" aria-label="Project links">
       <a href="{REPO_URL}/blob/main/README.md">README</a>
       <a href="{REPO_URL}">GitHub</a>
@@ -210,11 +212,10 @@ def copy_assets(root: Path, output: Path) -> None:
     shutil.copy2(root / "docs" / "proactive-agent" / "assets" / "site.css", assets / "site.css")
     shutil.copy2(root / "docs" / "proactive-agent" / "assets" / "site.js", assets / "site.js")
     shutil.copy2(root / "images" / "LicheeRV Nano.jpg", assets / "licheerv-nano.jpg")
-    shutil.copy2(root / "assets" / "readme" / "evidence-loop.svg", readme_assets / "evidence-loop.svg")
-    shutil.copy2(
-        root / "assets" / "readme" / "evidence-loop-mobile.svg",
-        readme_assets / "evidence-loop-mobile.svg",
-    )
+    # Every diagram in assets/readme travels with the site, so adding one to a
+    # chapter needs no build change.
+    for diagram in sorted((root / "assets" / "readme").glob("*.svg")):
+        shutil.copy2(diagram, readme_assets / diagram.name)
 
 
 def build(root: Path, output: Path) -> list[Path]:

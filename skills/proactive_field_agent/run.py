@@ -21,11 +21,26 @@ import urllib.request
 import unicodedata
 from pathlib import Path
 
+# The skill directory is on sys.path when run.sh executes this file, but not
+# when a test loads it by path, so make the sibling module importable either way.
+_SKILL_DIR = str(Path(__file__).resolve().parent)
+if _SKILL_DIR not in sys.path:
+    sys.path.insert(0, _SKILL_DIR)
+
+import investigations  # noqa: E402  (requires the sys.path bootstrap above)
+
 
 DEFAULT_REPO = "/root/.picoclaw/workspace/goidanich"
 DEFAULT_STATE_DIR = "/root/.picoclaw/workspace/proactive_field"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 ALLOWED_DECISIONS = {"accepted", "rejected", "deferred", "corrected"}
+INVESTIGATION_KIND_PREFIX = "investigation:"
+# A rejected proposal is a decision, not a delay. The topic stays closed for a
+# season unless the underlying finding changes.
+REJECTED_COOLDOWN_DAYS = 180
+# A hardware option may be offered once per season per field, and only inside a
+# finding that also offers cheaper ways to answer the same question.
+HARDWARE_OPTION_COOLDOWN_DAYS = 180
 DISEASE_OPERATION_TYPES = {
     "treatment", "spray", "application", "inspection", "scouting",
     "clean_inspection", "disease_observation",
@@ -271,6 +286,7 @@ def connect_db(state_dir):
         );
         """
     )
+    investigations.ensure_tables(connection)
     connection.execute(
         "INSERT INTO meta(key, value) VALUES('schema_version', ?) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -881,12 +897,11 @@ def phrase(language, key, **values):
             "profile": "Per personalitzar les comparacions de {name}, confirmeu {missing}. No modificaré el perfil fins que ho confirmeu.",
             "model_title": "Cal una observació de camp per a {name}",
             "model": "El model après de {name} encara no té prou evidència local. Quan inspeccioneu, confirmeu si el dosser és net o si hi ha símptomes; aquesta dada alimentarà el model després de la vostra confirmació.",
-            "wetness_title": "Humectació del dosser incerta a {name}",
-            "wetness": "Les dades indiquen humitat compatible amb dosser mullat, però cap sensor ho confirma. Proposo comparar un sensor d'humectació foliar abans de convertir aquest proxy en una alerta operativa. Ho voleu investigar?",
             "research_title": "Fonts trobades per revisar: {name}",
             "research": "He trobat fonts candidates sobre {query}. Són referències per revisar, no una ordre de tractament. {sources} Voleu que en prepari una comparació amb les condicions del camp?",
             "research_nano_topic": "la validació d'un experiment de camp o sensor que no ha superat totes les comprovacions",
             "research_wetness_topic": "la mesura directa de la humectació foliar per reduir la incertesa del model",
+            "research_wetness_threshold_topic": "el llindar d'humitat que el model fa servir com a proxy d'humectació foliar",
             "source_excerpt": "extracte original de la font: {snippet}",
             "operation_title": "Comprovació després d'una operació a {name}",
             "operation_follow_up": "{name}: consta {operation} el {day}, però encara no hi ha cap resultat posterior confirmat. Per aprendre què funciona en aquest camp sense confondre seqüència amb causa, indiqueu què heu observat i la data de l'observació.",
@@ -899,12 +914,11 @@ def phrase(language, key, **values):
             "profile": "Para personalizar las comparaciones de {name}, confirme {missing}. No modificaré el perfil hasta que lo confirme.",
             "model_title": "Hace falta una observación de campo para {name}",
             "model": "El modelo aprendido de {name} aún no tiene suficiente evidencia local. Tras la inspección, confirme si el dosel está limpio o si hay síntomas; el dato alimentará el modelo solo después de su confirmación.",
-            "wetness_title": "Humedad del dosel incierta en {name}",
-            "wetness": "Los datos son compatibles con dosel mojado, pero ningún sensor lo confirma. Propongo comparar un sensor de humedad foliar antes de convertir este proxy en una alerta operativa. ¿Quiere investigarlo?",
             "research_title": "Fuentes encontradas para revisar: {name}",
             "research": "He encontrado fuentes candidatas sobre {query}. Son referencias para revisar, no una orden de tratamiento. {sources} ¿Quiere una comparación con las condiciones del campo?",
             "research_nano_topic": "la validación de un experimento de campo o sensor que no superó todas las comprobaciones",
             "research_wetness_topic": "la medición directa de la humedad foliar para reducir la incertidumbre del modelo",
+            "research_wetness_threshold_topic": "el umbral de humedad que el modelo usa como proxy de humectación foliar",
             "source_excerpt": "extracto original de la fuente: {snippet}",
             "operation_title": "Comprobación después de una operación en {name}",
             "operation_follow_up": "{name}: consta {operation} el {day}, pero aún no hay un resultado posterior confirmado. Para aprender qué funciona en este campo sin confundir secuencia con causa, indique qué observó y la fecha de la observación.",
@@ -917,12 +931,11 @@ def phrase(language, key, **values):
             "profile": "To personalize comparisons for {name}, confirm {missing}. I will not change the profile until you confirm it.",
             "model_title": "A field observation is needed for {name}",
             "model": "The learned model for {name} still lacks local evidence. After scouting, confirm whether the canopy is clean or symptoms are present; the observation will train the model only after confirmation.",
-            "wetness_title": "Canopy wetness is uncertain at {name}",
-            "wetness": "The data are compatible with a wet canopy, but no sensor confirms it. I propose comparing a leaf-wetness sensor before treating this proxy as an operational alert. Should I investigate it?",
             "research_title": "Sources found for review: {name}",
             "research": "I found candidate sources about {query}. They are references for review, not a treatment order. {sources} Should I compare them with field conditions?",
             "research_nano_topic": "validation of a field or sensor experiment that did not pass every declared check",
             "research_wetness_topic": "direct leaf-wetness measurement to reduce model uncertainty",
+            "research_wetness_threshold_topic": "the humidity threshold the model uses as a leaf-wetness proxy",
             "source_excerpt": "original source excerpt: {snippet}",
             "operation_title": "Post-operation check for {name}",
             "operation_follow_up": "{name}: {operation} was recorded on {day}, but no later outcome has been confirmed. To learn what works in this field without confusing sequence with causation, report what you observed and the observation date.",
@@ -1235,8 +1248,179 @@ def proposal_dict(row):
     return item
 
 
-def generate_proposals(connection, profiles):
+def investigation_kind(topic):
+    return f"{INVESTIGATION_KIND_PREFIX}{topic}"
+
+
+def hardware_option_allowed(connection, field_id):
+    """True while no hardware option has been offered or refused this season."""
+    since = (utcnow() - dt.timedelta(days=HARDWARE_OPTION_COOLDOWN_DAYS)).isoformat()
+    rows = connection.execute(
+        "SELECT evidence_json FROM proposals "
+        "WHERE field_id=? AND kind LIKE ? AND created_at>=?",
+        (field_id, INVESTIGATION_KIND_PREFIX + "%", since),
+    ).fetchall()
+    for row in rows:
+        try:
+            evidence = json.loads(row["evidence_json"])
+        except ValueError:
+            continue
+        for item in evidence:
+            if isinstance(item, dict) and "hardware" in (item.get("option_costs") or []):
+                return False
+    return True
+
+
+def wetness_reference_peer(repo_path, profile):
+    """A neighbour board that measures leaf wetness, when one is configured.
+
+    The comparison option is offered only when such a peer actually exists; the
+    agent must not invite the farmer to request data nobody has.
+    """
+    config = load_yaml(os.path.join(repo_path, "neighbours.yaml"))
+    coordinates = (profile.get("profile") or {}).get("coordinates") or {}
+    origin = (coordinates.get("latitude"), coordinates.get("longitude"))
+    for raw in (config.get("neighbours") or []):
+        if not isinstance(raw, dict) or not raw.get("leaf_wetness_sensor"):
+            continue
+        peer_coordinates = raw.get("coordinates") if isinstance(raw.get("coordinates"), dict) else {}
+        distance = investigations.haversine_km(
+            origin, (peer_coordinates.get("latitude"), peer_coordinates.get("longitude")),
+        )
+        return {
+            "peer_name": str(raw.get("name") or raw.get("id") or "veí"),
+            "distance_km": f"{distance:.1f}" if distance is not None else "?",
+        }
+    return None
+
+
+def run_field_investigations(connection, profile, repo_path, observations=None, now=None):
+    field_id = profile["field_id"]
+    return investigations.run_investigations(
+        connection,
+        profile,
+        repo_path,
+        observations if observations is not None else latest_observations(connection, field_id),
+        now=now,
+        hardware_option_allowed=hardware_option_allowed(connection, field_id),
+        wetness_reference_peer=wetness_reference_peer(repo_path, profile),
+    )
+
+
+def open_topic_proposal(connection, field_id, kinds):
+    """The last farmer-facing proposal on a topic that has not been closed yet."""
+    placeholders = ",".join("?" for _ in kinds)
+    row = connection.execute(
+        f"SELECT * FROM proposals WHERE field_id=? AND kind IN ({placeholders}) "
+        "AND target='farmer' AND notified_at IS NOT NULL AND status!='completed' "
+        "ORDER BY created_at DESC LIMIT 1",
+        [field_id] + list(kinds),
+    ).fetchone()
+    return proposal_dict(row) if row else None
+
+
+def investigation_candidates(connection, profile, records):
+    """Turn stored findings into farmer messages, or into nothing at all.
+
+    Only an unresolved, decision-relevant finding is worth a message. A closed
+    conclusion is sent once, and only when the farmer was already asked about
+    that topic; otherwise the finding stays in evidence memory.
+    """
+    field_id = profile["field_id"]
+    language = profile["language"]
+    name = profile["name"]
+    candidates = []
+    for record in records:
+        topic = record.get("topic")
+        verdict = record.get("verdict")
+        if not record.get("id") or not topic:
+            continue
+        kind = investigation_kind(topic)
+        legacy_kinds = [kind]
+        if topic == investigations.TOPIC_WETNESS:
+            legacy_kinds.append("leaf_wetness_research")
+        options = record.get("options") or []
+        evidence = [{
+            "investigation_id": record["id"],
+            "topic": topic,
+            "verdict": verdict,
+            "question": record.get("question"),
+            "method": record.get("method"),
+            "sample_size": record.get("sample_size"),
+            "options": [option.get("id") for option in options],
+            "option_costs": sorted({option.get("cost") for option in options if option.get("cost")}),
+            "limitations": record.get("limitations") or [],
+        }] + (record.get("evidence") or [])
+        if verdict == investigations.VERDICT_MATERIAL:
+            rendered = investigations.render_report(language, name, record)
+            if not rendered:
+                continue
+            candidates.append({
+                "field_id": field_id, "kind": kind, "target": "farmer",
+                "priority": 72, "title": rendered["title"], "message": rendered["message"],
+                "rationale": (
+                    "A bounded investigation over stored field evidence left a decision-relevant "
+                    "question open; the farmer holds the cheapest way to close it."
+                ),
+                "evidence": evidence,
+                "confidence": float(record.get("confidence") or 0.5),
+                "requires_confirmation": True, "cooldown_days": 21,
+                "investigation_id": record["id"],
+            })
+            continue
+        if verdict not in {
+            investigations.VERDICT_NOT_MATERIAL, investigations.VERDICT_RESOLVED_LOCAL,
+        }:
+            continue
+        previous = open_topic_proposal(connection, field_id, legacy_kinds)
+        if not previous:
+            continue
+        rendered = investigations.render_report(language, name, record)
+        if not rendered:
+            # The question is settled but not worth a message. Close the open
+            # proposal anyway so the topic does not stay blocked forever.
+            connection.execute(
+                "UPDATE proposals SET status='completed', updated_at=? WHERE id=?",
+                (iso_now(), previous["id"]),
+            )
+            connection.commit()
+            continue
+        candidates.append({
+            "field_id": field_id, "kind": f"{kind}:closure", "target": "farmer",
+            "priority": 71, "title": rendered["title"], "message": rendered["message"],
+            "rationale": (
+                "An open question the farmer was already asked about is now settled by the "
+                "board's own evidence; closing it is part of the answer."
+            ),
+            "evidence": evidence,
+            "confidence": float(record.get("confidence") or 0.5),
+            "requires_confirmation": False, "cooldown_days": 60,
+            "investigation_id": record["id"],
+            "closes_proposal_id": previous["id"],
+        })
+    return candidates
+
+
+def apply_investigation_actions(connection, field_id, records):
+    """Queue the source question a local investigation could not answer."""
+    queued = []
+    for record in records:
+        if record.get("verdict") != investigations.VERDICT_MATERIAL:
+            continue
+        for action in record.get("internal_actions") or []:
+            if action.get("action") != "queue_research" or not action.get("query"):
+                continue
+            queue_research(
+                connection, field_id, str(action["query"]), str(action.get("reason") or ""),
+                [{"investigation_id": record.get("id"), "topic": record.get("topic")}],
+            )
+            queued.append(action["query"])
+    return queued
+
+
+def generate_proposals(connection, profiles, investigation_records=None):
     created = []
+    investigation_records = investigation_records or {}
     for profile in profiles:
         field_id = profile["field_id"]
         name = profile["name"]
@@ -1276,21 +1460,6 @@ def generate_proposals(connection, profiles):
                     ),
                     "confidence": 0.9, "requires_confirmation": True, "cooldown_days": 2,
                 })
-            if summary["wetness_watch"]:
-                candidates.append({
-                    "field_id": field_id, "kind": "leaf_wetness_research", "target": "farmer",
-                    "priority": 72, "title": phrase(language, "wetness_title", name=name),
-                    "message": phrase(language, "wetness", name=name),
-                    "rationale": "A humidity proxy cannot establish leaf wetness; direct sensing would reduce model uncertainty.",
-                    "evidence": summary["evidence"], "confidence": 0.7,
-                    "requires_confirmation": True, "cooldown_days": 14,
-                })
-                queue_research(
-                    connection, field_id,
-                    f"validated low-power leaf wetness sensors grapevine field deployment {profile.get('location') or ''}".strip(),
-                    "Repeated canopy-wetness uncertainty should be checked against direct sensing options.",
-                    summary["evidence"],
-                )
             if summary["untrained"]:
                 candidates.append({
                     "field_id": field_id, "kind": "scouting_evidence", "target": "farmer",
@@ -1370,10 +1539,23 @@ def generate_proposals(connection, profiles):
                 "evidence": [{"source_ref": "agent_config.yaml", "profile_fingerprint": digest(profile["profile"])}],
                 "confidence": 1.0, "requires_confirmation": True, "cooldown_days": 30,
             })
+        records = investigation_records.get(field_id) or []
+        apply_investigation_actions(connection, field_id, records)
+        candidates.extend(investigation_candidates(connection, profile, records))
         candidates.sort(key=lambda item: item["priority"], reverse=True)
         for candidate in candidates:
             proposal = create_proposal(connection, candidate)
             if proposal:
+                if candidate.get("investigation_id"):
+                    investigations.mark_investigation(
+                        connection, candidate["investigation_id"], "reported",
+                    )
+                if candidate.get("closes_proposal_id"):
+                    connection.execute(
+                        "UPDATE proposals SET status='completed', updated_at=? WHERE id=?",
+                        (iso_now(), candidate["closes_proposal_id"]),
+                    )
+                    connection.commit()
                 created.append(proposal)
                 break
     return created
@@ -1648,6 +1830,8 @@ def localized_research_topic(language, request_row):
     reason = str(request_row.get("reason") or "")
     if reason.startswith("A field-related nano-os-agent experiment"):
         return phrase(language, "research_nano_topic")
+    if reason.startswith("The station never reached"):
+        return phrase(language, "research_wetness_threshold_topic")
     if reason.startswith("Repeated canopy-wetness uncertainty"):
         return phrase(language, "research_wetness_topic")
     return str(request_row.get("query") or "the requested field question")
@@ -2023,6 +2207,7 @@ def compact_status(connection, field_id=None):
         "derived_insights": derived_insights,
         "proposals": proposals,
         "decisions": decisions,
+        "investigations": investigations.list_investigations(connection, field_id),
         "next_research": request,
     }
 
@@ -2047,7 +2232,11 @@ def mode_observe(connection, params, create=False):
     operations = ingest_operations(connection, repo_path, selected_field)
     derived_insights = derive_operation_insights(connection, profiles)
     reconciled_proposals = reconcile_proposals_from_operations(connection, profiles)
-    proposals = generate_proposals(connection, profiles) if create else []
+    investigation_records = {
+        profile["field_id"]: run_field_investigations(connection, profile, repo_path)
+        for profile in profiles
+    }
+    proposals = generate_proposals(connection, profiles, investigation_records) if create else []
     return {
         "status": "success", "mode": "tick" if create else "observe",
         "repo_path": repo_path, "fields": [profile["field_id"] for profile in profiles],
@@ -2063,9 +2252,57 @@ def mode_observe(connection, params, create=False):
             "derived_insights": derived_insights,
             "reconciled_proposals": reconciled_proposals,
         },
+        "investigations": compact_investigations(investigation_records),
         "proposals": proposals,
         "pending_proposal": next_proposal(connection, selected_field),
         "research_request": pending_research(connection, selected_field),
+    }
+
+
+def compact_investigations(investigation_records):
+    """Report what was investigated without repeating every stored metric."""
+    summary = []
+    for field_id, records in sorted(investigation_records.items()):
+        for record in records:
+            summary.append({
+                "field_id": field_id,
+                "investigation_id": record.get("id"),
+                "topic": record.get("topic"),
+                "verdict": record.get("verdict"),
+                "sample_size": record.get("sample_size"),
+                "confidence": record.get("confidence"),
+                "open_question": record.get("open_question"),
+                "created": record.get("created"),
+            })
+    return summary
+
+
+def mode_investigate(connection, params):
+    repo_path = params.get("repo_path") or DEFAULT_REPO
+    selected_field = params.get("field") or None
+    profiles = field_profiles(repo_path)
+    if selected_field:
+        profiles = [profile for profile in profiles if profile["field_id"] == selected_field]
+    if not profiles:
+        return {"status": "error", "error": "no configured fields found", "repo_path": repo_path}
+    save_profiles(connection, profiles)
+    records = {
+        profile["field_id"]: run_field_investigations(connection, profile, repo_path)
+        for profile in profiles
+    }
+    return {
+        "status": "success",
+        "mode": "investigate",
+        "repo_path": repo_path,
+        "fields": [profile["field_id"] for profile in profiles],
+        "investigations": [
+            item for field_records in records.values() for item in field_records
+        ],
+        "summary": compact_investigations(records),
+        "safety": (
+            "Findings are model-derived evidence. No treatment, purchase, or hardware "
+            "action was created."
+        ),
     }
 
 
@@ -2136,10 +2373,20 @@ def mode_decision(connection, params):
     cooldown = proposal.get("cooldown_until")
     if decision == "deferred":
         cooldown = (utcnow() + dt.timedelta(days=int(params.get("defer_days") or 3))).isoformat()
+    if decision == "rejected":
+        # "No" is an answer, not a delay. The subject stays closed for the season
+        # unless new evidence changes the underlying finding.
+        cooldown = (utcnow() + dt.timedelta(days=REJECTED_COOLDOWN_DAYS)).isoformat()
     connection.execute(
         "UPDATE proposals SET status=?, cooldown_until=?, updated_at=? WHERE id=?",
         (new_status, cooldown, now, proposal["id"]),
     )
+    investigation_id = proposal_investigation_id(proposal)
+    if investigation_id and decision in {"accepted", "rejected"}:
+        investigations.mark_investigation(
+            connection, investigation_id,
+            "answered" if decision == "accepted" else "closed_by_farmer",
+        )
     if note and decision == "corrected":
         upsert_fact(
             connection, proposal.get("field_id") or "board", "farmer_correction",
@@ -2150,8 +2397,42 @@ def mode_decision(connection, params):
     return {
         "status": "success", "proposal_id": proposal["id"], "decision": decision,
         "note": note, "executed_action": False,
+        "reopens_after": cooldown if decision == "rejected" else None,
         "message": "Decision recorded. No treatment or hardware action was executed automatically.",
     }
+
+
+def proposal_investigation_id(proposal):
+    for item in proposal.get("evidence") or []:
+        if isinstance(item, dict) and item.get("investigation_id"):
+            return int(item["investigation_id"])
+    return None
+
+
+def proposal_investigation(connection, proposal):
+    investigation_id = proposal_investigation_id(proposal)
+    return investigations.investigation_by_id(connection, investigation_id) if investigation_id else None
+
+
+def proposal_sent_options(proposal, record):
+    """The options the farmer actually received, not the current finding's list.
+
+    A later tick may drop an option, for example once a hardware suggestion has
+    been used up. The reply must still resolve against the message that was sent.
+    """
+    stored = {
+        option.get("id"): option
+        for option in ((record or {}).get("options") or [])
+        if option.get("id")
+    }
+    sent = []
+    for item in proposal.get("evidence") or []:
+        if isinstance(item, dict) and item.get("options"):
+            sent = [str(value) for value in item["options"]]
+            break
+    if not sent:
+        return list(stored.values())
+    return [stored.get(option_id) or {"id": option_id, "params": {}} for option_id in sent]
 
 
 def extract_proposal_id(value):
@@ -2267,6 +2548,24 @@ def operation_context_question(language, field_name, source_operation, route):
     )
 
 
+def investigation_context_question(language, field_name, options):
+    lang = str(language or "en").lower()[:2]
+    option_text = investigations.render_options(language, options)
+    if option_text:
+        texts = {
+            "ca": "La resposta és sobre la comprovació que vaig fer a {field}. Encara no s'ha desat res: confirmeu quina opció trieu ({options}), o digueu que ho deixem estar.",
+            "es": "La respuesta es sobre la comprobación que hice en {field}. Aún no se ha guardado nada: confirme qué opción elige ({options}), o dígame que lo dejemos.",
+            "en": "The reply concerns the check I ran at {field}. Nothing has been stored: confirm which option you choose ({options}), or tell me to drop it.",
+        }
+    else:
+        texts = {
+            "ca": "La resposta és sobre la comprovació que vaig fer a {field}. Encara no s'ha desat res: confirmeu si voleu que hi continuï o que ho tanqui.",
+            "es": "La respuesta es sobre la comprobación que hice en {field}. Aún no se ha guardado nada: confirme si quiere que siga o que lo cierre.",
+            "en": "The reply concerns the check I ran at {field}. Nothing has been stored: confirm whether I should carry on or close it.",
+        }
+    return texts.get(lang, texts["en"]).format(field=field_name, options=option_text)
+
+
 def mode_proposal_context(connection, params):
     raw_text = params.get("raw_text") or ""
     proposal_id = params.get("proposal_id") or extract_proposal_id(raw_text)
@@ -2324,6 +2623,36 @@ def mode_proposal_context(connection, params):
     ).fetchone()
     field_name = profile["name"] if profile else proposal.get("field_id") or ""
     language = (profile["language"] if profile else None) or params.get("language") or "en"
+    if str(proposal.get("kind") or "").startswith(INVESTIGATION_KIND_PREFIX):
+        record = proposal_investigation(connection, proposal)
+        options = proposal_sent_options(proposal, record)
+        return {
+            "status": "success",
+            "mode": "proposal_context",
+            "proposal_id": proposal["id"],
+            "proposal_kind": proposal["kind"],
+            "field": proposal.get("field_id"),
+            "field_name": field_name,
+            "alert_diseases": [],
+            "disease": None,
+            "investigation": {
+                "id": (record or {}).get("id"),
+                "topic": (record or {}).get("topic"),
+                "question": (record or {}).get("question"),
+                "verdict": (record or {}).get("verdict"),
+                "findings": (record or {}).get("findings"),
+                "limitations": (record or {}).get("limitations"),
+                "options": [option.get("id") for option in options],
+                "option_texts": investigations.render_options(language, options),
+            },
+            "missing": [],
+            "written": False,
+            "next_route": "proactive-field-agent",
+            "next_mode": "record_decision",
+            "confirmation_question": investigation_context_question(
+                language, field_name, options,
+            ),
+        }
     if proposal.get("kind") == "operation_follow_up":
         source_operation = proposal_source_operation(proposal) or {}
         disease = str(source_operation.get("disease") or "")
@@ -2575,6 +2904,24 @@ def mode_self_test(connection, params):
     if search_credentials.get("BRAVE_SEARCH_API_KEY"):
         search_providers.append("brave")
     search_providers.append("duckduckgo_html_or_lite_fallback")
+    field_db = investigations.open_field_db(repo_path)
+    investigation_sources = {}
+    try:
+        investigation_sources = {
+            "black_rot_daily_predictions": bool(
+                investigations.table_columns(field_db, "black_rot_daily_predictions")
+            ),
+            "upper_bound_index": "potential_infection_index" in investigations.table_columns(
+                field_db, "black_rot_daily_predictions"
+            ),
+            "peer_signals": bool(investigations.table_columns(field_db, "peer_signals")),
+        }
+    finally:
+        if field_db is not None:
+            try:
+                field_db.close()
+            except sqlite3.Error:
+                pass
     checks = {
         "sqlite_integrity": integrity,
         "configured_fields": len(profiles),
@@ -2584,6 +2931,12 @@ def mode_self_test(connection, params):
         "disease_state_coverage": coverage,
         "missing_disease_states": missing,
         "stale_disease_states": stale,
+        "investigation_topics": [
+            investigations.TOPIC_WETNESS,
+            investigations.TOPIC_PEER,
+            investigations.TOPIC_CALIBRATION,
+        ],
+        "investigation_sources": investigation_sources,
     }
     installed = integrity == "ok" and bool(profiles) and notify_script.exists()
     operational_ready = installed and not missing and not stale
@@ -2622,6 +2975,16 @@ def main():
                     connection, proposal, state_dir,
                     threshold=int(params.get("notify_threshold") or 70),
                 )
+        elif mode == "investigate":
+            result = mode_investigate(connection, params)
+        elif mode == "investigations":
+            result = {
+                "status": "success", "mode": mode,
+                "investigations": investigations.list_investigations(
+                    connection, params.get("field"), params.get("topic"),
+                    int(params.get("limit") or 20),
+                ),
+            }
         elif mode == "status":
             result = {"status": "success", "mode": mode, **compact_status(connection, params.get("field"))}
         elif mode == "next_proposal":

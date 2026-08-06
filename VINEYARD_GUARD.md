@@ -71,8 +71,16 @@ vineyard-guard-scheduler
 vineyard-model-explainer
 black-rot-risk
 proactive-field-agent
+research-agent
 vineyard-season-climate
 ```
+
+`research-agent` is platform, not app: it is the domain-neutral research engine
+described in [`skills/research_agent/SKILL.md`](skills/research_agent/SKILL.md).
+Vineyard Guard registers with it through
+`skills/proactive_field_agent/pack.py`, which expresses the vineyard's standing
+questions as parameters for the engine's generic analyses. A board without the
+Goidanich checkout runs the engine with one fewer pack.
 
 Their source directories may use underscores on disk, but each `SKILL.md`
 `name:` field must be hyphenated.
@@ -121,8 +129,8 @@ TZ=CET-1CEST,M3.5.0,M10.5.0/3
 `proactive-field-agent` provides a small SQLite evidence memory at
 `/root/.picoclaw/workspace/proactive_field/proactive_field.db`. It keeps field
 profiles, current model observations, confirmed farmer operations,
-field-related nano-os-agent experiments, facts, research sources, proposals and
-farmer decisions as separate epistemic objects.
+field-related nano-os-agent experiments, facts, investigations, research
+sources, proposals and farmer decisions as separate epistemic objects.
 
 The skill never writes a treatment. A high-priority proposal is packaged
 through the existing `farmer-notify` outbox and includes `Ref: PF-<id>`. An
@@ -130,6 +138,37 @@ explicit farmer acceptance, rejection, deferral or correction is stored with
 `mode=record_decision`; product/application details still pass through the
 two-step feedback workflow below. See
 [`docs/waku-agent-proactive-field-integration.md`](docs/waku-agent-proactive-field-integration.md).
+
+## Proactive Investigation
+
+A detected pattern is investigated before the farmer is contacted. Each tick
+runs the bounded analyses in `skills/proactive_field_agent/investigations.py`
+over evidence the board already holds:
+
+| Topic | Reads | Question |
+| --- | --- | --- |
+| `leaf_wetness_proxy` | `black_rot_daily_predictions` | Does the unmeasured-wetness assumption change any decision here? |
+| `peer_signal_divergence` | `peer_signals`, `topology` | Do nearby boards report what this field's model does not? |
+| `alert_calibration` | local proposals and confirmed outcomes | Do this board's alerts match what the farmer finds? |
+
+Each finding stores its question, method, window, sample size, verdict,
+confidence, limitations and ranked options. Only a `material_unresolved`
+verdict is sent; `not_material`, `resolved_local` and `insufficient_data` stay
+in evidence memory, and `not_material` is sent once as a closure only when the
+farmer was already asked about that topic.
+
+Farmer-facing findings report their numbers and order the ways to close them by
+cost. A free field observation comes first and hardware last: a sensor may be
+offered only alongside cheaper options, once per field per season, and never
+again after a refusal. A rejected proposal closes its subject for the season.
+An external search is queued only for what the local analysis could not settle,
+and it asks the scientific question rather than a product question.
+
+Run the analyses without contacting anyone:
+
+```bash
+printf '%s' '{"mode":"investigate"}' | /root/nano-os-agent/skills/proactive_field_agent/run.sh
+```
 
 ## Farmer Feedback
 

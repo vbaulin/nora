@@ -16,6 +16,29 @@ class ProactiveDeploymentContractTest(unittest.TestCase):
         self.assertIn('proactive-field-agent evidence-only observe check failed', script)
         self.assertIn('proactive-field-agent:proactive_field_agent', script)
 
+    def test_board_sync_installs_the_domain_neutral_research_engine(self):
+        script = (ROOT / "scripts" / "sync_vineyard_board.sh").read_text(encoding="utf-8")
+        self.assertIn("research_agent", script)
+        self.assertIn("research-agent:research_agent", script)
+        self.assertIn('"research_agent": "research-agent"', script)
+
+    def test_autonomous_research_cycle_task_is_generic_and_budgeted(self):
+        task = (ROOT / "tasks" / "029_autonomous_research_cycle.yaml").read_text(encoding="utf-8")
+        self.assertIn("skill_name: research_agent", task)
+        self.assertIn("mode: cycle", task)
+        self.assertIn("max_seconds", task)
+        self.assertIn("interval_sec", task)
+        # The generic cycle must not depend on any single domain.
+        for domain_token in ("goidanich", "vineyard", "field_id", "disease"):
+            self.assertNotIn(domain_token, task)
+
+    def test_the_vineyard_pack_declares_parameters_not_analyses(self):
+        pack = (ROOT / "skills" / "proactive_field_agent" / "pack.py").read_text(encoding="utf-8")
+        self.assertIn('"analysis": "threshold_materiality"', pack)
+        self.assertIn('"analysis": "ceiling_saturation"', pack)
+        # A domain pack that ships its own analysis has broken the layering.
+        self.assertNotIn('"analyses"', pack)
+
     def test_board_sync_installs_season_climate_skill_and_discovery_link(self):
         script = (ROOT / "scripts" / "sync_vineyard_board.sh").read_text(encoding="utf-8")
         self.assertIn("vineyard_season_climate", script)

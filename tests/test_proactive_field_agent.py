@@ -182,13 +182,19 @@ class ProactiveFieldAgentTest(unittest.TestCase):
         stored = MODULE.proposal_by_id(connection, proposal["id"])
         self.assertEqual(stored["status"], "accepted")
 
-    def test_uncertain_wetness_queues_research_without_claiming_infection(self):
+    def test_uncertain_wetness_without_model_history_asks_the_farmer_for_nothing(self):
+        """An unverifiable watch flag is an internal gap, not a hardware pitch."""
         self.write_complete_states(wetness=True, powdery_risk=20.0, powdery_due=False)
         connection = self.connection()
         result = MODULE.mode_observe(connection, self.params(), create=True)
-        self.assertEqual(result["proposals"][0]["kind"], "leaf_wetness_research")
-        self.assertIsNotNone(result["research_request"])
-        self.assertNotIn("tractament automàtic", result["proposals"][0]["message"].lower())
+        self.assertEqual(result["proposals"], [])
+        self.assertIsNone(result["research_request"])
+        wetness = [
+            item for item in result["investigations"]
+            if item["topic"] == "leaf_wetness_proxy"
+        ]
+        self.assertEqual(len(wetness), 1)
+        self.assertEqual(wetness[0]["verdict"], "insufficient_data")
 
     def test_unverified_black_rot_forecast_is_sent_for_farmer_confirmation(self):
         self.write_state(self.state_payload(disease="downy_mildew"))
@@ -255,8 +261,15 @@ class ProactiveFieldAgentTest(unittest.TestCase):
     def test_external_research_requires_public_attributed_sources(self):
         self.write_complete_states(wetness=True, powdery_risk=20.0, powdery_due=False)
         connection = self.connection()
-        observed = MODULE.mode_observe(connection, self.params(), create=True)
-        request = observed["research_request"]
+        MODULE.mode_observe(connection, self.params(), create=True)
+        MODULE.queue_research(
+            connection, "field_1",
+            "leaf wetness proxy threshold validation grapevine black rot",
+            "The station never reached the RH>=95% wetness criterion while accumulating "
+            "near-saturation hours, so the proxy threshold itself is the open question.",
+            [{"topic": "leaf_wetness_proxy"}],
+        )
+        request = MODULE.pending_research(connection, "field_1")
         result = MODULE.mode_ingest_research(connection, {
             "request_id": request["id"],
             "sources": [

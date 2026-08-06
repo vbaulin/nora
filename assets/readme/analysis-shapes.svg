@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 560" role="img" aria-labelledby="shapes-title shapes-desc">
+  <title id="shapes-title">The six shapes the board looks for</title>
+  <desc id="shapes-desc">Six generic analyses drawn as the data shape each one detects: a level that steps, a channel piling up against a limit, a source that stops, an upper bound crossing a threshold the confirmed value does not, two sources drifting apart, and alerts that keep coming back negative.</desc>
+  <style>
+    .panel { fill: #ffffff; stroke: #d4ddd7; stroke-width: 1.5; }
+    .name { font: 600 17px ui-monospace, SFMono-Regular, Menlo, monospace; fill: #17231c; }
+    .q { font: 400 14px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; fill: #5a6860; }
+    .axis { stroke: #d4ddd7; stroke-width: 1.5; }
+    .data { stroke: #2f7d55; stroke-width: 2.5; fill: none; stroke-linejoin: round; stroke-linecap: round; }
+    .data-alt { stroke: #285f8f; stroke-width: 2.5; fill: none; stroke-linejoin: round; stroke-linecap: round; }
+    .rule { stroke: #a66d11; stroke-width: 2; stroke-dasharray: 6 4; fill: none; }
+    .ghost { stroke: #c6d2ca; stroke-width: 2; stroke-dasharray: 4 4; fill: none; }
+    .tick-bad { font: 600 16px system-ui, sans-serif; fill: #a66d11; }
+    .tick-alert { font: 600 15px system-ui, sans-serif; fill: #2f7d55; }
+    .mark { font: 500 12px system-ui, sans-serif; fill: #a66d11; }
+  </style>
+
+  <!-- level_shift -->
+  <rect class="panel" x="20" y="20" width="370" height="250" rx="8"/>
+  <text class="name" x="44" y="52">level_shift</text>
+  <text class="q" x="44" y="76">Did the level move beyond its own noise?</text>
+  <path class="axis" d="M60,230 L360,230"/>
+  <path class="data" d="M64,206 L84,200 L104,208 L124,201 L144,207 L164,202
+                        L184,206 L204,150 L224,144 L244,152 L264,145 L284,151 L304,146 L324,150 L344,145"/>
+  <path class="ghost" d="M204,140 L204,214"/>
+
+  <!-- ceiling_saturation -->
+  <rect class="panel" x="415" y="20" width="370" height="250" rx="8"/>
+  <text class="name" x="439" y="52">ceiling_saturation</text>
+  <text class="q" x="439" y="76">Is it piling up against a limit?</text>
+  <path class="axis" d="M455,230 L755,230"/>
+  <path class="rule" d="M455,132 L755,132"/>
+  <text class="mark" x="755" y="126" text-anchor="end">range limit</text>
+  <path class="data" d="M459,196 L479,160 L499,132 L519,132 L539,132 L559,168
+                        L579,132 L599,132 L619,150 L639,132 L659,132 L679,132 L699,178 L719,132 L739,132"/>
+
+  <!-- data_gap -->
+  <rect class="panel" x="810" y="20" width="370" height="250" rx="8"/>
+  <text class="name" x="834" y="52">data_gap</text>
+  <text class="q" x="834" y="76">Did a source go quiet?</text>
+  <path class="axis" d="M850,230 L1150,230"/>
+  <path class="data" d="M854,180 L874,168 L894,184 L914,170 L934,182 L954,172 L974,180"/>
+  <path class="ghost" d="M974,180 L1146,180"/>
+  <text class="mark" x="1060" y="164" text-anchor="middle">silence</text>
+
+  <!-- threshold_materiality -->
+  <rect class="panel" x="20" y="290" width="370" height="250" rx="8"/>
+  <text class="name" x="44" y="322">threshold_materiality</text>
+  <text class="q" x="44" y="346">Did the uncertainty ever change a decision?</text>
+  <path class="axis" d="M60,500 L360,500"/>
+  <path class="rule" d="M60,404 L360,404"/>
+  <text class="mark" x="360" y="398" text-anchor="end">decision threshold</text>
+  <path class="data-alt" d="M64,470 L94,462 L124,388 L154,466 L184,458 L214,382 L244,468 L274,460 L304,466 L334,458"/>
+  <path class="data" d="M64,486 L94,480 L124,442 L154,484 L184,478 L214,436 L244,486 L274,478 L304,484 L334,478"/>
+  <text class="q" x="64" y="530" style="fill:#285f8f">upper bound</text>
+  <text class="q" x="200" y="530" style="fill:#2f7d55">confirmed</text>
+
+  <!-- source_disagreement -->
+  <rect class="panel" x="415" y="290" width="370" height="250" rx="8"/>
+  <text class="name" x="439" y="322">source_disagreement</text>
+  <text class="q" x="439" y="346">Do two sources that should agree, agree?</text>
+  <path class="axis" d="M455,500 L755,500"/>
+  <path class="data" d="M459,440 L499,436 L539,442 L579,430 L619,412 L659,396 L699,382 L739,368"/>
+  <path class="data-alt" d="M459,448 L499,444 L539,450 L579,452 L619,458 L659,462 L699,470 L739,476"/>
+  <path class="ghost" d="M739,368 L739,476"/>
+  <text class="mark" x="731" y="360" text-anchor="end">drift</text>
+
+  <!-- outcome_calibration -->
+  <rect class="panel" x="810" y="290" width="370" height="250" rx="8"/>
+  <text class="name" x="834" y="322">outcome_calibration</text>
+  <text class="q" x="834" y="346">Are my own alerts earning their interruptions?</text>
+  <text class="q" x="834" y="392">I alerted</text>
+  <text class="tick-alert" x="960" y="392">▲   ▲   ▲   ▲   ▲</text>
+  <text class="q" x="834" y="440">you found</text>
+  <text class="tick-bad" x="960" y="440">✕   ✕   ✕   ✕   ✕</text>
+  <path class="ghost" d="M950,410 L1150,410"/>
+  <text class="q" x="834" y="492">five alerts, five clean inspections:</text>
+  <text class="q" x="834" y="514">send fewer, not louder</text>
+</svg>

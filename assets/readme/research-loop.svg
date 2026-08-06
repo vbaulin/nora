@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 470" role="img" aria-labelledby="loop-title loop-desc">
+  <title id="loop-title">The research loop</title>
+  <desc id="loop-desc">Signals and human feedback become a question, a bounded analysis produces a finding, and a verdict decides who hears about it. Three of the four verdicts stay on the board; only an unresolved, decision-relevant finding reaches a human, whose decision returns as feedback.</desc>
+  <defs>
+    <marker id="rl-arrow" markerWidth="9" markerHeight="9" refX="7.5" refY="4.5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="#2f7d55"/>
+    </marker>
+    <marker id="rl-arrow-muted" markerWidth="9" markerHeight="9" refX="7.5" refY="4.5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="#8a978f"/>
+    </marker>
+  </defs>
+  <style>
+    .box { fill: #ffffff; stroke: #d4ddd7; stroke-width: 1.5; }
+    .box-accent { fill: #e3f1e8; stroke: #2f7d55; stroke-width: 1.5; }
+    .box-quiet { fill: #f4f6f4; stroke: #d4ddd7; stroke-width: 1.5; }
+    .h { font: 600 19px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; fill: #17231c; }
+    .s { font: 400 14px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; fill: #5a6860; }
+    .lbl { font: 600 13px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; fill: #2f7d55; }
+    .lbl-quiet { font: 600 13px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; fill: #8a978f; }
+    .flow { stroke: #2f7d55; stroke-width: 2; fill: none; marker-end: url(#rl-arrow); }
+    .flow-quiet { stroke: #8a978f; stroke-width: 2; fill: none; marker-end: url(#rl-arrow-muted); stroke-dasharray: 5 4; }
+  </style>
+
+  <rect class="box" x="30" y="50" width="220" height="86" rx="8"/>
+  <text class="h" x="140" y="86" text-anchor="middle">Signals + feedback</text>
+  <text class="s" x="140" y="110" text-anchor="middle">monitor journals,</text>
+  <text class="s" x="140" y="128" text-anchor="middle">answers you already gave</text>
+
+  <rect class="box" x="310" y="50" width="200" height="86" rx="8"/>
+  <text class="h" x="410" y="86" text-anchor="middle">Question</text>
+  <text class="s" x="410" y="110" text-anchor="middle">a claim + which</text>
+  <text class="s" x="410" y="128" text-anchor="middle">analysis answers it</text>
+
+  <rect class="box" x="570" y="50" width="200" height="86" rx="8"/>
+  <text class="h" x="670" y="86" text-anchor="middle">Analysis</text>
+  <text class="s" x="670" y="110" text-anchor="middle">bounded: 3 questions,</text>
+  <text class="s" x="670" y="128" text-anchor="middle">20 seconds per cycle</text>
+
+  <rect class="box" x="830" y="50" width="200" height="86" rx="8"/>
+  <text class="h" x="930" y="86" text-anchor="middle">Finding</text>
+  <text class="s" x="930" y="110" text-anchor="middle">method, sample size,</text>
+  <text class="s" x="930" y="128" text-anchor="middle">and its own limits</text>
+
+  <line class="flow" x1="252" y1="93" x2="306" y2="93"/>
+  <line class="flow" x1="512" y1="93" x2="566" y2="93"/>
+  <line class="flow" x1="772" y1="93" x2="826" y2="93"/>
+
+  <path class="flow" d="M930,138 L930,182"/>
+  <rect class="box-accent" x="800" y="186" width="260" height="52" rx="26"/>
+  <text class="h" x="930" y="219" text-anchor="middle">Which verdict?</text>
+
+  <path class="flow-quiet" d="M800,212 L360,212 L360,268"/>
+  <text class="lbl-quiet" x="580" y="203" text-anchor="middle">3 of 4 verdicts end here</text>
+
+  <path class="flow" d="M1060,212 L1120,212 L1120,268"/>
+
+  <rect class="box-quiet" x="120" y="272" width="480" height="96" rx="8"/>
+  <text class="h" x="360" y="306" text-anchor="middle">Stays on the board</text>
+  <text class="s" x="360" y="330" text-anchor="middle">not_material · resolved_local · insufficient_data</text>
+  <text class="s" x="360" y="352" text-anchor="middle">stored with its numbers, nobody interrupted</text>
+
+  <rect class="box-accent" x="700" y="272" width="440" height="96" rx="8"/>
+  <text class="h" x="920" y="306" text-anchor="middle">You decide</text>
+  <text class="s" x="920" y="330" text-anchor="middle">material_unresolved: real, and it changes something</text>
+  <text class="s" x="920" y="352" text-anchor="middle">options ordered by cost — “nothing for now” is an answer</text>
+
+  <path class="flow" d="M700,320 L640,320 L640,412 L150,412 L150,140"/>
+  <text class="lbl" x="400" y="434" text-anchor="middle">your answer becomes the next signal</text>
+</svg>

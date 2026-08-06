@@ -1,0 +1,913 @@
+#!/usr/bin/env python3
+"""Domain-neutral analyses and signal scanning for the nora research engine.
+
+Every experiment nora runs leaves the same kind of trace: a JSONL journal of
+timestamped records, or a table in a local database. These analyses work on
+that trace and nothing else, so they apply equally to a canopy humidity series,
+a microphone event count, an NPU latency benchmark, or a soil probe.
+
+Each analysis answers one question and returns a finding with its method,
+sample, verdict, limitations and options. None of them decide anything; they
+report what the data can and cannot support.
+"""
+
+import datetime as dt
+import json
+import math
+import os
+import re
+import sqlite3
+import statistics
+from pathlib import Path
+
+import engine
+
+IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+MIN_SAMPLES = 12
+NEAR_CRITERION_FRACTION = 0.95
+LEVEL_SHIFT_MAD_MULTIPLE = 3.0
+GAP_INTERVAL_MULTIPLE = 3.0
+
+
+# ---------------------------------------------------------------------------
+# Reading evidence
+# ---------------------------------------------------------------------------
+
+def read_journal(path, max_lines=400, max_bytes=256 * 1024):
+    """Read the tail of a JSONL journal without loading the whole file."""
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - max_bytes))
+            data = handle.read(max_bytes)
+    except OSError:
+        return []
+    if size > max_bytes:
+        data = data.split(b"\n", 1)[-1]
+    records = []
+    for line in data.decode("utf-8", "replace").splitlines()[-int(max_lines):]:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            item = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(item, dict):
+            records.append(item)
+    return records
+
+
+def pluck(record, key):
+    """Read a dotted key path out of a nested record."""
+    current = record
+    for part in str(key).split("."):
+        if not isinstance(current, dict) or part not in current:
+            return None
+        current = current[part]
+    return current
+
+
+DEFAULT_TIME_KEYS = (
+    "timestamp", "time", "observed_at", "occurred_at", "notified_at", "day", "date",
+)
+
+
+def record_moment(record, time_key=None):
+    for key in ([time_key] if time_key else []) + list(DEFAULT_TIME_KEYS):
+        if not key:
+            continue
+        value = pluck(record, key)
+        moment = engine.parse_moment(value) if value is not None else None
+        if moment:
+            return moment
+        if value is not None:
+            day = str(value)[:10]
+            try:
+                return dt.datetime.fromisoformat(day).replace(tzinfo=dt.timezone.utc)
+            except ValueError:
+                continue
+    return None
+
+
+def read_sqlite(path, table, columns, time_column=None, limit=2000, where=None,
+                where_values=()):
+    """Read selected columns from a local table, with identifier validation."""
+    names = [name for name in ([time_column] if time_column else []) + list(columns) if name]
+    for name in [table] + names:
+        if not IDENTIFIER.match(str(name)):
+            raise ValueError(f"unsafe identifier: {name}")
+    if not Path(path).exists():
+        return []
+    connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    try:
+        available = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+        if not available:
+            return []
+        selected = [name for name in names if name in available]
+        if not selected:
+            return []
+        query = f"SELECT {', '.join(selected)} FROM {table}"
+        if where:
+            if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=\s*\?$", where.strip()):
+                raise ValueError(f"unsafe filter: {where}")
+            query += f" WHERE {where}"
+        if time_column and time_column in available:
+            query += f" ORDER BY {time_column}"
+        query += " LIMIT ?"
+        rows = connection.execute(query, list(where_values) + [int(limit)]).fetchall()
+    finally:
+        connection.close()
+    return [dict(row) for row in rows]
+
+
+def load_records(source, limits=None):
+    """Load records from a declared source: a JSONL journal or a local table."""
+    limits = limits or {}
+    kind = str((source or {}).get("kind") or "journal")
+    if kind == "journal":
+        return read_journal(
+            source.get("path"),
+            max_lines=int(source.get("max_lines") or limits.get("max_lines") or 400),
+        )
+    if kind == "sqlite":
+        return read_sqlite(
+            source.get("path"), source.get("table"), source.get("columns") or [],
+            time_column=source.get("time_column"), limit=int(source.get("limit") or 2000),
+            where=source.get("where"), where_values=source.get("where_values") or (),
+        )
+    if kind == "inline":
+        return list(source.get("records") or [])
+    raise ValueError(f"unsupported source kind: {kind}")
+
+
+def numeric_series(records, key, time_key=None):
+    """Return [(moment_or_None, value)] for one numeric key, in record order."""
+    series = []
+    for record in records:
+        value = engine.as_float(pluck(record, key))
+        if value is None:
+            continue
+        series.append((record_moment(record, time_key), value))
+    return series
+
+
+def source_label(source):
+    return str((source or {}).get("label") or (source or {}).get("path") or "source")
+
+
+def window_bounds(series):
+    moments = [moment for moment, _ in series if moment]
+    if not moments:
+        return None, None
+    return min(moments).isoformat(), max(moments).isoformat()
+
+
+def median(values):
+    return statistics.median(values) if values else 0.0
+
+
+def mad(values):
+    if not values:
+        return 0.0
+    centre = median(values)
+    return median([abs(value - centre) for value in values])
+
+
+def shift_test(values):
+    """Compare the two halves of a series against their own internal spread.
+
+    The spread has to be measured *within* each half. Taking it across the whole
+    series lets a real shift inflate the very threshold meant to detect it, and
+    the change disappears into its own evidence.
+    """
+    half = len(values) // 2
+    first, second = values[:half], values[half:]
+    if not first or not second:
+        return None
+    shift = median(second) - median(first)
+    spread = max(mad(first), mad(second))
+    if spread > 0:
+        threshold = LEVEL_SHIFT_MAD_MULTIPLE * spread
+        stable = False
+    else:
+        # Both halves are internally constant: any real step is a shift, but
+        # keep a relative floor so float noise does not become a discovery.
+        scale = max(abs(median(first)), abs(median(second)), 1e-9)
+        threshold = 0.05 * scale
+        stable = True
+    return {
+        "median_before": median(first),
+        "median_after": median(second),
+        "shift": shift,
+        "within_half_spread": spread,
+        "threshold": threshold,
+        "stable_halves": stable,
+        "significant": abs(shift) > threshold,
+    }
+
+
+def wall_test(values):
+    """Is the top of this series a wall, or just the top of its range?
+
+    A clipped channel piles up at its maximum: the top bucket holds far more
+    samples than the one below it. A counter that happens to reach its highest
+    value now and then has no such pile, and is not a finding.
+    """
+    if not values:
+        return None
+    top, bottom = max(values), min(values)
+    if top <= bottom:
+        return {"varies": False, "share": 1.0, "ratio": 0.0, "is_wall": False, "top": top}
+    epsilon = (top - bottom) * 1e-3
+    at_top = [value for value in values if value >= top - epsilon]
+    below = [value for value in values if value < top - epsilon]
+    second = max(below) if below else None
+    at_second = [value for value in below if value >= second - epsilon] if below else []
+    share = len(at_top) / len(values)
+    ratio = len(at_top) / max(1, len(at_second))
+    return {
+        "varies": True,
+        "top": top,
+        "share": share,
+        "ratio": ratio,
+        "samples_at_top": len(at_top),
+        "samples_at_next_level": len(at_second),
+        # The pile-up ratio is what separates clipping from an ordinary maximum;
+        # the share and count only keep a single stray sample from qualifying.
+        "is_wall": ratio >= 3.0 and share >= 0.05 and len(at_top) >= 3,
+    }
+
+
+def base_finding(ctx, analysis, claim, method, series_length, source, limitations,
+                 window=(None, None)):
+    return {
+        "subject": ctx.get("subject") or (ctx.get("question") or {}).get("subject") or "board",
+        "analysis": analysis,
+        "claim": claim,
+        "method": method,
+        "sample_size": series_length,
+        "window_start": window[0],
+        "window_end": window[1],
+        "limitations": limitations,
+        "evidence": [{"source": source_label(source)}],
+        "options": [],
+        "metrics": {},
+    }
+
+
+# ---------------------------------------------------------------------------
+# Analyses
+# ---------------------------------------------------------------------------
+
+def threshold_materiality(ctx):
+    """Does the uncertainty between a conservative and an upper-bound estimate
+    ever cross a decision threshold, and was it resolved anyway?
+
+    Many edge models carry two versions of the same quantity: what the evidence
+    confirms, and what it could be if an unmeasured input were at its worst.
+    The interesting question is never "are they different" but "did the
+    difference ever change what someone would do".
+    """
+    params = ctx.get("params") or {}
+    source = params.get("source") or {}
+    records = load_records(source, ctx.get("limits"))
+    lower_key = params.get("lower_key")
+    upper_key = params.get("upper_key")
+    threshold = engine.as_float(params.get("threshold"))
+    if threshold is None or not lower_key or not upper_key:
+        raise ValueError("threshold_materiality needs lower_key, upper_key and threshold")
+    time_key = params.get("time_key")
+    tolerance = int(params.get("coverage_tolerance") or 2)
+    resolved_key = params.get("resolved_key")
+
+    rows = []
+    for record in records:
+        lower = engine.as_float(pluck(record, lower_key))
+        upper = engine.as_float(pluck(record, upper_key))
+        if lower is None or upper is None:
+            continue
+        rows.append({
+            "moment": record_moment(record, time_key),
+            "lower": lower,
+            "upper": upper,
+            "resolved": bool(pluck(record, resolved_key)) if resolved_key else False,
+        })
+    series = [(row["moment"], row["lower"]) for row in rows]
+    limitations = [
+        "The upper bound is a worst-case construction, not a measurement.",
+        "This bounds the effect of the missing input; it does not supply it.",
+    ]
+    finding = base_finding(
+        ctx, "threshold_materiality",
+        ctx.get("claim") or "the unmeasured input changes a decision",
+        f"Compared {lower_key} against {upper_key} around threshold {threshold:g} "
+        f"over {len(rows)} records, then checked whether each ambiguous point was "
+        f"already covered by a confirmed crossing within {tolerance} steps.",
+        len(rows), source, limitations, window_bounds(series),
+    )
+    if len(rows) < MIN_SAMPLES:
+        finding.update({
+            "verdict": engine.VERDICT_INSUFFICIENT, "confidence": 0.2,
+            "metrics": {"records": len(rows), "minimum": MIN_SAMPLES},
+            "headline": {"records": len(rows)},
+        })
+        return finding
+
+    crossing_indexes = [
+        index for index, row in enumerate(rows) if row["lower"] >= threshold
+    ]
+    ambiguous = [
+        index for index, row in enumerate(rows)
+        if row["lower"] < threshold <= row["upper"]
+    ]
+    covered = [
+        index for index in ambiguous
+        if any(abs(index - other) <= tolerance for other in crossing_indexes)
+    ]
+    unresolved = [index for index in ambiguous if index not in covered]
+    if any(row["resolved"] for row in rows):
+        unresolved = [index for index in unresolved if not rows[index]["resolved"]]
+    max_upper = max((rows[index]["upper"] for index in unresolved), default=0.0)
+    max_lower = max((rows[index]["lower"] for index in unresolved), default=0.0)
+    finding["metrics"] = {
+        "records": len(rows),
+        "threshold": threshold,
+        "confirmed_crossings": len(crossing_indexes),
+        "ambiguous_points": len(ambiguous),
+        "ambiguous_covered_by_confirmed_crossing": len(covered),
+        "unresolved_points": len(unresolved),
+        "unresolved_at": [
+            rows[index]["moment"].date().isoformat() if rows[index]["moment"] else index
+            for index in unresolved[:10]
+        ],
+        "max_upper_bound": round(max_upper, 2),
+        "max_confirmed_on_unresolved": round(max_lower, 2),
+    }
+    if not ambiguous:
+        finding.update({
+            "verdict": engine.VERDICT_NOT_MATERIAL, "confidence": 0.8,
+            "headline": {"ambiguous": 0},
+        })
+        return finding
+    if not unresolved:
+        finding.update({
+            "verdict": engine.VERDICT_NOT_MATERIAL, "confidence": 0.8,
+            "headline": {"ambiguous": len(ambiguous), "unresolved": 0},
+        })
+        return finding
+    finding.update({
+        "verdict": engine.VERDICT_MATERIAL,
+        "confidence": min(0.9, 0.4 + 0.1 * len(unresolved)),
+        "headline": {"unresolved": len(unresolved)},
+        "open_question": params.get("open_question")
+        or f"whether {upper_key} reflects reality on the {len(unresolved)} unresolved points",
+        "options": params.get("options") or [
+            {"id": "observe_at_next_event", "cost": "none", "params": {}},
+        ],
+    })
+    return finding
+
+
+def ceiling_saturation(ctx):
+    """Is a channel pinned at a bound, or never reaching a criterion it approaches?
+
+    A sensor clipped at its range and a criterion that a site can never satisfy
+    look identical in a report and mean opposite things. Both are worth knowing
+    before anyone trusts a threshold built on that channel.
+    """
+    params = ctx.get("params") or {}
+    source = params.get("source") or {}
+    key = params.get("key")
+    if not key:
+        raise ValueError("ceiling_saturation needs a key")
+    records = load_records(source, ctx.get("limits"))
+    series = numeric_series(records, key, params.get("time_key"))
+    values = [value for _, value in series]
+    criterion = engine.as_float(params.get("criterion"))
+    limitations = [
+        "A channel that never reaches a criterion may reflect the site, the sensor, or the criterion.",
+        "This analysis cannot distinguish a calibration fault from a real absence.",
+    ]
+    finding = base_finding(
+        ctx, "ceiling_saturation",
+        ctx.get("claim") or f"{key} never reaches its criterion",
+        f"Reviewed {len(values)} values of {key}"
+        + (f" against criterion {criterion:g}." if criterion is not None else " for a pinned upper bound."),
+        len(values), source, limitations, window_bounds(series),
+    )
+    if len(values) < MIN_SAMPLES:
+        finding.update({
+            "verdict": engine.VERDICT_INSUFFICIENT, "confidence": 0.2,
+            "metrics": {"samples": len(values), "minimum": MIN_SAMPLES},
+            "headline": {"samples": len(values)},
+        })
+        return finding
+    observed_max = max(values)
+    if criterion is None:
+        wall = wall_test(values) or {}
+        finding["metrics"] = {
+            "samples": len(values), "observed_max": round(observed_max, 4),
+            "samples_at_top": wall.get("samples_at_top", 0),
+            "samples_at_next_level": wall.get("samples_at_next_level", 0),
+            "top_share": round(wall.get("share", 0.0), 3),
+            "top_to_next_ratio": round(wall.get("ratio", 0.0), 2),
+        }
+        material = bool(wall.get("is_wall"))
+        if not wall.get("varies"):
+            finding["metrics"]["reason"] = (
+                "the channel does not vary; this is a constant, not a range limit"
+            )
+        elif not material:
+            finding["metrics"]["reason"] = (
+                "the top value is the top of a range, not a pile-up against a limit"
+            )
+        finding.update({
+            "verdict": engine.VERDICT_MATERIAL if material else engine.VERDICT_NOT_MATERIAL,
+            "confidence": 0.6,
+            "headline": {"wall": material},
+            "open_question": "whether the channel is clipping at its range" if material else None,
+            "options": (params.get("options") or [
+                {"id": "check_source", "cost": "none", "params": {}},
+                {"id": "compare_second_source", "cost": "none", "params": {}},
+            ]) if material else [],
+        })
+        return finding
+    reached = [value for value in values if value >= criterion]
+    approached = [
+        value for value in values
+        if criterion * NEAR_CRITERION_FRACTION <= value < criterion
+    ]
+    finding["metrics"] = {
+        "samples": len(values),
+        "criterion": criterion,
+        "samples_at_or_above_criterion": len(reached),
+        "samples_approaching_criterion": len(approached),
+        "observed_max": round(observed_max, 4),
+    }
+    if reached:
+        finding.update({
+            "verdict": engine.VERDICT_NOT_MATERIAL, "confidence": 0.8,
+            "headline": {"reached": len(reached)},
+        })
+        return finding
+    if not approached:
+        finding.update({
+            "verdict": engine.VERDICT_NOT_MATERIAL, "confidence": 0.6,
+            "headline": {"reached": 0, "approached": 0},
+        })
+        return finding
+    finding.update({
+        "verdict": engine.VERDICT_MATERIAL, "confidence": 0.7,
+        "headline": {"reached": 0, "approached": len(approached)},
+        "open_question": params.get("open_question")
+        or f"whether the {criterion:g} criterion is reachable at this site at all",
+        "options": params.get("options") or [
+            {"id": "compare_second_source", "cost": "none", "params": {}},
+        ],
+    })
+    return finding
+
+
+def source_disagreement(ctx):
+    """Do two sources that should agree actually agree?
+
+    Used for a second station, a neighbouring board, a redundant sensor, or a
+    model against a reference. Disagreement is reported as a rate and a
+    magnitude, never as a claim about which source is right.
+    """
+    params = ctx.get("params") or {}
+    primary = params.get("primary") or {}
+    reference = params.get("reference") or {}
+    key = params.get("key")
+    reference_key = params.get("reference_key") or key
+    tolerance = engine.as_float(params.get("tolerance"), 0.0)
+    primary_records = load_records(primary, ctx.get("limits"))
+    reference_records = load_records(reference, ctx.get("limits"))
+    time_key = params.get("time_key")
+
+    def by_day(records, value_key):
+        buckets = {}
+        for record in records:
+            value = engine.as_float(pluck(record, value_key))
+            moment = record_moment(record, time_key)
+            if value is None or not moment:
+                continue
+            buckets.setdefault(moment.date().isoformat(), []).append(value)
+        return {day: median(values) for day, values in buckets.items()}
+
+    left = by_day(primary_records, key)
+    right = by_day(reference_records, reference_key)
+    shared = sorted(set(left) & set(right))
+    limitations = [
+        "Agreement between two sources does not make either one correct.",
+        "Only overlapping periods are compared.",
+    ]
+    finding = base_finding(
+        ctx, "source_disagreement",
+        ctx.get("claim") or "two sources disagree beyond tolerance",
+        f"Compared {source_label(primary)} against {source_label(reference)} on "
+        f"{len(shared)} shared periods with tolerance {tolerance:g}.",
+        len(shared), primary, limitations,
+        (shared[0], shared[-1]) if shared else (None, None),
+    )
+    if len(shared) < max(3, MIN_SAMPLES // 3):
+        finding.update({
+            "verdict": engine.VERDICT_INSUFFICIENT, "confidence": 0.2,
+            "metrics": {"shared_periods": len(shared)},
+            "headline": {"shared": len(shared)},
+        })
+        return finding
+    differences = [left[day] - right[day] for day in shared]
+    exceeding = [day for day, delta in zip(shared, differences) if abs(delta) > tolerance]
+    finding["metrics"] = {
+        "shared_periods": len(shared),
+        "tolerance": tolerance,
+        "periods_beyond_tolerance": len(exceeding),
+        "median_difference": round(median(differences), 4),
+        "max_difference": round(max(differences, key=abs), 4),
+        "first_beyond": exceeding[0] if exceeding else None,
+    }
+    share = len(exceeding) / len(shared)
+    if share < float(params.get("disagreement_share_limit") or 0.2):
+        finding.update({
+            "verdict": engine.VERDICT_NOT_MATERIAL, "confidence": 0.7,
+            "headline": {"share": round(share, 2)},
+        })
+        return finding
+    finding.update({
+        "verdict": engine.VERDICT_MATERIAL, "confidence": 0.7,
+        "headline": {"share": round(share, 2)},
+        "open_question": params.get("open_question")
+        or "which of the two sources reflects this site",
+        "options": params.get("options") or [
+            {"id": "observe_at_next_event", "cost": "none", "params": {}},
+        ],
+    })
+    return finding
+
+
+def outcome_calibration(ctx):
+    """Do the board's own alerts match the outcomes that came back?
+
+    This is how the agent audits itself. A run of negative outcomes is a result
+    about the alerting threshold, and the correction it justifies is fewer
+    interruptions, not a louder alarm.
+    """
+    params = ctx.get("params") or {}
+    alerts = load_records(params.get("alerts") or {}, ctx.get("limits"))
+    outcomes = load_records(params.get("outcomes") or {}, ctx.get("limits"))
+    time_key = params.get("time_key")
+    # Alerts and outcomes usually come from different tables, and therefore from
+    # different timestamp columns.
+    outcome_time_key = params.get("outcome_time_key") or time_key
+    outcome_key = params.get("outcome_key") or "outcome"
+    positive = {str(value).lower() for value in (params.get("positive_labels") or [])}
+    negative = {str(value).lower() for value in (params.get("negative_labels") or [])}
+    response_days = float(params.get("response_days") or 7)
+
+    alert_moments = sorted(
+        moment for moment in (record_moment(record, time_key) for record in alerts) if moment
+    )
+    labelled = []
+    for record in outcomes:
+        moment = record_moment(record, outcome_time_key)
+        label = str(pluck(record, outcome_key) or "").lower()
+        if not moment or not label:
+            continue
+        if label in positive:
+            labelled.append((moment, "positive"))
+        elif label in negative:
+            labelled.append((moment, "negative"))
+    labelled.sort()
+
+    used = set()
+    matched = {"positive": 0, "negative": 0}
+    for sent in alert_moments:
+        for index, (moment, label) in enumerate(labelled):
+            if index in used or moment < sent:
+                continue
+            if (moment - sent).days > response_days:
+                continue
+            used.add(index)
+            matched[label] += 1
+            break
+    answered = matched["positive"] + matched["negative"]
+    limitations = [
+        "An unanswered alert counts as neither a hit nor a miss.",
+        "A negative outcome calibrates this subject on that date only.",
+    ]
+    finding = base_finding(
+        ctx, "outcome_calibration",
+        ctx.get("claim") or "the alerting threshold is not earning its interruptions",
+        f"Matched {len(alert_moments)} alerts against confirmed outcomes recorded "
+        f"within {response_days:g} days.",
+        answered, params.get("alerts") or {}, limitations,
+        (
+            alert_moments[0].isoformat() if alert_moments else None,
+            alert_moments[-1].isoformat() if alert_moments else None,
+        ),
+    )
+    finding["metrics"] = {
+        "alerts_sent": len(alert_moments),
+        "alerts_answered": answered,
+        "confirmed": matched["positive"],
+        "negative": matched["negative"],
+        "response_days": response_days,
+    }
+    minimum = int(params.get("min_labels") or 4)
+    if answered < minimum:
+        finding.update({
+            "verdict": engine.VERDICT_INSUFFICIENT, "confidence": 0.2,
+            "headline": {"answered": answered},
+        })
+        return finding
+    if matched["positive"] == 0:
+        finding.update({
+            "verdict": engine.VERDICT_MATERIAL,
+            "confidence": min(0.9, 0.5 + 0.05 * matched["negative"]),
+            "headline": {"answered": answered, "confirmed": 0},
+            "open_question": params.get("open_question")
+            or "how many alerts this subject should produce",
+            "options": params.get("options") or [
+                {"id": "raise_alert_threshold", "cost": "none", "params": {}},
+                {"id": "keep_alert_threshold", "cost": "none", "params": {}},
+            ],
+        })
+        return finding
+    finding.update({
+        "verdict": engine.VERDICT_NOT_MATERIAL, "confidence": 0.6,
+        "headline": {"answered": answered, "confirmed": matched["positive"]},
+    })
+    return finding
+
+
+def data_gap(ctx):
+    """Did a source stop reporting, or thin out?
+
+    Silence is the failure mode an unattended board is least likely to notice
+    and most likely to misread as a quiet field.
+    """
+    params = ctx.get("params") or {}
+    source = params.get("source") or {}
+    records = load_records(source, ctx.get("limits"))
+    moments = sorted(
+        moment for moment in
+        (record_moment(record, params.get("time_key")) for record in records)
+        if moment
+    )
+    limitations = [
+        "A gap in the journal may be a stopped sensor, a stopped task, or a cleared file.",
+    ]
+    finding = base_finding(
+        ctx, "data_gap", ctx.get("claim") or "a source stopped reporting",
+        f"Checked {len(moments)} timestamps for interval growth and a stale tail.",
+        len(moments), source, limitations,
+        (moments[0].isoformat(), moments[-1].isoformat()) if moments else (None, None),
+    )
+    if len(moments) < 3:
+        finding.update({
+            "verdict": engine.VERDICT_INSUFFICIENT, "confidence": 0.2,
+            "metrics": {"records": len(moments)},
+            "headline": {"records": len(moments)},
+        })
+        return finding
+    intervals = [
+        (later - earlier).total_seconds()
+        for earlier, later in zip(moments, moments[1:])
+        if (later - earlier).total_seconds() > 0
+    ]
+    typical = median(intervals) if intervals else 0.0
+    now = ctx.get("now") or engine.utcnow()
+    silence = (now - moments[-1]).total_seconds()
+    expected = engine.as_float(params.get("expected_interval_seconds"), typical) or typical
+    finding["metrics"] = {
+        "records": len(moments),
+        "typical_interval_seconds": round(typical, 1),
+        "expected_interval_seconds": round(expected, 1),
+        "seconds_since_last_record": round(silence, 1),
+        "last_record_at": moments[-1].isoformat(),
+    }
+    if expected <= 0 or silence <= expected * GAP_INTERVAL_MULTIPLE:
+        finding.update({
+            "verdict": engine.VERDICT_NOT_MATERIAL, "confidence": 0.7,
+            "headline": {"stale": False},
+        })
+        return finding
+    finding.update({
+        "verdict": engine.VERDICT_MATERIAL, "confidence": 0.8,
+        "headline": {"stale": True},
+        "open_question": params.get("open_question")
+        or "whether the source stopped, or the experiment ended",
+        "options": params.get("options") or [
+            {"id": "check_source", "cost": "none", "params": {}},
+        ],
+    })
+    return finding
+
+
+def level_shift(ctx):
+    """Did the level of a series change, beyond its own noise?
+
+    Robust to outliers by construction: medians and median absolute deviation,
+    so one bad frame or one dropped packet does not become a discovery.
+    """
+    params = ctx.get("params") or {}
+    source = params.get("source") or {}
+    key = params.get("key")
+    if not key:
+        raise ValueError("level_shift needs a key")
+    records = load_records(source, ctx.get("limits"))
+    series = numeric_series(records, key, params.get("time_key"))
+    values = [value for _, value in series]
+    limitations = [
+        "A level shift is a change in the record, not an explanation for it.",
+        "Concurrent changes in setup, weather or firmware are not controlled here.",
+    ]
+    finding = base_finding(
+        ctx, "level_shift", ctx.get("claim") or f"the level of {key} changed",
+        f"Compared the median of the first and second half of {len(values)} values of {key} "
+        f"against {LEVEL_SHIFT_MAD_MULTIPLE:g} times the within-half median absolute deviation.",
+        len(values), source, limitations, window_bounds(series),
+    )
+    if len(values) < MIN_SAMPLES:
+        finding.update({
+            "verdict": engine.VERDICT_INSUFFICIENT, "confidence": 0.2,
+            "metrics": {"samples": len(values), "minimum": MIN_SAMPLES},
+            "headline": {"samples": len(values)},
+        })
+        return finding
+    test = shift_test(values)
+    finding["metrics"] = {
+        "samples": len(values),
+        "median_before": round(test["median_before"], 4),
+        "median_after": round(test["median_after"], 4),
+        "shift": round(test["shift"], 4),
+        "within_half_deviation": round(test["within_half_spread"], 6),
+        "shift_threshold": round(test["threshold"], 6),
+        "stable_halves": test["stable_halves"],
+    }
+    if not test["significant"]:
+        finding.update({
+            "verdict": engine.VERDICT_NOT_MATERIAL, "confidence": 0.6,
+            "headline": {"shifted": False},
+        })
+        return finding
+    finding.update({
+        "verdict": engine.VERDICT_MATERIAL, "confidence": 0.7,
+        "headline": {
+            "shifted": True, "direction": "up" if test["shift"] > 0 else "down",
+        },
+        "open_question": params.get("open_question")
+        or f"what changed around the middle of the {key} record",
+        "options": params.get("options") or [
+            {"id": "confirm_context_change", "cost": "none", "params": {}},
+        ],
+    })
+    return finding
+
+
+BUILTIN_ANALYSES = {
+    "threshold_materiality": threshold_materiality,
+    "ceiling_saturation": ceiling_saturation,
+    "source_disagreement": source_disagreement,
+    "outcome_calibration": outcome_calibration,
+    "data_gap": data_gap,
+    "level_shift": level_shift,
+}
+
+
+# ---------------------------------------------------------------------------
+# Scanning: turning signals and feedback into questions
+# ---------------------------------------------------------------------------
+
+def numeric_keys(records, limit=8):
+    """Numeric leaf keys that appear in most records, cheapest first."""
+    counts = {}
+    for record in records:
+        for key, value in record.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            counts[key] = counts.get(key, 0) + 1
+        for key, value in record.items():
+            if not isinstance(value, dict):
+                continue
+            for nested, inner in value.items():
+                if isinstance(inner, bool) or not isinstance(inner, (int, float)):
+                    continue
+                counts[f"{key}.{nested}"] = counts.get(f"{key}.{nested}", 0) + 1
+    threshold = max(2, len(records) // 2)
+    ranked = sorted(
+        (key for key, count in counts.items() if count >= threshold),
+        key=lambda key: (-counts[key], key),
+    )
+    return ranked[:limit]
+
+
+def journal_paths(directories, limit=12):
+    paths = []
+    for directory in directories or []:
+        base = Path(directory)
+        if base.is_file():
+            paths.append(base)
+            continue
+        if not base.is_dir():
+            continue
+        for path in sorted(base.glob("*.jsonl")):
+            paths.append(path)
+            if len(paths) >= limit:
+                return paths
+    return paths[:limit]
+
+
+def scan_journals(connection, context, limits=None):
+    """Raise questions from monitor journals the board already writes.
+
+    The scan is deliberately shallow: it looks for the shapes worth a closer
+    look and hands them to an analysis. It never concludes anything itself.
+    """
+    limits = dict(engine.DEFAULT_BUDGET, **(limits or {}))
+    raised = []
+    for path in journal_paths(context.get("journal_dirs"), int(limits["max_files"])):
+        records = read_journal(path, max_lines=int(limits["max_lines"]))
+        if len(records) < 3:
+            continue
+        subject = path.stem
+        source = {"kind": "journal", "path": str(path), "label": path.name}
+        moments = sorted(
+            moment for moment in (record_moment(record) for record in records) if moment
+        )
+        if len(moments) >= 3:
+            intervals = [
+                (later - earlier).total_seconds()
+                for earlier, later in zip(moments, moments[1:])
+                if (later - earlier).total_seconds() > 0
+            ]
+            typical = median(intervals) if intervals else 0.0
+            now = context.get("now") or engine.utcnow()
+            if typical > 0 and (now - moments[-1]).total_seconds() > typical * GAP_INTERVAL_MULTIPLE:
+                raised.append(engine.open_question(
+                    connection, subject,
+                    f"{path.name} stopped reporting at its usual interval",
+                    "data_gap", {"source": source}, source=engine.SOURCE_SIGNAL,
+                    origin=str(path), priority=70,
+                ))
+        for key in numeric_keys(records):
+            values = [value for _, value in numeric_series(records, key)]
+            if len(values) < MIN_SAMPLES or mad(values) <= 0:
+                # A channel that never moves carries no question worth an analysis.
+                continue
+            test = shift_test(values)
+            if test and test["significant"]:
+                raised.append(engine.open_question(
+                    connection, subject,
+                    f"the level of {key} changed during the recorded window",
+                    "level_shift", {"source": source, "key": key},
+                    source=engine.SOURCE_SIGNAL, origin=str(path), priority=60,
+                ))
+                continue
+            wall = wall_test(values)
+            if wall and wall["is_wall"]:
+                raised.append(engine.open_question(
+                    connection, subject,
+                    f"{key} piles up against {wall['top']:g} instead of passing it",
+                    "ceiling_saturation", {"source": source, "key": key},
+                    source=engine.SOURCE_SIGNAL, origin=str(path), priority=55,
+                ))
+    return raised
+
+
+def scan_feedback(connection, context, limits=None):
+    """Raise questions from what the human said about earlier findings.
+
+    Two refusals on the same subject are not stubbornness; they are evidence
+    that the board is asking the wrong question or asking it too often.
+    """
+    rows = connection.execute(
+        """
+        SELECT f.subject AS subject, f.analysis AS analysis, COUNT(*) AS declines
+        FROM decisions d JOIN findings f ON f.id = d.finding_id
+        WHERE d.decision IN ('rejected','corrected')
+        GROUP BY f.subject, f.analysis
+        HAVING COUNT(*) >= 2
+        """
+    ).fetchall()
+    raised = []
+    for row in rows:
+        calibration = (context.get("calibration_sources") or {}).get(row["subject"])
+        if not calibration:
+            continue
+        raised.append(engine.open_question(
+            connection, row["subject"],
+            f"my {row['analysis']} reports are being declined; the reporting threshold may be wrong",
+            "outcome_calibration", calibration,
+            source=engine.SOURCE_FEEDBACK,
+            origin=f"declines:{row['declines']}", priority=65,
+        ))
+    return raised
+
+
+BUILTIN_SCANNERS = (scan_journals, scan_feedback)

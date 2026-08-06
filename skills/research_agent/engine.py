@@ -64,6 +64,16 @@ DEFAULT_BUDGET = {
     "min_interval_seconds": 6 * 3600,
 }
 
+# When nothing has changed, a cycle still runs occasionally, because some
+# conclusions depend on the clock rather than on new data: a source that
+# stopped reporting looks healthier the less often you check.
+IDLE_RECHECK_SECONDS = 6 * 3600
+
+# Metrics that move with the clock alone. A finding whose only difference is one
+# of these has not changed its mind, and rewriting the row would be wear
+# without information.
+VOLATILE_METRIC_KEYS = frozenset({"seconds_since_last_record"})
+
 
 def utcnow():
     return dt.datetime.now(dt.timezone.utc)
@@ -196,6 +206,56 @@ def connect(state_dir):
     return connection
 
 
+def meta_get(connection, key, default=None):
+    row = connection.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def meta_set(connection, key, value):
+    connection.execute(
+        "INSERT INTO meta(key, value) VALUES(?,?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (key, str(value)),
+    )
+    connection.commit()
+
+
+def evidence_signature(paths, extra=None):
+    """A cheap fingerprint of everything a cycle would read.
+
+    Stat calls only: the point is to decide whether to open the files at all.
+    """
+    parts = []
+    for path in sorted(str(item) for item in paths or []):
+        try:
+            info = os.stat(path)
+        except OSError:
+            parts.append([path, None])
+            continue
+        parts.append([path, int(info.st_mtime_ns), int(info.st_size)])
+    return digest({"paths": parts, "extra": extra or {}})
+
+
+def cycle_needed(connection, signature, idle_recheck_seconds=IDLE_RECHECK_SECONDS,
+                 now=None):
+    """Decide whether this cycle has anything to do, without writing anything.
+
+    A board with nothing new to read should cost nothing to run. Flash memory
+    is the scarcest thing on it, and a conclusion restated hourly is not a
+    second discovery.
+    """
+    moment = now or utcnow()
+    stored = meta_get(connection, "evidence_signature")
+    if stored != signature:
+        return True, "evidence changed since the last cycle"
+    last = parse_moment(meta_get(connection, "last_cycle_at"))
+    if last is None:
+        return True, "no previous cycle"
+    if (moment - last).total_seconds() >= float(idle_recheck_seconds):
+        return True, "idle recheck: some conclusions depend on elapsed time"
+    return False, "no new evidence since the last cycle"
+
+
 def row_dict(row, json_columns=()):
     item = dict(row)
     for column, key in json_columns:
@@ -254,8 +314,18 @@ def open_question(connection, subject, claim, analysis, params=None, source=SOUR
         "params": normalize_params(params),
     })
     known = connection.execute(
-        "SELECT id FROM questions WHERE fingerprint=?", (fingerprint,)
+        "SELECT * FROM questions WHERE fingerprint=?", (fingerprint,)
     ).fetchone()
+    if known is not None and (
+        known["claim"] == claim
+        and known["priority"] >= int(priority)
+        and known["status"] != QUESTION_CLOSED
+    ):
+        # Raising a question the board already holds is not news, and rewriting
+        # the row to say so is pure wear.
+        item = question_dict(known)
+        item["created"] = False
+        return item
     connection.execute(
         """
         INSERT INTO questions(
@@ -331,8 +401,44 @@ def mark_question(connection, question_id, status=None, ran=False):
     connection.commit()
 
 
+def stable_metrics(metrics):
+    """Metrics with the clock-driven ones removed, for change detection."""
+    if not isinstance(metrics, dict):
+        return {}
+    return {
+        key: value for key, value in metrics.items()
+        if key not in VOLATILE_METRIC_KEYS
+    }
+
+
+def finding_changed(existing, finding):
+    """Has anything worth a write actually changed?"""
+    try:
+        stored_metrics = json.loads(existing["metrics_json"])
+    except (TypeError, ValueError):
+        stored_metrics = {}
+    if stable_metrics(stored_metrics) != stable_metrics(finding.get("metrics") or {}):
+        return True
+    if (existing["window_start"], existing["window_end"]) != (
+        finding.get("window_start"), finding.get("window_end")
+    ):
+        return True
+    if int(existing["sample_size"] or 0) != int(finding.get("sample_size") or 0):
+        return True
+    if (existing["open_question"] or None) != (finding.get("open_question") or None):
+        return True
+    for column, key in (("options_json", "options"), ("limitations_json", "limitations")):
+        try:
+            stored = json.loads(existing[column])
+        except (TypeError, ValueError):
+            stored = []
+        if stored != (finding.get(key) or []):
+            return True
+    return False
+
+
 def store_finding(connection, finding):
-    """Store a finding, refreshing the window when the conclusion is unchanged."""
+    """Store a finding, and leave the row untouched when nothing changed."""
     now = iso_now()
     fingerprint = digest({
         "subject": finding.get("subject"),
@@ -356,8 +462,15 @@ def store_finding(connection, finding):
         finding.get("open_question"),
     )
     existing = connection.execute(
-        "SELECT id FROM findings WHERE fingerprint=?", (fingerprint,)
+        "SELECT * FROM findings WHERE fingerprint=?", (fingerprint,)
     ).fetchone()
+    if existing and not finding_changed(existing, finding):
+        # Same conclusion, same evidence window, same numbers that mean
+        # anything. Leave the row alone.
+        record = finding_dict(existing)
+        record["created"] = False
+        record["changed"] = False
+        return record
     if existing:
         connection.execute(
             """
@@ -375,6 +488,7 @@ def store_finding(connection, finding):
         ).fetchone()
         record = finding_dict(row)
         record["created"] = False
+        record["changed"] = True
         return record
     connection.execute(
         """
@@ -393,6 +507,7 @@ def store_finding(connection, finding):
     ).fetchone()
     record = finding_dict(row)
     record["created"] = True
+    record["changed"] = True
     return record
 
 
@@ -426,6 +541,47 @@ def mark_finding(connection, finding_id, status):
         (status, iso_now(), int(finding_id)),
     )
     connection.commit()
+
+
+DEEPER_ANALYSIS_OPTION = "deeper_analysis"
+DEEPER_ANALYSIS_FACTOR = 4
+
+
+def widen_question(connection, question, factor=DEEPER_ANALYSIS_FACTOR):
+    """Open the same question again over a wider window.
+
+    This is what the board does when a person accepts its offer to look
+    further: same analysis, more evidence, its own time. It is a new question
+    rather than a mutation of the old one, so the narrow conclusion and the
+    wide one stay separately auditable.
+    """
+    params = json.loads(json.dumps(question.get("params") or {}))
+    source = params.get("source")
+    widened = False
+    for holder in [source] + [
+        params.get(key) for key in ("primary", "reference", "alerts", "outcomes")
+    ]:
+        if not isinstance(holder, dict):
+            continue
+        if holder.get("kind") == "sqlite":
+            holder["limit"] = int(holder.get("limit") or 2000) * factor
+            widened = True
+        else:
+            holder["max_lines"] = int(holder.get("max_lines") or 400) * factor
+            widened = True
+    if not widened:
+        return None
+    params["depth"] = "extended"
+    return open_question(
+        connection,
+        question["subject"],
+        f"{question['claim']} (over a wider window)",
+        question["analysis"],
+        params,
+        source=SOURCE_OPERATOR,
+        origin=f"deeper_analysis:{question['id']}",
+        priority=min(100, int(question.get("priority") or 50) + 10),
+    )
 
 
 def record_external_decision(connection, subject, analysis, decision, option_id=None,
@@ -473,14 +629,28 @@ def record_decision(connection, finding_id, decision, option_id=None, note=None,
         "UPDATE findings SET status=?, updated_at=? WHERE id=?",
         (status, now, finding["id"]),
     )
+    follow_up = None
     if finding.get("question_id") and decision in {"accepted", "rejected"}:
         connection.execute(
             "UPDATE questions SET status=?, updated_at=? WHERE id=?",
             (QUESTION_ANSWERED if decision == "accepted" else QUESTION_CLOSED,
              now, finding["question_id"]),
         )
+        if decision == "accepted" and option_id == DEEPER_ANALYSIS_OPTION:
+            row = connection.execute(
+                "SELECT * FROM questions WHERE id=?", (finding["question_id"],)
+            ).fetchone()
+            if row:
+                follow_up = widen_question(connection, question_dict(row))
     connection.commit()
-    return finding_by_id(connection, finding["id"])
+    record = finding_by_id(connection, finding["id"])
+    if record is not None and follow_up:
+        record["follow_up_question"] = {
+            "id": follow_up.get("id"),
+            "claim": follow_up.get("claim"),
+            "analysis": follow_up.get("analysis"),
+        }
+    return record
 
 
 # ---------------------------------------------------------------------------
@@ -633,9 +803,16 @@ def pack_context(pack, base_context):
 # Cycle
 # ---------------------------------------------------------------------------
 
-def journal_finding(journal_path, finding):
-    """Append a finding to the nora evidence journal in executor format."""
+def journal_finding(journal_path, finding, only_when_changed=True):
+    """Append a finding to the nora evidence journal in executor format.
+
+    A conclusion restated every hour is not a second discovery, and the journal
+    lives on the same flash card as everything else, so an unchanged finding is
+    not written again.
+    """
     if not journal_path:
+        return False
+    if only_when_changed and finding.get("changed") is False:
         return False
     entry = {
         "id": f"research-{finding.get('id')}",
@@ -708,14 +885,27 @@ def run_question(connection, question, registry, context):
     return record
 
 
-def cycle(connection, registry, context, budget=None, scanners=(), journal_path=None):
+def cycle(connection, registry, context, budget=None, scanners=(), journal_path=None,
+          signature=None, idle_recheck_seconds=IDLE_RECHECK_SECONDS):
     """One idle research cycle: look for questions, then answer a few.
 
     The cycle is budgeted in questions and wall-clock seconds so that it can be
-    scheduled often on a board whose real job is sampling.
+    scheduled often on a board whose real job is sampling. When the evidence has
+    not changed it returns immediately, having written nothing: an hourly
+    schedule on a quiet board should cost no flash at all.
     """
     limits = dict(DEFAULT_BUDGET)
     limits.update(budget or {})
+    if signature is not None:
+        needed, reason = cycle_needed(
+            connection, signature, idle_recheck_seconds, context.get("now"),
+        )
+        if not needed:
+            return {
+                "skipped": True, "reason": reason, "raised": [], "seen": 0,
+                "investigated": [], "reportable": [], "elapsed_seconds": 0.0,
+                "budget": limits, "wrote": False,
+            }
     started = time.monotonic()
     raised = []
     for scanner in scanners:
@@ -740,6 +930,9 @@ def cycle(connection, registry, context, budget=None, scanners=(), journal_path=
             reportable.append(record)
         if record.get("id"):
             journal_finding(journal_path, record)
+    if signature is not None:
+        meta_set(connection, "evidence_signature", signature)
+        meta_set(connection, "last_cycle_at", iso_now())
     return {
         # Only genuinely new questions are news. A scan that recognises the same
         # shape again has raised nothing.
@@ -752,6 +945,7 @@ def cycle(connection, registry, context, budget=None, scanners=(), journal_path=
         "reportable": reportable,
         "elapsed_seconds": round(time.monotonic() - started, 3),
         "budget": limits,
+        "skipped": False,
     }
 
 

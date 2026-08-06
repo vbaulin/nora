@@ -350,6 +350,159 @@ class AdapterFeedbackTest(ResearchTestCase):
         self.assertEqual(ANALYSES.scan_feedback(connection, context), [])
 
 
+class QuietBoardTest(ResearchTestCase):
+    """Flash is the scarcest thing on the board. A quiet hour must cost nothing."""
+
+    def payload(self, **extra):
+        return {
+            "mode": "cycle", "state_dir": str(self.root / "state"),
+            "journal_dirs": str(self.journals),
+            "evidence_journal": str(self.root / "experiments.jsonl"),
+            "pack_dirs": str(self.root / "no-packs"),
+            **extra,
+        }
+
+    def footprint(self):
+        database = self.root / "state" / "research.db"
+        journal = self.root / "experiments.jsonl"
+        return (
+            database.stat().st_mtime_ns if database.exists() else 0,
+            journal.stat().st_size if journal.exists() else 0,
+        )
+
+    def stale_journal(self):
+        self.write_journal("audio.jsonl", [
+            {
+                "timestamp": (
+                    self.now - dt.timedelta(days=2)
+                    - dt.timedelta(minutes=(30 - index) * 30)
+                ).isoformat(),
+                "rms": 0.2 + (index % 7) * 0.01,
+            }
+            for index in range(30)
+        ])
+
+    def test_a_cycle_with_no_new_evidence_writes_nothing(self):
+        self.stale_journal()
+        self.run_skill(self.payload())
+        before = self.footprint()
+        for _ in range(3):
+            result = self.run_skill(self.payload())
+            self.assertEqual(result["status"], "skipped")
+            self.assertFalse(result["wrote"])
+        self.assertEqual(self.footprint(), before)
+
+    def test_new_evidence_wakes_it_up(self):
+        self.stale_journal()
+        self.run_skill(self.payload())
+        self.assertEqual(self.run_skill(self.payload())["status"], "skipped")
+        with open(self.journals / "audio.jsonl", "a", encoding="utf-8") as handle:
+            handle.write("\n" + json.dumps({"timestamp": self.now.isoformat(), "rms": 0.9}))
+        self.assertEqual(self.run_skill(self.payload())["status"], "success")
+
+    def test_the_clock_alone_reopens_the_question_eventually(self):
+        self.stale_journal()
+        self.run_skill(self.payload())
+        self.assertEqual(self.run_skill(self.payload())["status"], "skipped")
+        # Some conclusions age even when no file changes.
+        self.assertEqual(
+            self.run_skill(self.payload(idle_recheck_seconds=0))["status"], "success",
+        )
+
+    def test_an_unchanged_conclusion_is_not_journalled_again(self):
+        self.stale_journal()
+        connection = self.connection()
+        question = ENGINE.open_question(
+            connection, "audio", "did the source stop", "data_gap",
+            {"source": {"kind": "journal", "path": str(self.journals / "audio.jsonl")}},
+        )
+        journal = self.root / "experiments.jsonl"
+        first = ENGINE.run_question(
+            connection, question, ANALYSES.BUILTIN_ANALYSES, self.context(),
+        )
+        self.assertTrue(ENGINE.journal_finding(str(journal), first))
+        again = ENGINE.run_question(
+            connection, question, ANALYSES.BUILTIN_ANALYSES, self.context(),
+        )
+        self.assertFalse(again["changed"])
+        self.assertFalse(ENGINE.journal_finding(str(journal), again))
+        self.assertEqual(len(journal.read_text(encoding="utf-8").splitlines()), 1)
+
+    def test_a_clock_only_metric_is_not_a_change(self):
+        stored = {
+            "metrics_json": json.dumps({"records": 30, "seconds_since_last_record": 100}),
+            "window_start": "a", "window_end": "b", "sample_size": 30,
+            "open_question": None, "options_json": "[]", "limitations_json": "[]",
+        }
+        unchanged = {
+            "metrics": {"records": 30, "seconds_since_last_record": 999999},
+            "window_start": "a", "window_end": "b", "sample_size": 30,
+            "open_question": None, "options": [], "limitations": [],
+        }
+        self.assertFalse(ENGINE.finding_changed(stored, unchanged))
+        real = dict(unchanged, metrics={"records": 31, "seconds_since_last_record": 100})
+        self.assertTrue(ENGINE.finding_changed(stored, real))
+
+
+class AutonomousFollowUpTest(ResearchTestCase):
+    """The board may offer to keep digging on its own time."""
+
+    def shifted_finding(self, connection):
+        self.write_journal("probe.jsonl", [
+            {
+                "timestamp": (self.now - dt.timedelta(hours=(40 - index) * 2)).isoformat(),
+                "value": round(1.0 + (3.0 if index >= 20 else 0.0), 3),
+            }
+            for index in range(40)
+        ])
+        question = ENGINE.open_question(
+            connection, "probe", "the level of value changed", "level_shift",
+            {"source": {"kind": "journal", "path": str(self.journals / "probe.jsonl")},
+             "key": "value"},
+        )
+        return ENGINE.run_question(
+            connection, question, ANALYSES.BUILTIN_ANALYSES, self.context(),
+        )
+
+    def test_a_material_finding_offers_to_investigate_further(self):
+        connection = self.connection()
+        finding = self.shifted_finding(connection)
+        self.assertEqual(finding["verdict"], ENGINE.VERDICT_MATERIAL)
+        self.assertIn(
+            ENGINE.DEEPER_ANALYSIS_OPTION,
+            [option["id"] for option in finding["options"]],
+        )
+
+    def test_accepting_it_opens_a_wider_question_the_board_runs_itself(self):
+        connection = self.connection()
+        finding = self.shifted_finding(connection)
+        stored = ENGINE.record_decision(
+            connection, finding["id"], "accepted",
+            option_id=ENGINE.DEEPER_ANALYSIS_OPTION,
+        )
+        follow_up = stored["follow_up_question"]
+        self.assertEqual(follow_up["analysis"], "level_shift")
+        opened = [
+            item for item in ENGINE.list_questions(connection, status=ENGINE.QUESTION_OPEN)
+            if item["id"] == follow_up["id"]
+        ][0]
+        self.assertEqual(opened["params"]["depth"], "extended")
+        self.assertEqual(
+            opened["params"]["source"]["max_lines"],
+            400 * ENGINE.DEEPER_ANALYSIS_FACTOR,
+        )
+
+    def test_declining_opens_nothing(self):
+        connection = self.connection()
+        finding = self.shifted_finding(connection)
+        stored = ENGINE.record_decision(
+            connection, finding["id"], "rejected",
+            option_id=ENGINE.DEEPER_ANALYSIS_OPTION,
+        )
+        self.assertIsNone(stored.get("follow_up_question"))
+        self.assertEqual(ENGINE.list_questions(connection, status=ENGINE.QUESTION_OPEN), [])
+
+
 class SafetyTest(ResearchTestCase):
     def test_a_broken_pack_does_not_stop_the_others(self):
         good = self.root / "packs" / "good"

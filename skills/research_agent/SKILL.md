@@ -54,6 +54,9 @@ parameters:
   - name: max_lines
     type: integer
     default: 400
+  - name: idle_recheck_seconds
+    type: number
+    default: 21600
   - name: status
     type: string
   - name: verdict
@@ -127,6 +130,17 @@ signals and human feedback
 An analysis that cannot run is an internal gap. It is never converted into a
 request for hardware, budget, or attention.
 
+## Offering to dig further
+
+A material finding may carry the `deeper_analysis` option, which is the board
+offering its own time rather than yours: accepting it opens the same question
+again over a window four times wider, at a slightly higher priority, and later
+cycles run it unattended. The narrow conclusion and the wide one are stored
+separately, so a pattern that only appears at one scale stays visible as such.
+
+An adapter that delivers findings should present this option in the reader's
+language and pass `option_id` back with the decision.
+
 ## Built-in analyses
 
 | Analysis | Question |
@@ -162,9 +176,11 @@ PACK = {
     "name": "my_domain",
     "journal_dirs": ["/tmp/monitors/my_domain"],
     "analyses": {"my_analysis": my_callable},
-    "questions": declare_questions,          # optional
-    "scanners": [scan_my_signals],           # optional
-    "calibration_sources": {"subject": {...}},  # optional
+    "questions": declare_questions,             # optional
+    "scanners": [scan_my_signals],              # optional
+    "calibration_sources": calibration_sources, # optional, dict or callable
+    "evidence_paths": evidence_paths,           # optional: files whose mtime
+                                                # decides whether a cycle runs
 }
 ```
 
@@ -173,11 +189,30 @@ PACK = {
 raises on import is reported and skipped: one broken domain must not stop the
 board from researching the others.
 
-## Budget
+## Budget, and staying quiet
 
 One cycle is bounded by `max_questions`, `max_seconds`, `max_files` and
-`max_lines`. Defaults are sized so a cycle can run every 15 minutes on a
-256 MB board without competing with sampling.
+`max_lines`. Defaults are sized so a cycle can run hourly on a 256 MB board
+without competing with sampling.
+
+Flash is the scarcest resource on such a board, so a cycle that has nothing to
+do costs nothing:
+
+- before opening the database, the cycle fingerprints what it would read
+  (journal and pack file mtimes and sizes, plus the feedback count). If that
+  fingerprint is unchanged, it returns `status: skipped` having written
+  nothing at all;
+- `idle_recheck_seconds` (default six hours) still forces an occasional run,
+  because some conclusions depend on elapsed time — a source that stopped
+  reporting looks healthier the less often you look;
+- a question the board already holds is not rewritten just because a scan saw
+  the same shape again;
+- a finding whose conclusion has not changed is neither updated nor appended
+  to the evidence journal. A metric that only moves with the clock, such as
+  `seconds_since_last_record`, does not count as a change.
+
+The effect: a board where nothing is happening performs no writes per cycle,
+and a repeated conclusion appears in the journal once rather than hourly.
 
 ## Running off the board
 

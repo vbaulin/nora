@@ -954,6 +954,31 @@ OPTION_TEXTS = {
         "es": "que le envíe las fechas y distancias exactas de los avisos vecinos para que decida usted",
         "en": "let me send you the exact dates and distances of the neighbouring reports so you decide",
     },
+    "deeper_analysis": {
+        "ca": "que hi dediqui més temps jo mateix: repetir l'anàlisi sobre una finestra molt més llarga del registre i dir-vos si el patró es manté",
+        "es": "que le dedique más tiempo yo mismo: repetir el análisis sobre una ventana mucho más larga del registro y decirle si el patrón se mantiene",
+        "en": "let me spend more of my own time on it: repeat the analysis over a much longer window and tell you whether the pattern holds",
+    },
+    "check_source": {
+        "ca": "que comproveu si l'aparell o la tasca que genera aquestes dades segueix funcionant",
+        "es": "que compruebe si el aparato o la tarea que genera esos datos sigue funcionando",
+        "en": "check whether the device or task producing this data is still running",
+    },
+    "compare_second_source": {
+        "ca": "comparar-ho amb una segona font de dades quan n'hi hagi una de disponible",
+        "es": "compararlo con una segunda fuente de datos cuando haya una disponible",
+        "en": "compare it against a second source of the same quantity when one exists",
+    },
+    "confirm_context_change": {
+        "ca": "que em digueu si va canviar alguna cosa en aquelles dates (posició, feina al camp, manteniment)",
+        "es": "que me diga si cambió algo en esas fechas (posición, trabajo en campo, mantenimiento)",
+        "en": "tell me whether anything changed around those dates (position, field work, maintenance)",
+    },
+    "observe_at_next_event": {
+        "ca": "que feu una observació directa la propera vegada que passi",
+        "es": "que haga una observación directa la próxima vez que ocurra",
+        "en": "make one direct observation the next time it happens",
+    },
     "raise_alert_threshold": {
         "ca": "pujar el llindar d'avís d'aquest camp perquè només us escrigui en senyals més forts",
         "es": "subir el umbral de aviso de este campo para escribirle solo con señales más fuertes",
@@ -1201,6 +1226,149 @@ OPEN_QUESTIONS = {
         "calibration": "how many alerts you want to receive for this field",
     },
 }
+
+
+# A finding raised by the general engine, about a monitor rather than a field.
+# The board found it on its own time; the farmer is told what it saw, over how
+# much data, and what it cannot settle alone.
+ANOMALY_TEXTS = {
+    "ca": {
+        "title": "He detectat una anomalia al registre: {subject}",
+        "intro": "{name}: revisant el registre del tauler he trobat una cosa a «{subject}».",
+        "sample": "He analitzat {samples} mostres.",
+        "open": "El que no puc resoldre sol és {question}.",
+        "options_intro": "Opcions:",
+        "closing": "Voleu que hi continuï? Si no us interessa, responeu «cap» i ho tanco.",
+        "data_gap": "La font va deixar d'enregistrar el {last_day} i encara no ha tornat.",
+        "level_shift": "El nivell va passar de {before} a {after}, molt més del que varia normalment.",
+        "ceiling_saturation": "Els valors s'acumulen contra {top} en lloc de superar-lo, cosa que sol indicar un límit de l'aparell.",
+        "ceiling_criterion": "El canal no ha arribat mai al llindar de {criterion} tot i acostar-s'hi {approached} vegades.",
+        "source_disagreement": "Dues fonts que haurien de coincidir difereixen en {periods} períodes.",
+        "outcome_calibration": "Dels {alerts} avisos que he enviat, {negative} no van trobar res.",
+        "generic": "El patró es manté al llarg del registre.",
+        "open_level_shift": "què va canviar en aquelles dates",
+        "open_ceiling_saturation": "si l'aparell està arribant al seu límit",
+        "open_ceiling_criterion": "si aquest llindar és assolible en aquest lloc",
+        "open_data_gap": "si la font es va aturar o si l'experiment simplement es va acabar",
+        "open_source_disagreement": "quina de les dues fonts reflecteix el que passa aquí",
+        "open_outcome_calibration": "quants avisos voleu rebre",
+    },
+    "es": {
+        "title": "He detectado una anomalía en el registro: {subject}",
+        "intro": "{name}: revisando el registro del tablero he encontrado algo en «{subject}».",
+        "sample": "He analizado {samples} muestras.",
+        "open": "Lo que no puedo resolver solo es {question}.",
+        "options_intro": "Opciones:",
+        "closing": "¿Quiere que siga? Si no le interesa, responda «ninguna» y lo cierro.",
+        "data_gap": "La fuente dejó de registrar el {last_day} y aún no ha vuelto.",
+        "level_shift": "El nivel pasó de {before} a {after}, mucho más de lo que varía normalmente.",
+        "ceiling_saturation": "Los valores se acumulan contra {top} en lugar de superarlo, lo que suele indicar un límite del aparato.",
+        "ceiling_criterion": "El canal nunca alcanzó el umbral de {criterion} pese a acercarse {approached} veces.",
+        "source_disagreement": "Dos fuentes que deberían coincidir difieren en {periods} períodos.",
+        "outcome_calibration": "De los {alerts} avisos que he enviado, {negative} no encontraron nada.",
+        "generic": "El patrón se mantiene a lo largo del registro.",
+        "open_level_shift": "qué cambió en esas fechas",
+        "open_ceiling_saturation": "si el aparato está llegando a su límite",
+        "open_ceiling_criterion": "si ese umbral es alcanzable en este sitio",
+        "open_data_gap": "si la fuente se detuvo o si el experimento simplemente terminó",
+        "open_source_disagreement": "cuál de las dos fuentes refleja lo que pasa aquí",
+        "open_outcome_calibration": "cuántos avisos quiere recibir",
+    },
+    "en": {
+        "title": "I found an anomaly in the record: {subject}",
+        "intro": "{name}: going through the board's own record I found something in \"{subject}\".",
+        "sample": "I analysed {samples} samples.",
+        "open": "What I cannot settle alone is {question}.",
+        "options_intro": "Options:",
+        "closing": "Would you like me to carry on? If it does not interest you, reply \"none\" and I will close it.",
+        "data_gap": "The source stopped recording on {last_day} and has not come back.",
+        "level_shift": "The level moved from {before} to {after}, far more than it normally varies.",
+        "ceiling_saturation": "Values pile up against {top} instead of passing it, which usually means a limit of the device.",
+        "ceiling_criterion": "The channel never reached the {criterion} threshold despite approaching it {approached} times.",
+        "source_disagreement": "Two sources that should agree differ across {periods} periods.",
+        "outcome_calibration": "Of the {alerts} alerts I sent, {negative} found nothing.",
+        "generic": "The pattern holds across the record.",
+        "open_level_shift": "what changed around those dates",
+        "open_ceiling_saturation": "whether the device is reaching its limit",
+        "open_ceiling_criterion": "whether that threshold is reachable at this site",
+        "open_data_gap": "whether the source stopped or the experiment simply ended",
+        "open_source_disagreement": "which of the two sources reflects what happens here",
+        "open_outcome_calibration": "how many alerts you want to receive",
+    },
+}
+
+
+def anomaly_open_question(language, finding):
+    """The open question in the reader's language, or nothing at all.
+
+    An analysis states its open question in English for the record. Dropping
+    that sentence is better than pasting it untranslated into a message written
+    in someone else's language.
+    """
+    texts = ANOMALY_TEXTS[language_key(language)]
+    analysis = finding.get("analysis")
+    if analysis == "ceiling_saturation":
+        criterion = (finding.get("metrics") or {}).get("criterion")
+        analysis = "ceiling_criterion" if criterion is not None else "ceiling_saturation"
+    return texts.get(f"open_{analysis}")
+
+
+def anomaly_summary(language, finding):
+    """One sentence describing what the board saw, from the finding's numbers."""
+    key = language_key(language)
+    texts = ANOMALY_TEXTS[key]
+    metrics = finding.get("metrics") or {}
+    analysis = finding.get("analysis")
+    try:
+        if analysis == "data_gap":
+            return texts["data_gap"].format(
+                last_day=str(metrics.get("last_record_at") or "")[:10] or "?",
+            )
+        if analysis == "level_shift":
+            return texts["level_shift"].format(
+                before=metrics.get("median_before"), after=metrics.get("median_after"),
+            )
+        if analysis == "ceiling_saturation":
+            if metrics.get("criterion") is not None:
+                return texts["ceiling_criterion"].format(
+                    criterion=metrics.get("criterion"),
+                    approached=metrics.get("samples_approaching_criterion", 0),
+                )
+            return texts["ceiling_saturation"].format(top=metrics.get("observed_max"))
+        if analysis == "source_disagreement":
+            return texts["source_disagreement"].format(
+                periods=metrics.get("periods_beyond_tolerance", 0),
+            )
+        if analysis == "outcome_calibration":
+            return texts["outcome_calibration"].format(
+                alerts=metrics.get("alerts_sent", 0), negative=metrics.get("negative", 0),
+            )
+    except (KeyError, IndexError, ValueError):
+        pass
+    return texts["generic"]
+
+
+def render_anomaly(language, field_name, finding):
+    """Build the farmer-facing message for a finding raised by the engine."""
+    key = language_key(language)
+    texts = ANOMALY_TEXTS[key]
+    subject = str(finding.get("subject") or "?")
+    parts = [
+        texts["intro"].format(name=field_name, subject=subject),
+        anomaly_summary(language, finding),
+        texts["sample"].format(samples=finding.get("sample_size", 0)),
+    ]
+    open_question = anomaly_open_question(language, finding)
+    if open_question:
+        parts.append(texts["open"].format(question=open_question))
+    options = render_options(language, finding.get("options") or [])
+    if options:
+        parts.append(f"{texts['options_intro']} {options}.")
+    parts.append(texts["closing"])
+    return {
+        "title": texts["title"].format(subject=subject),
+        "message": " ".join(parts),
+    }
 
 
 def language_key(language):

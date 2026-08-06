@@ -1406,6 +1406,86 @@ def investigation_candidates(connection, profile, records):
     return candidates
 
 
+RESEARCH_KIND_PREFIX = "research:"
+
+
+def research_findings(params, limit=5):
+    """Open findings the general engine wants a person to see.
+
+    Subjects the vineyard adapter already covers are left out: the pack asks
+    those questions through this skill's own topics, and nobody needs the same
+    question twice in one message thread.
+    """
+    state_dir = (
+        params.get("research_state_dir")
+        or os.environ.get("NORA_STATE_DIR")
+        or "/root/.picoclaw/workspace/research"
+    )
+    if not Path(state_dir, "research.db").exists():
+        return []
+    try:
+        import engine as research_engine
+    except ImportError:
+        return []
+    try:
+        connection = research_engine.connect(state_dir)
+        try:
+            findings = [
+                item for item in research_engine.list_findings(
+                    connection, verdict=research_engine.VERDICT_MATERIAL, limit=limit * 4,
+                )
+                if item.get("status") == "open"
+                and not str(item.get("subject") or "").startswith("vineyard:")
+            ]
+        finally:
+            connection.close()
+    except Exception:
+        return []
+    return findings[:limit]
+
+
+def research_candidates(connection, profile, params):
+    """Turn engine findings into one confirmable message each."""
+    language = profile["language"]
+    name = profile["name"]
+    candidates = []
+    for finding in research_findings(params):
+        rendered = investigations.render_anomaly(language, name, finding)
+        if not rendered:
+            continue
+        options = finding.get("options") or []
+        candidates.append({
+            "field_id": profile["field_id"],
+            "kind": f"{RESEARCH_KIND_PREFIX}{finding.get('analysis')}",
+            "target": "farmer",
+            "priority": 68,
+            "title": rendered["title"],
+            "message": rendered["message"],
+            "rationale": (
+                "The research engine found a pattern in the board's own record that it "
+                "could not settle from local evidence."
+            ),
+            "evidence": [{
+                "research_finding_id": finding.get("id"),
+                "subject": finding.get("subject"),
+                "analysis": finding.get("analysis"),
+                "verdict": finding.get("verdict"),
+                "method": finding.get("method"),
+                "sample_size": finding.get("sample_size"),
+                "options": [option.get("id") for option in options],
+                "option_costs": sorted({
+                    option.get("cost") for option in options if option.get("cost")
+                }),
+                "limitations": finding.get("limitations") or [],
+            }],
+            "confidence": float(finding.get("confidence") or 0.5),
+            "requires_confirmation": True,
+            "cooldown_days": 14,
+            "research_finding_id": finding.get("id"),
+        })
+    return candidates
+
+
 def apply_investigation_actions(connection, field_id, records):
     """Queue the source question a local investigation could not answer."""
     queued = []
@@ -1423,9 +1503,10 @@ def apply_investigation_actions(connection, field_id, records):
     return queued
 
 
-def generate_proposals(connection, profiles, investigation_records=None):
+def generate_proposals(connection, profiles, investigation_records=None, params=None):
     created = []
     investigation_records = investigation_records or {}
+    params = params or {}
     for profile in profiles:
         field_id = profile["field_id"]
         name = profile["name"]
@@ -1547,6 +1628,11 @@ def generate_proposals(connection, profiles, investigation_records=None):
         records = investigation_records.get(field_id) or []
         apply_investigation_actions(connection, field_id, records)
         candidates.extend(investigation_candidates(connection, profile, records))
+        if profile is profiles[0]:
+            # Board-wide findings belong to the board, not to a field. Attach
+            # them once, to the first configured field, so a two-field board
+            # does not report the same stopped camera twice.
+            candidates.extend(research_candidates(connection, profile, params))
         candidates.sort(key=lambda item: item["priority"], reverse=True)
         for candidate in candidates:
             proposal = create_proposal(connection, candidate)
@@ -2241,7 +2327,10 @@ def mode_observe(connection, params, create=False):
         profile["field_id"]: run_field_investigations(connection, profile, repo_path)
         for profile in profiles
     }
-    proposals = generate_proposals(connection, profiles, investigation_records) if create else []
+    proposals = (
+        generate_proposals(connection, profiles, investigation_records, params)
+        if create else []
+    )
     return {
         "status": "success", "mode": "tick" if create else "observe",
         "repo_path": repo_path, "fields": [profile["field_id"] for profile in profiles],
@@ -2420,6 +2509,13 @@ def proposal_analysis(proposal):
     return kind or "proposal"
 
 
+def proposal_research_finding_id(proposal):
+    for item in proposal.get("evidence") or []:
+        if isinstance(item, dict) and item.get("research_finding_id"):
+            return int(item["research_finding_id"])
+    return None
+
+
 def mirror_decision_to_research(proposal, decision, note, params):
     """Echo a farmer decision into the research engine.
 
@@ -2440,18 +2536,37 @@ def mirror_decision_to_research(proposal, decision, note, params):
         import engine as research_engine
     except ImportError as exc:
         return {"mirrored": False, "reason": f"research engine unavailable: {exc}"}
+    finding_id = proposal_research_finding_id(proposal)
     try:
         connection = research_engine.connect(state_dir)
         try:
-            record = research_engine.record_external_decision(
-                connection,
-                research_subject(proposal.get("field_id")),
-                proposal_analysis(proposal),
-                decision,
-                option_id=params.get("option_id"),
-                note=note or None,
-                source="proactive-field-agent",
-            )
+            if finding_id:
+                # This message carried one of the engine's own findings, so the
+                # answer goes back to it directly: accepting the offer to look
+                # further is what opens the wider question.
+                stored = research_engine.record_decision(
+                    connection, finding_id, decision,
+                    option_id=params.get("option_id"), note=note or None,
+                    source="proactive-field-agent",
+                )
+                record = {
+                    "finding_id": finding_id,
+                    "subject": (stored or {}).get("subject"),
+                    "analysis": (stored or {}).get("analysis"),
+                    "decision": decision,
+                    "option_id": params.get("option_id"),
+                    "follow_up_question": (stored or {}).get("follow_up_question"),
+                }
+            else:
+                record = research_engine.record_external_decision(
+                    connection,
+                    research_subject(proposal.get("field_id")),
+                    proposal_analysis(proposal),
+                    decision,
+                    option_id=params.get("option_id"),
+                    note=note or None,
+                    source="proactive-field-agent",
+                )
         finally:
             connection.close()
     except Exception as exc:  # storage on another skill's state directory
@@ -2680,6 +2795,41 @@ def mode_proposal_context(connection, params):
     ).fetchone()
     field_name = profile["name"] if profile else proposal.get("field_id") or ""
     language = (profile["language"] if profile else None) or params.get("language") or "en"
+    if str(proposal.get("kind") or "").startswith(RESEARCH_KIND_PREFIX):
+        evidence = next(
+            (item for item in proposal.get("evidence") or []
+             if isinstance(item, dict) and item.get("research_finding_id")),
+            {},
+        )
+        options = [
+            {"id": option, "cost": "none", "params": {}}
+            for option in evidence.get("options") or []
+        ]
+        return {
+            "status": "success",
+            "mode": "proposal_context",
+            "proposal_id": proposal["id"],
+            "proposal_kind": proposal["kind"],
+            "field": proposal.get("field_id"),
+            "field_name": field_name,
+            "alert_diseases": [],
+            "disease": None,
+            "research_finding": {
+                "id": evidence.get("research_finding_id"),
+                "subject": evidence.get("subject"),
+                "analysis": evidence.get("analysis"),
+                "method": evidence.get("method"),
+                "options": evidence.get("options") or [],
+                "limitations": evidence.get("limitations") or [],
+            },
+            "missing": [],
+            "written": False,
+            "next_route": "proactive-field-agent",
+            "next_mode": "record_decision",
+            "confirmation_question": investigation_context_question(
+                language, field_name, options,
+            ),
+        }
     if str(proposal.get("kind") or "").startswith(INVESTIGATION_KIND_PREFIX):
         record = proposal_investigation(connection, proposal)
         options = proposal_sent_options(proposal, record)

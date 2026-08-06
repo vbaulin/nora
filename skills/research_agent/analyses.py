@@ -367,6 +367,7 @@ def threshold_materiality(ctx):
         or f"whether {upper_key} reflects reality on the {len(unresolved)} unresolved points",
         "options": params.get("options") or [
             {"id": "observe_at_next_event", "cost": "none", "params": {}},
+            {"id": "deeper_analysis", "cost": "none", "params": {}},
         ],
     })
     return finding
@@ -432,7 +433,7 @@ def ceiling_saturation(ctx):
             "open_question": "whether the channel is clipping at its range" if material else None,
             "options": (params.get("options") or [
                 {"id": "check_source", "cost": "none", "params": {}},
-                {"id": "compare_second_source", "cost": "none", "params": {}},
+                {"id": "deeper_analysis", "cost": "none", "params": {}},
             ]) if material else [],
         })
         return finding
@@ -467,6 +468,7 @@ def ceiling_saturation(ctx):
         or f"whether the {criterion:g} criterion is reachable at this site at all",
         "options": params.get("options") or [
             {"id": "compare_second_source", "cost": "none", "params": {}},
+            {"id": "deeper_analysis", "cost": "none", "params": {}},
         ],
     })
     return finding
@@ -545,6 +547,7 @@ def source_disagreement(ctx):
         or "which of the two sources reflects this site",
         "options": params.get("options") or [
             {"id": "observe_at_next_event", "cost": "none", "params": {}},
+            {"id": "deeper_analysis", "cost": "none", "params": {}},
         ],
     })
     return finding
@@ -765,6 +768,7 @@ def level_shift(ctx):
         or f"what changed around the middle of the {key} record",
         "options": params.get("options") or [
             {"id": "confirm_context_change", "cost": "none", "params": {}},
+            {"id": "deeper_analysis", "cost": "none", "params": {}},
         ],
     })
     return finding

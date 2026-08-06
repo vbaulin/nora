@@ -175,15 +175,63 @@ def pack_questions(connection, packs, context):
     return raised
 
 
+def evidence_paths(packs, context, limits):
+    """Every file a cycle would read, for the change check."""
+    paths = [
+        str(path) for path in
+        analyses.journal_paths(context.get("journal_dirs"), int(limits.get("max_files") or 12))
+    ]
+    for pack in packs:
+        declared = pack.get("evidence_paths")
+        if callable(declared):
+            try:
+                declared = declared(engine.pack_context(pack, context))
+            except Exception:
+                declared = []
+        paths.extend(str(item) for item in (declared or []))
+    return paths
+
+
 def mode_cycle(connection, params):
     errors = []
     packs, registry, context = load_environment(params, errors)
+    limits = budget_from(params)
+    # Decide whether there is anything to do before touching the database. A
+    # quiet board should cost no writes at all.
+    signature = engine.evidence_signature(
+        evidence_paths(packs, context, limits),
+        extra={
+            "feedback": connection.execute("SELECT COUNT(*) FROM decisions").fetchone()[0],
+            "packs": sorted(pack["name"] for pack in packs),
+        },
+    )
+    # Zero is a meaningful value here ("recheck every cycle"), so it must not
+    # be treated as "unset".
+    raw_recheck = params.get("idle_recheck_seconds")
+    try:
+        idle_recheck = (
+            float(raw_recheck) if raw_recheck not in (None, "")
+            else float(engine.IDLE_RECHECK_SECONDS)
+        )
+    except (TypeError, ValueError):
+        idle_recheck = float(engine.IDLE_RECHECK_SECONDS)
+    needed, reason = engine.cycle_needed(connection, signature, idle_recheck, context["now"])
+    if not needed:
+        return {
+            "status": "skipped",
+            "mode": "cycle",
+            "reason": reason,
+            "wrote": False,
+            "packs": [pack["name"] for pack in packs],
+        }
     declared = pack_questions(connection, packs, context)
     result = engine.cycle(
         connection, registry, context,
-        budget=budget_from(params),
+        budget=limits,
         scanners=collect_scanners(packs),
         journal_path=params.get("evidence_journal", DEFAULT_EVIDENCE_JOURNAL),
+        signature=signature,
+        idle_recheck_seconds=idle_recheck,
     )
     return {
         "status": "success",

@@ -92,6 +92,16 @@ for any subject. It never sends a message: an adapter delivers. When answering
 "what has the board been looking at", read `research-agent mode=findings` and
 `proactive-field-agent mode=status` — never session memory.
 
+A cycle that returns `status: skipped` did not fail: the evidence had not
+changed, so it wrote nothing. That is the intended behaviour on a quiet board
+and must never be reported as an error.
+
+Engine findings about monitors rather than fields reach the farmer as
+`research:<analysis>` proposals. A reply resolves to `record_decision` with the
+finding's options. One of them may be `deeper_analysis`: accepting it does not
+ask the farmer for anything, it authorizes the board to repeat the study over a
+wider window on its own time. Say so plainly when presenting it.
+
 Internet research uses `proactive-field-agent mode=research` or
 `mode=ingest_research`, and only for the question a local investigation could
 not settle. Search snippets are candidate evidence. Preserve source

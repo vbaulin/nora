@@ -184,6 +184,19 @@ def calibration_sources(context):
     return sources
 
 
+def evidence_paths(context):
+    """Files whose mtime tells the engine whether anything here is new."""
+    repo = Path(repo_path(context))
+    state = Path(state_dir(context))
+    return [
+        str(path) for path in (
+            repo / "goidanich.db",
+            repo / "agent_config.yaml",
+            state / "proactive_field.db",
+        )
+    ]
+
+
 PACK = {
     "name": "vineyard_guard",
     "description": (
@@ -192,5 +205,6 @@ PACK = {
     ),
     "questions": declare_questions,
     "calibration_sources": calibration_sources,
+    "evidence_paths": evidence_paths,
     "journal_dirs": ["/tmp/monitors/vineyard"],
 }

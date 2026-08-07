@@ -16,6 +16,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -417,6 +418,110 @@ class NeighbourReportsTest(ResearchTestCase):
         )
         self.assertEqual(finding["verdict"], ENGINE.VERDICT_INSUFFICIENT)
         self.assertTrue(finding.get("skipped") or finding["sample_size"] == 0)
+
+
+class SkillBackedEvidenceTest(ResearchTestCase):
+    """Research should reuse work the board already knows how to do."""
+
+    def write_seasons(self, values, metric="season.rain_total_mm"):
+        results = self.root / "results"
+        results.mkdir(exist_ok=True)
+        for year, value in values.items():
+            payload = {
+                "field_id": "field_1", "start": f"{year}-04-01", "end": f"{year}-09-30",
+                "season": {"rain_total_mm": value, "days": 183},
+                "indices": {"gdd_base10": 1500},
+            }
+            (results / f"season_climate_field_1_{year}.json").write_text(
+                json.dumps(payload), encoding="utf-8",
+            )
+        return str(results / "season_climate_field_1_*.json")
+
+    def ask(self, connection, pattern, **extra):
+        question = ENGINE.open_question(
+            connection, "vineyard:field_1", "this season is unlike the others",
+            "baseline_deviation",
+            {
+                "source": {"kind": "glob", "pattern": pattern},
+                "key": "season.rain_total_mm",
+                "period_key": "end", "period_slice": 4,
+                **extra,
+            },
+        )
+        return ENGINE.run_question(
+            connection, question, ANALYSES.BUILTIN_ANALYSES, self.context(),
+        )
+
+    def test_an_ordinary_season_says_nothing(self):
+        pattern = self.write_seasons({
+            "2021": 372.0, "2022": 344.0, "2023": 401.0, "2024": 358.0, "2025": 370.0,
+        })
+        finding = self.ask(self.connection(), pattern)
+        self.assertEqual(finding["verdict"], ENGINE.VERDICT_NOT_MATERIAL)
+
+    def test_a_season_unlike_its_predecessors_is_material(self):
+        pattern = self.write_seasons({
+            "2021": 372.0, "2022": 344.0, "2023": 401.0, "2024": 358.0, "2025": 366.0,
+            "2026": 118.0,
+        })
+        finding = self.ask(self.connection(), pattern)
+        self.assertEqual(finding["verdict"], ENGINE.VERDICT_MATERIAL)
+        self.assertEqual(finding["metrics"]["current_period"], "2026")
+        self.assertEqual(finding["metrics"]["direction"], "below")
+        self.assertEqual(finding["metrics"]["baseline_periods"], 5)
+        self.assertGreater(finding["metrics"]["distance_from_baseline"], 3.0)
+
+    def test_too_few_previous_seasons_is_not_a_conclusion(self):
+        pattern = self.write_seasons({"2025": 366.0, "2026": 118.0})
+        finding = self.ask(self.connection(), pattern)
+        self.assertEqual(finding["verdict"], ENGINE.VERDICT_INSUFFICIENT)
+
+    def fake_skill(self, name="fake_climate", payload=None, exit_code=0):
+        root = self.root / "skills" / name
+        root.mkdir(parents=True, exist_ok=True)
+        body = json.dumps(payload if payload is not None else {"reports": [{"v": 1}]})
+        script = root / "run.sh"
+        script.write_text(
+            "#!/bin/sh\n"
+            + (f"cat <<'JSON'\n{body}\nJSON\n" if exit_code == 0 else "echo boom >&2\n")
+            + f"exit {exit_code}\n",
+            encoding="utf-8",
+        )
+        script.chmod(0o755)
+        return root.parent
+
+    def test_an_installed_skill_can_be_an_evidence_source(self):
+        skills_root = self.fake_skill(payload={"reports": [{"v": 1}, {"v": 2}]})
+        with mock.patch.object(ANALYSES, "SKILL_ROOTS", (skills_root,)):
+            records = ANALYSES.load_records({
+                "kind": "skill", "name": "fake_climate", "records_path": "reports",
+            })
+        self.assertEqual(records, [{"v": 1}, {"v": 2}])
+
+    def test_a_skill_name_may_not_be_a_path(self):
+        with self.assertRaises(ValueError):
+            ANALYSES.resolve_skill("../../etc/passwd")
+
+    def test_a_failed_refresh_still_leaves_the_baseline_readable(self):
+        pattern = self.write_seasons({
+            "2021": 372.0, "2022": 344.0, "2023": 401.0, "2024": 358.0, "2025": 366.0,
+        })
+        skills_root = self.fake_skill(name="broken_skill", exit_code=1)
+        with mock.patch.object(ANALYSES, "SKILL_ROOTS", (skills_root,)):
+            records = ANALYSES.load_records({
+                "kind": "glob", "pattern": pattern,
+                "refresh": {"kind": "skill", "name": "broken_skill"},
+            })
+        self.assertEqual(len(records), 5)
+
+    def test_an_expensive_question_sets_its_own_pace(self):
+        connection = self.connection()
+        pattern = self.write_seasons({
+            "2021": 372.0, "2022": 344.0, "2023": 401.0, "2024": 358.0, "2025": 366.0,
+        })
+        self.ask(connection, pattern, min_interval_seconds=7 * 24 * 3600)
+        # Just answered, and it asked not to be run again this week.
+        self.assertEqual(ENGINE.due_questions(connection, limit=3), [])
 
 
 class QuietBoardTest(ResearchTestCase):

@@ -18,6 +18,7 @@ import os
 import re
 import sqlite3
 import statistics
+import subprocess
 from pathlib import Path
 
 import engine
@@ -124,10 +125,102 @@ def read_sqlite(path, table, columns, time_column=None, limit=2000, where=None,
     return [dict(row) for row in rows]
 
 
+SKILL_ROOTS = (
+    Path(__file__).resolve().parent.parent,
+    Path("/root/.picoclaw/workspace/skills"),
+    Path("/root/nano-os-agent/skills"),
+)
+
+
+def resolve_skill(name):
+    """Find an installed skill by name. Names only: never a caller-supplied path."""
+    if not IDENTIFIER.match(str(name or "").replace("-", "_")):
+        raise ValueError(f"unsafe skill name: {name}")
+    for root in SKILL_ROOTS:
+        for candidate in (str(name), str(name).replace("-", "_")):
+            runner = root / candidate / "run.sh"
+            if runner.is_file():
+                return runner
+    return None
+
+
+def run_skill(name, params=None, timeout=60):
+    """Run an installed skill and return its JSON output.
+
+    This is how research reaches work the board already knows how to do. A
+    domain that has a skill for seasonal averages should not have that
+    arithmetic reimplemented inside an analysis.
+    """
+    runner = resolve_skill(name)
+    if runner is None:
+        raise ValueError(f"skill not installed: {name}")
+    proc = subprocess.run(
+        [str(runner)],
+        input=json.dumps(params or {}).encode("utf-8"),
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        timeout=float(timeout), check=False,
+    )
+    if proc.returncode != 0:
+        raise ValueError(
+            f"skill {name} failed: {proc.stderr.decode('utf-8', 'replace')[:200]}"
+        )
+    try:
+        return json.loads(proc.stdout.decode("utf-8", "replace") or "{}")
+    except ValueError as exc:
+        raise ValueError(f"skill {name} returned no JSON: {exc}")
+
+
+def read_json_files(pattern, limit=40):
+    """Every JSON document matching a glob, as one record each.
+
+    Artifacts a skill wrote over several seasons are a baseline nobody has to
+    recompute.
+    """
+    records = []
+    for path in sorted(Path().glob(pattern) if not os.path.isabs(pattern)
+                       else Path(os.sep).glob(pattern.lstrip(os.sep)))[:int(limit)]:
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(loaded, dict):
+            loaded.setdefault("artifact_path", str(path))
+            records.append(loaded)
+        elif isinstance(loaded, list):
+            records.extend(item for item in loaded if isinstance(item, dict))
+    return records
+
+
 def load_records(source, limits=None):
-    """Load records from a declared source: a JSONL journal or a local table."""
+    """Load records from a declared source.
+
+    A source may name a JSONL journal, a local table, a glob of JSON
+    artifacts, or an installed skill. It may also carry a `refresh` source that
+    is run first, which is how a question keeps a skill's artifacts current
+    before reading them.
+    """
     limits = limits or {}
-    kind = str((source or {}).get("kind") or "journal")
+    source = source or {}
+    refresh = source.get("refresh")
+    if isinstance(refresh, dict):
+        try:
+            load_records(refresh, limits)
+        except Exception:
+            # A stale baseline is still a baseline; a failed refresh must not
+            # take the analysis down with it.
+            pass
+    kind = str(source.get("kind") or "journal")
+    if kind == "skill":
+        payload = run_skill(
+            source.get("name"), source.get("params") or {},
+            timeout=source.get("timeout") or 60,
+        )
+        records = pluck(payload, source["records_path"]) if source.get("records_path") else payload
+        if isinstance(records, dict):
+            return [records]
+        return [item for item in (records or []) if isinstance(item, dict)]
+    if kind == "glob":
+        return read_json_files(source.get("pattern") or "", int(source.get("limit") or 40))
     if kind == "journal":
         return read_journal(
             source.get("path"),
@@ -930,9 +1023,105 @@ def neighbour_reports(ctx):
     return finding
 
 
+def baseline_deviation(ctx):
+    """Is the current period unusual against the periods that came before it?
+
+    The comparison a person actually makes about weather: not "is it warm" but
+    "is this season unlike the last several". Robust by construction — median
+    and median absolute deviation — because a handful of seasons is a small
+    sample and one extreme year must not set the expectation for the rest.
+    """
+    params = ctx.get("params") or {}
+    source = params.get("source") or {}
+    key = params.get("key")
+    period_key = params.get("period_key")
+    if not key or not period_key:
+        raise ValueError("baseline_deviation needs key and period_key")
+    records = load_records(source, ctx.get("limits"))
+    # A record often dates its period rather than naming it: period_slice takes
+    # the leading characters, so an ISO end date becomes its year.
+    period_slice = params.get("period_slice")
+    observations = {}
+    for record in records:
+        period = pluck(record, period_key)
+        value = engine.as_float(pluck(record, key))
+        if period is None or value is None:
+            continue
+        label = str(period)[:int(period_slice)] if period_slice else str(period)
+        observations[label] = value
+    periods = sorted(observations)
+    minimum = int(params.get("min_baseline") or 3)
+    limitations = [
+        "A period unlike its predecessors is a description, not a cause.",
+        "Comparability depends on the periods covering the same part of the season.",
+    ]
+    finding = base_finding(
+        ctx, "baseline_deviation",
+        ctx.get("claim") or f"the current {period_key} is unlike the ones before it",
+        f"Compared {key} for the most recent {period_key} against the median and "
+        f"median absolute deviation of the {max(0, len(periods) - 1)} earlier ones.",
+        len(periods), source, limitations,
+        (periods[0], periods[-1]) if periods else (None, None),
+    )
+    current_period = str(params.get("current_period") or (periods[-1] if periods else ""))
+    baseline = [observations[period] for period in periods if period != current_period]
+    if current_period not in observations or len(baseline) < minimum:
+        finding.update({
+            "verdict": engine.VERDICT_INSUFFICIENT, "confidence": 0.2,
+            "metrics": {
+                "periods": len(periods), "baseline_periods": len(baseline),
+                "minimum_baseline": minimum, "metric": key,
+            },
+            "headline": {"baseline": len(baseline)},
+        })
+        return finding
+    current = observations[current_period]
+    centre = median(baseline)
+    spread = mad(baseline)
+    if spread > 0:
+        deviations = abs(current - centre) / spread
+        threshold = float(params.get("deviation_threshold") or 3.0)
+        unusual = deviations > threshold
+    else:
+        scale = max(abs(centre), 1e-9)
+        deviations = abs(current - centre) / scale
+        threshold = float(params.get("relative_threshold") or 0.25)
+        unusual = deviations > threshold
+    finding["metrics"] = {
+        "metric": key,
+        "current_period": current_period,
+        "current_value": round(current, 4),
+        "baseline_periods": len(baseline),
+        "baseline_median": round(centre, 4),
+        "baseline_deviation": round(spread, 4),
+        "distance_from_baseline": round(deviations, 2),
+        "threshold": threshold,
+        "direction": "above" if current > centre else "below",
+        "period_values": {period: round(observations[period], 4) for period in periods},
+    }
+    if not unusual:
+        finding.update({
+            "verdict": engine.VERDICT_NOT_MATERIAL, "confidence": 0.6,
+            "headline": {"unusual": False},
+        })
+        return finding
+    finding.update({
+        "verdict": engine.VERDICT_MATERIAL, "confidence": 0.7,
+        "headline": {"unusual": True, "direction": finding["metrics"]["direction"]},
+        "open_question": params.get("open_question")
+        or f"what an unusual {key} means for what you should do differently",
+        "options": params.get("options") or [
+            {"id": "confirm_context_change", "cost": "none", "params": {}},
+            {"id": "deeper_analysis", "cost": "none", "params": {}},
+        ],
+    })
+    return finding
+
+
 BUILTIN_ANALYSES = {
     "threshold_materiality": threshold_materiality,
     "neighbour_reports": neighbour_reports,
+    "baseline_deviation": baseline_deviation,
     "ceiling_saturation": ceiling_saturation,
     "source_disagreement": source_disagreement,
     "outcome_calibration": outcome_calibration,

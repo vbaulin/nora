@@ -55,13 +55,38 @@ the board can notice.
 | `outcome_calibration` | Are the board's own alerts earning their interruptions? |
 | `neighbour_reports` | Do nearby reporters see something this board does not? |
 
-Two of these are what a networked board is for. `neighbour_reports` reads
-confirmed reports from other boards with their distance and asks whether the
-local indicator agrees — a confirmation two kilometres away raises the prior
-here and earns one cheap local check, nothing more. `source_disagreement`
-between a weather forecast and what the station later measured answers whether
-the forecast driving a risk projection can still be trusted; a source running
-four degrees warm for a month is worth knowing before the next alert.
+| `baseline_deviation` | Is the current period unlike the periods before it? |
+
+Three of these are what a networked board with a weather history is for.
+`neighbour_reports` reads confirmed reports from other boards with their
+distance and asks whether the local indicator agrees — a confirmation two
+kilometres away raises the prior here and earns one cheap local check, nothing
+more. `source_disagreement` between a weather forecast and what the station
+later measured answers whether the forecast driving a risk projection can still
+be trusted. `baseline_deviation` asks the question a person actually asks about
+weather: not "is it warm" but "is this season unlike the last several".
+
+## Reusing a skill instead of reimplementing it
+
+A board that already has a skill for seasonal averages should not have that
+arithmetic written again inside an analysis. A source can name an installed
+skill, or a glob of the artifacts a skill wrote, and any source may carry a
+`refresh` that runs first:
+
+```json
+{"kind": "glob", "pattern": ".../results/season_climate_*_*.json",
+ "refresh": {"kind": "skill", "name": "vineyard_season_climate",
+             "params": {"mode": "report", "write_artifacts": true}}}
+```
+
+Vineyard Guard uses exactly this: `vineyard-season-climate` computes each
+season's rainfall and accumulated heat and writes one artifact per year; the
+engine reads those artifacts and compares this season against the median and
+deviation of the previous ones. Five ordinary seasons and one drought produce
+one finding, and five ordinary seasons produce none.
+
+A skill-backed question sets its own `min_interval_seconds` — reading a season
+of weather is a weekly job, not an hourly one.
 
 Each reads a JSONL journal or a local SQLite table, so anything nora already
 records is a valid input. Most domain questions turn out to be one of these six

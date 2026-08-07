@@ -148,6 +148,52 @@ def declare_questions(context):
                     ),
                 },
             })
+        # Is this season unlike the ones before it? The season-climate skill
+        # already computes the averages and writes one artifact per year, so
+        # the research engine reads those rather than recomputing anything.
+        # Weekly: refreshing a season of weather is not an hourly job.
+        for metric, label in (
+            ("season.rain_total_mm", "rainfall"),
+            ("indices.gdd_base10", "accumulated heat"),
+        ):
+            questions.append({
+                "subject": f"vineyard:{field_id}",
+                "claim": (
+                    f"this season's {label} at {field['name']} is unlike previous seasons"
+                ),
+                "analysis": "baseline_deviation",
+                "priority": 45,
+                "params": {
+                    "source": {
+                        "kind": "glob",
+                        "pattern": str(
+                            Path(repo) / "results" / f"season_climate_{field_id}_*.json"
+                        ),
+                        "label": "season climate artifacts",
+                        "limit": 40,
+                        "refresh": {
+                            "kind": "skill",
+                            "name": "vineyard_season_climate",
+                            "timeout": 170,
+                            "params": {
+                                "mode": "report",
+                                "repo_path": repo,
+                                "field": field_id,
+                                "write_artifacts": True,
+                            },
+                        },
+                    },
+                    "key": metric,
+                    # The report dates its season rather than naming a year.
+                    "period_key": "end",
+                    "period_slice": 4,
+                    "min_interval_seconds": 7 * 24 * 3600,
+                    "min_baseline": 3,
+                    "open_question": (
+                        f"what an unusual season for {label} means for this field"
+                    ),
+                },
+            })
         # Can the forecast that drives the risk projection be trusted lately?
         questions.append({
             "subject": f"vineyard:{field_id}",

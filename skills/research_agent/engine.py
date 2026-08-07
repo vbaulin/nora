@@ -371,15 +371,22 @@ def list_questions(connection, status=None, subject=None, limit=50):
 
 
 def due_questions(connection, limit=3, min_interval_seconds=0):
-    """Open questions, least recently investigated first."""
+    """Open questions, least recently investigated first.
+
+    A question may set its own `min_interval_seconds` when it is expensive to
+    answer — one backed by a skill that reads a season of weather has no
+    business running every hour.
+    """
     rows = list_questions(connection, status=QUESTION_OPEN, limit=limit * 4)
-    if not min_interval_seconds:
-        return rows[:limit]
-    cutoff = utcnow() - dt.timedelta(seconds=float(min_interval_seconds))
+    now = utcnow()
     ready = []
     for row in rows:
+        interval = as_float(
+            (row.get("params") or {}).get("min_interval_seconds"),
+            float(min_interval_seconds or 0),
+        )
         last = parse_moment(row.get("last_run_at"))
-        if last is None or last <= cutoff:
+        if interval <= 0 or last is None or (now - last).total_seconds() >= interval:
             ready.append(row)
         if len(ready) >= limit:
             break

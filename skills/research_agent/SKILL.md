@@ -152,6 +152,7 @@ language and pass `option_id` back with the decision.
 | `data_gap` | Did a source stop reporting, or thin out? |
 | `level_shift` | Did the level of a series change beyond its own noise? |
 | `neighbour_reports` | Do nearby reporters see something this board's own indicator does not? |
+| `baseline_deviation` | Is the current period unlike the periods before it? |
 
 All of them read either a JSONL journal or a local SQLite table, so any
 experiment nora runs is already in a supported format.
@@ -173,11 +174,30 @@ Two combinations worth naming, because they are what a networked board is for:
 ```json
 {"kind": "journal", "path": "/tmp/monitors/grape_growth.jsonl"}
 {"kind": "sqlite", "path": "/path/app.db", "table": "daily", "columns": ["a","b"], "time_column": "day"}
+{"kind": "glob", "pattern": "/path/results/season_climate_*_*.json"}
+{"kind": "skill", "name": "vineyard_season_climate", "params": {...}, "records_path": "field_reports"}
 {"kind": "inline", "records": [{"timestamp": "...", "value": 1}]}
 ```
 
-Table and column names are validated as identifiers; a filter may only be a
-single `column = ?` comparison.
+Table and column names are validated as identifiers, and a filter may only be a
+single `column = ?` comparison. A skill is named, never given as a path, and is
+resolved against the installed skill directories.
+
+Any source may carry a `refresh` source that runs first:
+
+```json
+{"kind": "glob", "pattern": ".../season_climate_*.json",
+ "refresh": {"kind": "skill", "name": "vineyard_season_climate", "timeout": 170,
+             "params": {"mode": "report", "write_artifacts": true}}}
+```
+
+That is how a question keeps a skill's artifacts current before reading them,
+and it is the preferred way to reuse work the board already knows how to do:
+the season-climate skill computes the averages, the engine compares them. A
+failed refresh is not fatal — a stale baseline is still a baseline.
+
+A question backed by a skill should set its own `min_interval_seconds` in its
+params. Reading a season of weather is a weekly job, not an hourly one.
 
 ## Writing a pack
 

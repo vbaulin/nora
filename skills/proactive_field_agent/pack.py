@@ -85,6 +85,22 @@ def black_rot_source(repo, field_id, columns):
     }
 
 
+def field_coordinates(repo, field_id):
+    """Coordinates for one field, when the configuration is JSON-compatible."""
+    try:
+        parsed = json.loads((Path(repo) / "agent_config.yaml").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    for item in parsed.get("fields") or []:
+        if isinstance(item, dict) and str(item.get("id")) == field_id:
+            coordinates = item.get("coordinates") or {}
+            latitude = coordinates.get("latitude")
+            longitude = coordinates.get("longitude")
+            if latitude is not None and longitude is not None:
+                return [latitude, longitude]
+    return None
+
+
 def declare_questions(context):
     """The questions this domain always wants answered, one set per field."""
     repo = repo_path(context)
@@ -94,6 +110,78 @@ def declare_questions(context):
     questions = []
     for field in configured_fields(repo):
         field_id = field["id"]
+        # Do the neighbours see black rot that this field's model does not?
+        coordinates = field_coordinates(repo, field_id)
+        if coordinates:
+            questions.append({
+                "subject": f"vineyard:{field_id}",
+                "claim": (
+                    f"neighbouring boards report confirmed disease near {field['name']} "
+                    "while the local model stays below its alert threshold"
+                ),
+                "analysis": "neighbour_reports",
+                "priority": 65,
+                "params": {
+                    "events": {
+                        "kind": "sqlite",
+                        "path": str(Path(repo) / "goidanich.db"),
+                        "table": "peer_signals",
+                        "columns": ["peer_id", "signal_type", "value", "metadata", "disease_id"],
+                        "time_column": "timestamp",
+                        "label": "peer board reports",
+                        "limit": 400,
+                    },
+                    "origin": coordinates,
+                    "time_key": "timestamp",
+                    "label_key": "signal_type",
+                    "accepted_labels": ["contagion", "disease"],
+                    "metadata_key": "metadata",
+                    "reporter_key": "peer_id",
+                    "local_source": black_rot_source(repo, field_id, ["infection_index"]),
+                    "local_key": "infection_index",
+                    "alert_threshold": BLACK_ROT_INFECTION_THRESHOLD,
+                    "local_radius_km": 5.0,
+                    "regional_radius_km": 15.0,
+                    "window_days": 14,
+                    "open_question": (
+                        "whether the confirmed regional signal is already present in this parcel"
+                    ),
+                },
+            })
+        # Can the forecast that drives the risk projection be trusted lately?
+        questions.append({
+            "subject": f"vineyard:{field_id}",
+            "claim": (
+                f"the weather forecast for {field['name']} has been drifting away from "
+                "what the station later measured"
+            ),
+            "analysis": "source_disagreement",
+            "priority": 50,
+            "params": {
+                "primary": {
+                    "kind": "sqlite",
+                    "path": str(Path(repo) / "goidanich.db"),
+                    "table": "weather_forecast_daily",
+                    "columns": ["temp"],
+                    "time_column": "day",
+                    "where": "field_id = ?",
+                    "where_values": [field_id],
+                    "label": "forecast temperature",
+                    "limit": 2000,
+                },
+                "reference": black_rot_source(repo, field_id, ["temp"]),
+                "key": "temp",
+                "time_key": "day",
+                "tolerance": 2.0,
+                "disagreement_share_limit": 0.3,
+                "open_question": (
+                    "whether the forecast source still reflects this station"
+                ),
+                "options": [
+                    {"id": "deeper_analysis", "cost": "none", "params": {}},
+                ],
+            },
+        })
         questions.append({
             "subject": f"vineyard:{field_id}",
             "claim": (

@@ -350,6 +350,75 @@ class AdapterFeedbackTest(ResearchTestCase):
         self.assertEqual(ANALYSES.scan_feedback(connection, context), [])
 
 
+class NeighbourReportsTest(ResearchTestCase):
+    """What other reporters see is a prior, never a confirmation."""
+
+    def context_with(self, **extra):
+        return self.context(**extra)
+
+    def question(self, connection, local_value, latitude=41.315, longitude=1.705,
+                 days_ago=3):
+        moment = (self.now - dt.timedelta(days=days_ago)).isoformat()
+        return ENGINE.open_question(
+            connection, "field_1", "neighbours report something", "neighbour_reports",
+            {
+                "events": {"kind": "inline", "records": [{
+                    "timestamp": moment, "peer_id": "peer_a", "signal_type": "contagion",
+                    "metadata": json.dumps({"latitude": latitude, "longitude": longitude,
+                                            "board_id": "Peer A"}),
+                }]},
+                "origin": [41.3, 1.7],
+                "time_key": "timestamp",
+                "label_key": "signal_type",
+                "accepted_labels": ["contagion"],
+                "metadata_key": "metadata",
+                "local_value": local_value,
+                "alert_threshold": 85.0,
+                "local_radius_km": 5.0,
+            },
+        )
+
+    def test_a_near_report_the_local_model_misses_is_material(self):
+        connection = self.connection()
+        finding = ENGINE.run_question(
+            connection, self.question(connection, local_value=4.0),
+            ANALYSES.BUILTIN_ANALYSES, self.context(),
+        )
+        self.assertEqual(finding["verdict"], ENGINE.VERDICT_MATERIAL)
+        self.assertLess(finding["metrics"]["nearest_km"], 5.0)
+        self.assertFalse(finding["metrics"]["local_in_alert"])
+        self.assertIn(
+            "targeted_inspection", [item["id"] for item in finding["options"]],
+        )
+        self.assertTrue(any("neighbour" in item for item in finding["limitations"]))
+
+    def test_a_local_model_that_already_agrees_says_nothing(self):
+        connection = self.connection()
+        finding = ENGINE.run_question(
+            connection, self.question(connection, local_value=120.0),
+            ANALYSES.BUILTIN_ANALYSES, self.context(),
+        )
+        self.assertEqual(finding["verdict"], ENGINE.VERDICT_NOT_MATERIAL)
+
+    def test_a_distant_report_says_nothing(self):
+        connection = self.connection()
+        finding = ENGINE.run_question(
+            connection,
+            self.question(connection, local_value=4.0, latitude=41.9, longitude=2.4),
+            ANALYSES.BUILTIN_ANALYSES, self.context(),
+        )
+        self.assertEqual(finding["verdict"], ENGINE.VERDICT_NOT_MATERIAL)
+
+    def test_an_old_report_falls_out_of_the_window(self):
+        connection = self.connection()
+        finding = ENGINE.run_question(
+            connection, self.question(connection, local_value=4.0, days_ago=90),
+            ANALYSES.BUILTIN_ANALYSES, self.context(),
+        )
+        self.assertEqual(finding["verdict"], ENGINE.VERDICT_INSUFFICIENT)
+        self.assertTrue(finding.get("skipped") or finding["sample_size"] == 0)
+
+
 class QuietBoardTest(ResearchTestCase):
     """Flash is the scarcest thing on the board. A quiet hour must cost nothing."""
 
@@ -576,7 +645,10 @@ class VineyardPackTest(ResearchTestCase):
         repo.mkdir()
         (repo / "agent_config.yaml").write_text(json.dumps({
             "board": {"id": "board_test"},
-            "fields": [{"id": "field_1", "name": "Camp Nord"}],
+            "fields": [{
+                "id": "field_1", "name": "Camp Nord",
+                "coordinates": {"latitude": 41.3, "longitude": 1.7},
+            }],
         }), encoding="utf-8")
         database = sqlite3.connect(repo / "goidanich.db")
         database.execute(
@@ -625,6 +697,62 @@ class VineyardPackTest(ResearchTestCase):
         self.assertEqual(
             by_analysis["ceiling_saturation"]["verdict"], "not_material",
         )
+
+    def test_the_pack_asks_about_neighbours_and_the_weather_forecast(self):
+        """Both arrive as parameters for generic analyses, not as new code."""
+        repo = self.build_repo()
+        database = sqlite3.connect(repo / "goidanich.db")
+        database.execute(
+            "CREATE TABLE weather_forecast_daily(field_id TEXT, day TEXT,"
+            " horizon_days INT, source TEXT, temp REAL)"
+        )
+        database.execute(
+            "CREATE TABLE peer_signals(timestamp TEXT, peer_id TEXT, signal_type TEXT,"
+            " value REAL, metadata TEXT, disease_id TEXT)"
+        )
+        database.execute(
+            "ALTER TABLE black_rot_daily_predictions ADD COLUMN temp REAL"
+        )
+        end = dt.date(2026, 6, 30)
+        for index in range(40):
+            day = (end - dt.timedelta(days=39 - index)).isoformat()
+            observed = 20.0 + (index % 5) * 0.3
+            database.execute(
+                "UPDATE black_rot_daily_predictions SET temp=? WHERE field_id=? AND day=?",
+                (observed, "field_1", day),
+            )
+            # A forecast running four degrees warm for the whole window.
+            database.execute(
+                "INSERT INTO weather_forecast_daily VALUES(?,?,?,?,?)",
+                ("field_1", day, 1, "open-meteo", observed + 4.0),
+            )
+        database.execute(
+            "INSERT INTO peer_signals VALUES(?,?,?,?,?,?)",
+            (
+                (self.now - dt.timedelta(days=3)).isoformat(), "agent_granada_01",
+                "contagion", 3.0,
+                json.dumps({"latitude": 41.315, "longitude": 1.705, "board_id": "La Granada"}),
+                "black_rot",
+            ),
+        )
+        database.commit()
+        database.close()
+        result = self.run_skill({
+            "mode": "cycle", "state_dir": str(self.root / "state"),
+            "repo_path": str(repo), "journal_dirs": str(self.journals),
+            "evidence_journal": str(self.root / "experiments.jsonl"),
+            "pack_dirs": str(ROOT / "skills"), "max_questions": 8,
+        })
+        by_analysis = {
+            item["analysis"]: item for item in result["investigated"] if item.get("analysis")
+        }
+        self.assertEqual(
+            by_analysis["neighbour_reports"]["verdict"], "material_unresolved",
+        )
+        self.assertEqual(
+            by_analysis["source_disagreement"]["verdict"], "material_unresolved",
+        )
+        self.assertIn("forecast", by_analysis["source_disagreement"]["open_question"])
 
     def test_an_unreachable_station_criterion_is_material(self):
         repo = self.build_repo(rh_max=91.0)

@@ -774,8 +774,165 @@ def level_shift(ctx):
     return finding
 
 
+def haversine_km(first, second):
+    try:
+        lat1, lon1 = float(first[0]), float(first[1])
+        lat2, lon2 = float(second[0]), float(second[1])
+    except (TypeError, ValueError, IndexError):
+        return None
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    delta_phi = math.radians(lat2 - lat1)
+    delta_lambda = math.radians(lon2 - lon1)
+    inner = (
+        math.sin(delta_phi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2) ** 2
+    )
+    return round(2 * 6371.0 * math.asin(min(1.0, math.sqrt(inner))), 3)
+
+
+def neighbour_reports(ctx):
+    """Do nearby reporters see something this board's own indicator does not?
+
+    Generic over networks: peer boards on a farm, stations in an air-quality
+    network, machines in a fleet. A neighbour's report is evidence about the
+    neighbour. It raises the prior here; it confirms nothing here. The analysis
+    says so in its limitations and asks for the one cheap local check.
+    """
+    params = ctx.get("params") or {}
+    source = params.get("events") or {}
+    origin = params.get("origin")
+    records = load_records(source, ctx.get("limits"))
+    window_days = float(params.get("window_days") or 14)
+    local_radius = float(params.get("local_radius_km") or 5.0)
+    regional_radius = float(params.get("regional_radius_km") or 15.0)
+    accepted = {
+        str(value).lower() for value in (params.get("accepted_labels") or [])
+    }
+    label_key = params.get("label_key")
+    metadata_key = params.get("metadata_key")
+    now = ctx.get("now") or engine.utcnow()
+    since = now - dt.timedelta(days=window_days)
+
+    events = []
+    for record in records:
+        moment = record_moment(record, params.get("time_key"))
+        if not moment or moment < since:
+            continue
+        if accepted and label_key:
+            if str(pluck(record, label_key) or "").lower() not in accepted:
+                continue
+        metadata = {}
+        if metadata_key:
+            raw = pluck(record, metadata_key)
+            if isinstance(raw, str):
+                try:
+                    metadata = json.loads(raw)
+                except ValueError:
+                    metadata = {}
+            elif isinstance(raw, dict):
+                metadata = raw
+        latitude = pluck(record, "latitude")
+        longitude = pluck(record, "longitude")
+        if latitude is None and isinstance(metadata, dict):
+            latitude = metadata.get("latitude")
+            longitude = metadata.get("longitude")
+        distance = haversine_km(origin, (latitude, longitude)) if origin else None
+        if distance is None:
+            distance = engine.as_float(pluck(record, "distance_km"), None)
+        events.append({
+            "day": moment.date().isoformat(),
+            "reporter": str(
+                pluck(record, params.get("reporter_key") or "peer_id")
+                or (metadata.get("board_id") if isinstance(metadata, dict) else "")
+                or "unknown"
+            ),
+            "distance_km": distance,
+        })
+
+    limitations = [
+        "A neighbour's report is evidence about the neighbour, not about here; it raises the prior only.",
+        "Distances come from reported coordinates and can be approximate.",
+    ]
+    finding = base_finding(
+        ctx, "neighbour_reports",
+        ctx.get("claim") or "nearby reporters see something this board does not",
+        f"Compared {len(events)} located reports from the last {window_days:g} days "
+        f"against the local indicator, using a {local_radius:g} km local radius.",
+        len(events), source, limitations,
+        (
+            (min(item["day"] for item in events), max(item["day"] for item in events))
+            if events else (None, None)
+        ),
+    )
+    if not events:
+        return None
+    located = [item for item in events if item["distance_km"] is not None]
+    if not located:
+        finding.update({
+            "verdict": engine.VERDICT_INSUFFICIENT, "confidence": 0.2,
+            "metrics": {"reports": len(events), "reason": "no report carried a location"},
+            "headline": {"reason": "unlocated"},
+        })
+        return finding
+    nearest = min(item["distance_km"] for item in located)
+    near = [item for item in located if item["distance_km"] <= local_radius]
+    regional = [item for item in located if item["distance_km"] <= regional_radius]
+    local_value = engine.as_float(params.get("local_value"))
+    if local_value is None and params.get("local_source"):
+        series = numeric_series(
+            load_records(params["local_source"], ctx.get("limits")),
+            params.get("local_key"), params.get("time_key"),
+        )
+        local_value = series[-1][1] if series else None
+    threshold = engine.as_float(params.get("alert_threshold"))
+    in_alert = (
+        local_value is not None and threshold is not None and local_value >= threshold
+    )
+    finding["metrics"] = {
+        "reports_in_window": len(events),
+        "reports_located": len(located),
+        "reports_within_local_radius": len(near),
+        "reports_within_regional_radius": len(regional),
+        "nearest_km": round(nearest, 1),
+        "reporters": sorted({item["reporter"] for item in near}) or
+                     sorted({item["reporter"] for item in located}),
+        "first_day": min(item["day"] for item in located),
+        "last_day": max(item["day"] for item in located),
+        "local_value": local_value,
+        "alert_threshold": threshold,
+        "local_in_alert": in_alert,
+        "local_radius_km": local_radius,
+    }
+    if not regional:
+        finding.update({
+            "verdict": engine.VERDICT_NOT_MATERIAL, "confidence": 0.6,
+            "headline": {"reason": "outside_regional_radius"},
+        })
+        return finding
+    if not near or in_alert:
+        # Either nothing is close, or the local indicator already agrees. Both
+        # are answers, and neither is worth an interruption.
+        finding.update({
+            "verdict": engine.VERDICT_NOT_MATERIAL, "confidence": 0.6,
+            "headline": {"near": len(near), "agrees": in_alert},
+        })
+        return finding
+    finding.update({
+        "verdict": engine.VERDICT_MATERIAL, "confidence": 0.6,
+        "headline": {"near": len(near), "nearest": round(nearest, 1)},
+        "open_question": params.get("open_question")
+        or "whether what the neighbours confirmed is already present here",
+        "options": params.get("options") or [
+            {"id": "targeted_inspection", "cost": "none", "params": {}},
+            {"id": "share_peer_context", "cost": "none", "params": {}},
+        ],
+    })
+    return finding
+
+
 BUILTIN_ANALYSES = {
     "threshold_materiality": threshold_materiality,
+    "neighbour_reports": neighbour_reports,
     "ceiling_saturation": ceiling_saturation,
     "source_disagreement": source_disagreement,
     "outcome_calibration": outcome_calibration,

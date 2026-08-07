@@ -151,9 +151,22 @@ language and pass `option_id` back with the decision.
 | `outcome_calibration` | Do this board's own alerts match the outcomes that came back? |
 | `data_gap` | Did a source stop reporting, or thin out? |
 | `level_shift` | Did the level of a series change beyond its own noise? |
+| `neighbour_reports` | Do nearby reporters see something this board's own indicator does not? |
 
 All of them read either a JSONL journal or a local SQLite table, so any
 experiment nora runs is already in a supported format.
+
+Two combinations worth naming, because they are what a networked board is for:
+
+- **Other boards.** `neighbour_reports` takes an event source carrying a time
+  and a location, an origin, and the local indicator with its alert threshold.
+  A confirmed report two kilometres away while the local model sits quiet is a
+  raised prior and a cheap local check, never a confirmation. Vineyard Guard
+  points it at `peer_signals`.
+- **Weather.** `source_disagreement` between a forecast table and what the
+  station later measured answers whether the forecast driving a risk projection
+  can still be trusted. Vineyard Guard compares `weather_forecast_daily`
+  against the observed daily temperature with a two-degree tolerance.
 
 ## Sources
 

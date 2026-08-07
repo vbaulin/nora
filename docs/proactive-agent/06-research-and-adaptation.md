@@ -53,6 +53,15 @@ the board can notice.
 | `threshold_materiality` | Did the uncertainty ever change a decision? |
 | `source_disagreement` | Do two sources that should agree, agree? |
 | `outcome_calibration` | Are the board's own alerts earning their interruptions? |
+| `neighbour_reports` | Do nearby reporters see something this board does not? |
+
+Two of these are what a networked board is for. `neighbour_reports` reads
+confirmed reports from other boards with their distance and asks whether the
+local indicator agrees — a confirmation two kilometres away raises the prior
+here and earns one cheap local check, nothing more. `source_disagreement`
+between a weather forecast and what the station later measured answers whether
+the forecast driving a risk projection can still be trusted; a source running
+four degrees warm for a month is worth knowing before the next alert.
 
 Each reads a JSONL journal or a local SQLite table, so anything nora already
 records is a valid input. Most domain questions turn out to be one of these six

@@ -1250,6 +1250,7 @@ ANOMALY_TEXTS = {
     "ca": {
         "title": "He detectat una anomalia al registre: {subject}",
         "intro": "{name}: revisant el registre del tauler he trobat una cosa a «{subject}».",
+        "intro_self": "{name}: revisant el registre del tauler he trobat una cosa.",
         "sample": "He analitzat {samples} mostres.",
         "open": "El que no puc resoldre sol és {question}.",
         "options_intro": "Opcions:",
@@ -1260,6 +1261,8 @@ ANOMALY_TEXTS = {
         "ceiling_criterion": "El canal no ha arribat mai al llindar de {criterion} tot i acostar-s'hi {approached} vegades.",
         "source_disagreement": "Dues fonts que haurien de coincidir difereixen en {periods} períodes.",
         "outcome_calibration": "Dels {alerts} avisos que he enviat, {negative} no van trobar res.",
+        "lagged_association": "{driver} va precedir {response} {lag} dies abans, de manera consistent al llarg de {samples} dies (correlació {rho}).",
+        "baseline_deviation": "Aquesta temporada {metric} és {current}, davant una mediana de {baseline} en les {periods} temporades anteriors.",
         "coverage_gaps": "Hi ha {missing} mesures que em falten per respondre preguntes que ja m'he plantejat. La més útil seria {best}: em permetria respondre {unlocked} pregunta/es que ara no puc.",
         "generic": "El patró es manté al llarg del registre.",
         "open_level_shift": "què va canviar en aquelles dates",
@@ -1272,6 +1275,7 @@ ANOMALY_TEXTS = {
     "es": {
         "title": "He detectado una anomalía en el registro: {subject}",
         "intro": "{name}: revisando el registro del tablero he encontrado algo en «{subject}».",
+        "intro_self": "{name}: revisando el registro del tablero he encontrado algo.",
         "sample": "He analizado {samples} muestras.",
         "open": "Lo que no puedo resolver solo es {question}.",
         "options_intro": "Opciones:",
@@ -1282,6 +1286,8 @@ ANOMALY_TEXTS = {
         "ceiling_criterion": "El canal nunca alcanzó el umbral de {criterion} pese a acercarse {approached} veces.",
         "source_disagreement": "Dos fuentes que deberían coincidir difieren en {periods} períodos.",
         "outcome_calibration": "De los {alerts} avisos que he enviado, {negative} no encontraron nada.",
+        "lagged_association": "{driver} precedió a {response} {lag} días antes, de forma consistente a lo largo de {samples} días (correlación {rho}).",
+        "baseline_deviation": "Esta temporada {metric} es {current}, frente a una mediana de {baseline} en las {periods} temporadas anteriores.",
         "coverage_gaps": "Hay {missing} medidas que me faltan para responder preguntas que ya me he planteado. La más útil sería {best}: me permitiría responder {unlocked} pregunta(s) que ahora no puedo.",
         "generic": "El patrón se mantiene a lo largo del registro.",
         "open_level_shift": "qué cambió en esas fechas",
@@ -1294,6 +1300,7 @@ ANOMALY_TEXTS = {
     "en": {
         "title": "I found an anomaly in the record: {subject}",
         "intro": "{name}: going through the board's own record I found something in \"{subject}\".",
+        "intro_self": "{name}: going through the board's own record I found something.",
         "sample": "I analysed {samples} samples.",
         "open": "What I cannot settle alone is {question}.",
         "options_intro": "Options:",
@@ -1304,6 +1311,8 @@ ANOMALY_TEXTS = {
         "ceiling_criterion": "The channel never reached the {criterion} threshold despite approaching it {approached} times.",
         "source_disagreement": "Two sources that should agree differ across {periods} periods.",
         "outcome_calibration": "Of the {alerts} alerts I sent, {negative} found nothing.",
+        "lagged_association": "{driver} preceded {response} by {lag} days, consistently across {samples} days (correlation {rho}).",
+        "baseline_deviation": "This season {metric} is {current}, against a median of {baseline} across the {periods} previous seasons.",
         "coverage_gaps": "There are {missing} measurements I lack for questions I have already framed. The most useful would be {best}: it would let me answer {unlocked} question(s) I cannot answer now.",
         "generic": "The pattern holds across the record.",
         "open_level_shift": "what changed around those dates",
@@ -1331,6 +1340,52 @@ def anomaly_open_question(language, finding):
     return texts.get(f"open_{analysis}")
 
 
+SERIES_LABELS = {
+    "ca": {
+        "night humidity": "la humitat nocturna",
+        "day humidity": "la humitat diürna",
+        "night temperature": "la temperatura nocturna",
+        "powdery mildew risk": "el risc d'oïdi",
+        "black-rot infection index": "l'índex d'infecció de black rot",
+        "season.rain_total_mm": "la pluja de la temporada",
+        "indices.gdd_base10": "la calor acumulada",
+    },
+    "es": {
+        "night humidity": "la humedad nocturna",
+        "day humidity": "la humedad diurna",
+        "night temperature": "la temperatura nocturna",
+        "powdery mildew risk": "el riesgo de oídio",
+        "black-rot infection index": "el índice de infección de black rot",
+        "season.rain_total_mm": "la lluvia de la temporada",
+        "indices.gdd_base10": "el calor acumulado",
+    },
+    "en": {},
+}
+
+
+def localized_series(language, label):
+    """Say a declared series in the reader's language when we know how.
+
+    Series labels are technical identifiers written once by a pack. Leaving
+    them raw drops English into the middle of a Catalan sentence.
+    """
+    text = str(label or "")
+    table = SERIES_LABELS.get(language_key(language)) or {}
+    for english, translated in table.items():
+        if text.lower().startswith(english):
+            remainder = text[len(english):].strip()
+            return f"{translated} {remainder}".strip() if remainder else translated
+    return text
+
+
+def display_subject(subject, field_name):
+    """What to call the subject in a message, rather than its internal id."""
+    text = str(subject or "").strip()
+    if text.startswith("vineyard:"):
+        return field_name or text.split(":", 1)[1]
+    return text
+
+
 def anomaly_summary(language, finding):
     """One sentence describing what the board saw, from the finding's numbers."""
     key = language_key(language)
@@ -1338,6 +1393,21 @@ def anomaly_summary(language, finding):
     metrics = finding.get("metrics") or {}
     analysis = finding.get("analysis")
     try:
+        if analysis == "lagged_association":
+            return texts["lagged_association"].format(
+                driver=localized_series(language, metrics.get("driver", "?")),
+                response=localized_series(language, metrics.get("response", "?")),
+                lag=metrics.get("strongest_lag_days", "?"),
+                rho=metrics.get("strongest_rho", "?"),
+                samples=finding.get("sample_size", 0),
+            )
+        if analysis == "baseline_deviation":
+            return texts["baseline_deviation"].format(
+                metric=localized_series(language, metrics.get("metric", "?")),
+                current=metrics.get("current_value", "?"),
+                baseline=metrics.get("baseline_median", "?"),
+                periods=metrics.get("baseline_periods", 0),
+            )
         if analysis == "data_gap":
             return texts["data_gap"].format(
                 last_day=str(metrics.get("last_record_at") or "")[:10] or "?",
@@ -1377,8 +1447,10 @@ def render_anomaly(language, field_name, finding):
     key = language_key(language)
     texts = ANOMALY_TEXTS[key]
     subject = str(finding.get("subject") or "?")
+    shown = display_subject(subject, field_name)
     parts = [
-        texts["intro"].format(name=field_name, subject=subject),
+        texts["intro_self"].format(name=field_name) if shown == field_name
+        else texts["intro"].format(name=field_name, subject=shown),
         anomaly_summary(language, finding),
         texts["sample"].format(samples=finding.get("sample_size", 0)),
     ]
@@ -1390,7 +1462,7 @@ def render_anomaly(language, field_name, finding):
         parts.append(f"{texts['options_intro']} {options}.")
     parts.append(texts["closing"])
     return {
-        "title": texts["title"].format(subject=subject),
+        "title": texts["title"].format(subject=display_subject(subject, field_name)),
         "message": " ".join(parts),
     }
 

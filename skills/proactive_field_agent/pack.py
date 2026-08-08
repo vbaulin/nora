@@ -461,7 +461,7 @@ def declare_series(context):
             },
             "key": "powdery_risk",
             "time_key": "day",
-            "label": f"powdery mildew risk at {field['name']}",
+            "label": "powdery mildew risk",
             "lags": [0, 1, 2, 3, 5, 7],
         })
         series.append({
@@ -471,7 +471,7 @@ def declare_series(context):
             "source": black_rot_source(repo, field_id, ["infection_index"]),
             "key": "infection_index",
             "time_key": "day",
-            "label": f"black-rot infection index at {field['name']}",
+            "label": "black-rot infection index",
             "lags": [0, 1, 2, 3, 5, 7],
         })
     return series

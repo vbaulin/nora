@@ -1416,6 +1416,27 @@ def investigation_candidates(connection, profile, records):
 
 RESEARCH_KIND_PREFIX = "research:"
 
+# Analyses this adapter already renders itself, in the farmer's language and
+# with its own agronomic phrasing. Delivering the engine's generic version too
+# would ask the same question twice in one thread.
+#
+# Everything else the engine finds about a field — a cross-series hypothesis, a
+# season unlike its predecessors, a forecast drifting from the station — has no
+# adapter topic and must be delivered, or the research never reaches anyone.
+ADAPTER_COVERED_ANALYSES = frozenset({
+    "threshold_materiality",   # leaf_wetness_proxy
+    "ceiling_saturation",      # leaf_wetness_proxy, systematic-station clause
+    "neighbour_reports",       # peer_signal_divergence
+    "outcome_calibration",     # alert_calibration
+})
+
+
+def deliverable_finding(finding):
+    subject = str(finding.get("subject") or "")
+    if not subject.startswith("vineyard:"):
+        return True
+    return str(finding.get("analysis") or "") not in ADAPTER_COVERED_ANALYSES
+
 
 def research_findings(params, limit=5):
     """Open findings the general engine wants a person to see.
@@ -1442,8 +1463,7 @@ def research_findings(params, limit=5):
                 item for item in research_engine.list_findings(
                     connection, verdict=research_engine.VERDICT_MATERIAL, limit=limit * 4,
                 )
-                if item.get("status") == "open"
-                and not str(item.get("subject") or "").startswith("vineyard:")
+                if item.get("status") == "open" and deliverable_finding(item)
             ]
         finally:
             connection.close()

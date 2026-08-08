@@ -147,6 +147,22 @@ separately, so a pattern that only appears at one scale stays visible as such.
 An adapter that delivers findings should present this option in the reader's
 language and pass `option_id` back with the decision.
 
+## Attending to what is missing
+
+Every other analysis studies evidence that exists. `coverage_gaps` studies its
+absence: it collects the questions the board has already framed and could not
+run, groups them by the measurement each one needs, and reports the register
+once — not once per blocked question.
+
+```text
+3 missing measurements. The most useful would be insect counts:
+it would let me answer 2 questions I cannot answer now.
+```
+
+A gap describes the board's instruments, not the field, and adding a
+measurement makes a question testable rather than making its answer positive.
+The engine asks this of itself weekly, with no pack required.
+
 ## Confirming a hypothesis drafts a study
 
 A pattern found in the record that produced it has been described, not
@@ -159,6 +175,21 @@ executor does not run. Promotion to `pending` is a human act. The skill name is
 validated as an identifier and the repeat interval and iteration count are
 clamped before anything reaches disk. The board proposes an experiment; it never
 starts one.
+
+## Drafting a model as a candidate skill
+
+A published model may be written down as a skill candidate — but only with
+sources attached and only after a person agrees. `draft_model_skill` writes a
+`SKILL.md` under `task_drafts_dir/skill_candidates/` carrying `status: draft`,
+`requires_validation: true`, its sources, and the checks it must pass. It is
+not installed, not registered, and emits nothing.
+
+The route refuses without a published source: a model nobody has written down
+is a hypothesis, and this is for putting literature into a testable shape, not
+for inventing agronomy. A disease model is not a sensor driver — its output
+becomes treatment advice — so validation against confirmed local outcomes and
+explicit human promotion stay separate acts, and product selection never comes
+from such a skill alone.
 
 ## Built-in analyses
 
@@ -173,6 +204,7 @@ starts one.
 | `neighbour_reports` | Do nearby reporters see something this board's own indicator does not? |
 | `baseline_deviation` | Is the current period unlike the periods before it? |
 | `lagged_association` | Does one series move before another, by a fixed number of days? |
+| `coverage_gaps` | Which questions has the board framed that nothing here can measure? |
 
 All of them read either a JSONL journal or a local SQLite table, so any
 experiment nora runs is already in a supported format.

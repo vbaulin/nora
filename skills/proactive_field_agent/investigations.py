@@ -964,6 +964,11 @@ OPTION_TEXTS = {
         "es": "que prepare un estudio de seguimiento para comprobarlo con datos nuevos durante las próximas semanas (lo dejo escrito y usted lo revisa antes de que arranque)",
         "en": "let me draft a follow-up study that checks this against new data over the coming weeks (I write it down and you review it before anything runs)",
     },
+    "start_measurement": {
+        "ca": "començar a mesurar-ho, si us sembla que val la pena; sense aquesta dada la pregunta es queda oberta",
+        "es": "empezar a medirlo, si le parece que vale la pena; sin ese dato la pregunta se queda abierta",
+        "en": "start measuring it, if you think it is worth it; without that value the question stays open",
+    },
     "start_insect_counts": {
         "ca": "començar a registrar recomptes de trampes o observacions d'insectes, que és l'única manera que ho pugui comprovar",
         "es": "empezar a registrar conteos de trampas u observaciones de insectos, que es la única forma de que pueda comprobarlo",
@@ -1255,6 +1260,7 @@ ANOMALY_TEXTS = {
         "ceiling_criterion": "El canal no ha arribat mai al llindar de {criterion} tot i acostar-s'hi {approached} vegades.",
         "source_disagreement": "Dues fonts que haurien de coincidir difereixen en {periods} períodes.",
         "outcome_calibration": "Dels {alerts} avisos que he enviat, {negative} no van trobar res.",
+        "coverage_gaps": "Hi ha {missing} mesures que em falten per respondre preguntes que ja m'he plantejat. La més útil seria {best}: em permetria respondre {unlocked} pregunta/es que ara no puc.",
         "generic": "El patró es manté al llarg del registre.",
         "open_level_shift": "què va canviar en aquelles dates",
         "open_ceiling_saturation": "si l'aparell està arribant al seu límit",
@@ -1276,6 +1282,7 @@ ANOMALY_TEXTS = {
         "ceiling_criterion": "El canal nunca alcanzó el umbral de {criterion} pese a acercarse {approached} veces.",
         "source_disagreement": "Dos fuentes que deberían coincidir difieren en {periods} períodos.",
         "outcome_calibration": "De los {alerts} avisos que he enviado, {negative} no encontraron nada.",
+        "coverage_gaps": "Hay {missing} medidas que me faltan para responder preguntas que ya me he planteado. La más útil sería {best}: me permitiría responder {unlocked} pregunta(s) que ahora no puedo.",
         "generic": "El patrón se mantiene a lo largo del registro.",
         "open_level_shift": "qué cambió en esas fechas",
         "open_ceiling_saturation": "si el aparato está llegando a su límite",
@@ -1297,6 +1304,7 @@ ANOMALY_TEXTS = {
         "ceiling_criterion": "The channel never reached the {criterion} threshold despite approaching it {approached} times.",
         "source_disagreement": "Two sources that should agree differ across {periods} periods.",
         "outcome_calibration": "Of the {alerts} alerts I sent, {negative} found nothing.",
+        "coverage_gaps": "There are {missing} measurements I lack for questions I have already framed. The most useful would be {best}: it would let me answer {unlocked} question(s) I cannot answer now.",
         "generic": "The pattern holds across the record.",
         "open_level_shift": "what changed around those dates",
         "open_ceiling_saturation": "whether the device is reaching its limit",
@@ -1352,6 +1360,12 @@ def anomaly_summary(language, finding):
         if analysis == "outcome_calibration":
             return texts["outcome_calibration"].format(
                 alerts=metrics.get("alerts_sent", 0), negative=metrics.get("negative", 0),
+            )
+        if analysis == "coverage_gaps":
+            return texts["coverage_gaps"].format(
+                missing=len(metrics.get("missing_measurements") or []),
+                best=metrics.get("best_single_addition") or "?",
+                unlocked=metrics.get("questions_unlocked_by_it", 0),
             )
     except (KeyError, IndexError, ValueError):
         pass

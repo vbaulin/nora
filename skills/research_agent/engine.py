@@ -709,6 +709,121 @@ def default_measurement_spec(finding, question):
     }
 
 
+SKILL_CANDIDATE_OPTION = "draft_model_skill"
+MIN_CANDIDATE_SOURCES = 1
+
+
+def skill_candidate_manifest(finding, spec, sources):
+    """A skill that does not run yet, and says so in its own front matter.
+
+    A disease model is not a sensor driver. Its output becomes treatment
+    advice, so the draft carries its sources, its unvalidated status, and the
+    checks it must pass before anybody promotes it.
+    """
+    name = re.sub(r"[^a-z0-9_]+", "_", str(spec.get("name") or "").strip().lower())
+    if not name or not re.match(r"^[a-z][a-z0-9_]*$", name):
+        raise ValueError(f"unsafe skill name: {spec.get('name')!r}")
+    lines = [
+        "---",
+        f"name: {name.replace('_', '-')}",
+        "exec_type: shell",
+        "command: ./run.sh",
+        "input_format: stdin",
+        "output_format: json",
+        "timeout: 60",
+        # The lifecycle flag the executor and the operator both read.
+        "status: draft",
+        "requires_validation: true",
+        "requires_human_promotion: true",
+        "---",
+        f"# {spec.get('title') or name} (DRAFT — not validated, not installed)",
+        "",
+        "This is a candidate skill drafted by research-agent after a human agreed "
+        "the underlying model was worth writing down. It has not been validated "
+        "against this field, and it must not be used for advice until it is.",
+        "",
+        "## Why it was drafted",
+        "",
+        f"- finding: {finding.get('id')} ({finding.get('analysis')})",
+        f"- claim: {str(finding.get('claim') or '').strip()}",
+        f"- verdict at drafting: {finding.get('verdict')}",
+        "",
+        "## Published sources",
+        "",
+    ]
+    for source in sources:
+        title = str(source.get("title") or "source").replace("\n", " ")[:200]
+        url = str(source.get("url") or "").replace("\n", " ")[:400]
+        lines.append(f"- {title} — {url}")
+    lines.extend([
+        "",
+        "A source is a candidate reference, not a validated model for this field.",
+        "",
+        "## Before this may be promoted",
+        "",
+        "1. Its inputs must exist on this board, with stated units and coverage.",
+        "2. It must be run against confirmed local outcomes and its error reported.",
+        "3. A registered-product or treatment claim must never come from this skill",
+        "   alone; product selection stays on the two-step confirmation route.",
+        "4. `validate-skill` must pass, and a person must promote it explicitly.",
+        "",
+        "Until then it emits nothing and is not registered as a capability.",
+        "",
+    ])
+    return "\n".join(lines), name
+
+
+def draft_skill_candidate(connection, finding, drafts_dir=None, spec=None):
+    """Write an unvalidated candidate skill, sources attached.
+
+    Refuses without published sources: a model nobody has written down is a
+    hypothesis, and this route is for putting literature into a testable shape,
+    not for inventing agronomy.
+    """
+    spec = dict(spec or {})
+    sources = spec.get("sources")
+    if not sources:
+        # Fall back to the research sources already stored for this subject.
+        rows = connection.execute(
+            "SELECT s.title AS title, s.url AS url FROM research_sources s "
+            "JOIN research_requests r ON r.id = s.request_id ORDER BY s.id DESC LIMIT 5"
+        ).fetchall() if _has_research_tables(connection) else []
+        sources = [{"title": row["title"], "url": row["url"]} for row in rows]
+    if len(sources) < MIN_CANDIDATE_SOURCES:
+        return {
+            "drafted": False,
+            "reason": (
+                "no published source is attached; a disease model must come from "
+                "literature before it can be drafted as a skill"
+            ),
+        }
+    directory = Path(drafts_dir or DEFAULT_DRAFTS_DIR) / "skill_candidates"
+    try:
+        content, name = skill_candidate_manifest(finding, spec, sources)
+        target = directory / name
+        target.mkdir(parents=True, exist_ok=True)
+        (target / "SKILL.md").write_text(content, encoding="utf-8")
+    except (OSError, ValueError) as exc:
+        return {"drafted": False, "reason": str(exc)}
+    return {
+        "drafted": True,
+        "path": str(target / "SKILL.md"),
+        "status": "draft",
+        "sources": len(sources),
+        "note": (
+            "Drafted only. It is not installed, not registered, and emits nothing. "
+            "Validation and promotion are separate human acts."
+        ),
+    }
+
+
+def _has_research_tables(connection):
+    row = connection.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='research_sources'"
+    ).fetchone()
+    return bool(row)
+
+
 def draft_measurement_task(connection, finding, drafts_dir=None, spec=None):
     """Write the drafted study to disk and return where it went."""
     question = None
@@ -826,6 +941,12 @@ def record_decision(connection, finding_id, decision, option_id=None, note=None,
         # The human agreed the hypothesis is worth measuring. That authorizes a
         # draft study, not a running one.
         drafted = draft_measurement_task(connection, finding, drafts_dir)
+    if decision == "accepted" and option_id == SKILL_CANDIDATE_OPTION:
+        # And agreeing that a published model is worth writing down authorizes
+        # a draft skill, not an installed one.
+        drafted = draft_skill_candidate(
+            connection, finding, drafts_dir, (finding.get("metrics") or {}).get("skill_candidate"),
+        )
     if finding.get("question_id") and decision in {"accepted", "rejected"}:
         connection.execute(
             "UPDATE questions SET status=?, updated_at=? WHERE id=?",
@@ -1051,6 +1172,8 @@ def run_question(connection, question, registry, context):
     ctx = dict(context)
     ctx["question"] = question
     ctx["params"] = question.get("params") or {}
+    # Some analyses study the board's own record rather than a series.
+    ctx["connection"] = connection
     # The question's own words, so a finding is reported as the thing that was
     # asked rather than as the shape of the analysis that answered it.
     ctx["claim"] = question.get("claim")

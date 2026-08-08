@@ -778,6 +778,139 @@ class MeasurementDraftTest(ResearchTestCase):
         self.assertIn(f"max_iterations: {ENGINE.MAX_TASK_ITERATIONS}", content)
 
 
+class CoverageRegisterTest(ResearchTestCase):
+    """The board attends to the shape of what it cannot measure."""
+
+    def blocked(self, connection, measurement, claim, scope):
+        return ENGINE.store_finding(connection, {
+            "subject": "vineyard:field_1", "analysis": "lagged_association",
+            "scope": scope, "claim": claim, "method": "m",
+            "verdict": ENGINE.VERDICT_INSUFFICIENT,
+            "metrics": {"missing_measurement": [measurement]},
+            "headline": {"missing": [measurement]},
+        })
+
+    def ask(self, connection):
+        question = ENGINE.open_question(
+            connection, "board", "questions I cannot measure", "coverage_gaps", {},
+        )
+        return ENGINE.run_question(
+            connection, question, ANALYSES.BUILTIN_ANALYSES, self.context(),
+        )
+
+    def test_a_board_with_no_gaps_says_nothing(self):
+        self.assertEqual(self.ask(self.connection())["verdict"], ENGINE.VERDICT_NOT_MATERIAL)
+
+    def test_gaps_are_ranked_by_how_many_questions_they_unlock(self):
+        connection = self.connection()
+        self.blocked(connection, "insect counts", "humid nights precede insects", "a")
+        self.blocked(connection, "insect counts", "rain precedes insects", "b")
+        self.blocked(connection, "leaf wetness", "wetness precedes black rot", "c")
+        finding = self.ask(connection)
+        self.assertEqual(finding["verdict"], ENGINE.VERDICT_MATERIAL)
+        self.assertEqual(finding["metrics"]["best_single_addition"], "insect counts")
+        self.assertEqual(finding["metrics"]["questions_unlocked_by_it"], 2)
+        self.assertEqual(len(finding["metrics"]["missing_measurements"]), 2)
+
+    def test_it_reports_once_rather_than_per_blocked_question(self):
+        connection = self.connection()
+        for index in range(5):
+            self.blocked(connection, "insect counts", f"claim {index}", f"s{index}")
+        finding = self.ask(connection)
+        self.assertEqual(len(finding["metrics"]["missing_measurements"]), 1)
+        self.assertEqual(finding["metrics"]["missing_measurements"][0]["questions_unlocked"], 5)
+
+    def test_a_gap_describes_the_instruments_not_the_field(self):
+        connection = self.connection()
+        self.blocked(connection, "insect counts", "humid nights precede insects", "a")
+        finding = self.ask(connection)
+        text = " ".join(finding["limitations"]).lower()
+        self.assertIn("not of the field", text)
+        self.assertIn("does not make the answer positive", text)
+
+
+class SkillCandidateTest(ResearchTestCase):
+    """A published model may be written down. It is never installed."""
+
+    def finding(self, connection, spec=None):
+        return ENGINE.store_finding(connection, {
+            "subject": "vineyard:field_1", "analysis": "research_review",
+            "scope": "candidate", "claim": "a published model for a new disease",
+            "method": "m", "verdict": ENGINE.VERDICT_MATERIAL,
+            "headline": {"candidate": True},
+            "metrics": {"skill_candidate": spec} if spec else {},
+        })
+
+    def spec(self, **extra):
+        return {
+            "name": "grape_anthracnose_risk",
+            "title": "Grapevine anthracnose risk",
+            "sources": [
+                {"title": "Elsinoe ampelina infection model", "url": "https://example.org/a"},
+            ],
+            **extra,
+        }
+
+    def test_a_model_with_sources_is_drafted_unvalidated(self):
+        connection = self.connection()
+        finding = self.finding(connection, self.spec())
+        stored = ENGINE.record_decision(
+            connection, finding["id"], "accepted",
+            option_id=ENGINE.SKILL_CANDIDATE_OPTION, drafts_dir=str(self.root / "drafts"),
+        )
+        drafted = stored["drafted_task"]
+        self.assertTrue(drafted["drafted"])
+        content = Path(drafted["path"]).read_text(encoding="utf-8")
+        self.assertIn("status: draft", content)
+        self.assertIn("requires_validation: true", content)
+        self.assertIn("requires_human_promotion: true", content)
+        self.assertIn("https://example.org/a", content)
+        self.assertIn("not validated, not installed", content)
+        # It must not land anywhere the runtime would discover it as a skill.
+        self.assertIn("skill_candidates", drafted["path"])
+
+    def test_a_model_without_a_published_source_is_refused(self):
+        connection = self.connection()
+        finding = self.finding(connection, self.spec(sources=[]))
+        stored = ENGINE.record_decision(
+            connection, finding["id"], "accepted",
+            option_id=ENGINE.SKILL_CANDIDATE_OPTION, drafts_dir=str(self.root / "drafts"),
+        )
+        self.assertFalse(stored["drafted_task"]["drafted"])
+        self.assertIn("literature", stored["drafted_task"]["reason"])
+
+    def test_the_draft_states_what_it_may_not_be_used_for(self):
+        connection = self.connection()
+        finding = self.finding(connection, self.spec())
+        stored = ENGINE.record_decision(
+            connection, finding["id"], "accepted",
+            option_id=ENGINE.SKILL_CANDIDATE_OPTION, drafts_dir=str(self.root / "drafts"),
+        )
+        content = Path(stored["drafted_task"]["path"]).read_text(encoding="utf-8")
+        self.assertIn("must not be used for advice until it is", content)
+        self.assertIn("product selection stays on the two-step confirmation route", content)
+        self.assertIn("validate-skill", content)
+
+    def test_an_unsafe_skill_name_is_refused(self):
+        with self.assertRaises(ValueError):
+            ENGINE.skill_candidate_manifest(
+                {"id": 1, "analysis": "a", "claim": "c", "verdict": "v"},
+                {"name": "../../etc/passwd"},
+                [{"title": "t", "url": "https://example.org"}],
+            )
+
+    def test_declining_writes_nothing(self):
+        connection = self.connection()
+        finding = self.finding(connection, self.spec())
+        drafts = self.root / "drafts"
+        stored = ENGINE.record_decision(
+            connection, finding["id"], "rejected",
+            option_id=ENGINE.SKILL_CANDIDATE_OPTION, drafts_dir=str(drafts),
+        )
+        self.assertIsNone(stored.get("drafted_task"))
+        self.assertFalse(drafts.exists())
+
+
 class PolicyTest(ResearchTestCase):
     """The board reallocates its own idle time toward what has paid off here."""
 
@@ -1041,7 +1174,13 @@ class EntrypointTest(ResearchTestCase):
         result = self.run_skill(payload)
         self.assertEqual(result["status"], "success")
         self.assertIn("safety", result)
-        self.assertEqual(result["investigated"], [])
+        # A steady board investigates only its own coverage, and finds nothing
+        # to report: no series question fires and no gap is registered.
+        self.assertEqual(
+            [item["analysis"] for item in result["investigated"]], ["coverage_gaps"],
+        )
+        self.assertEqual(result["investigated"][0]["verdict"], "not_material")
+        self.assertEqual(result["reportable"], [])
         check = self.run_skill(dict(payload, mode="self_test"))
         self.assertTrue(check["installed"])
         self.assertIn("threshold_materiality", check["checks"]["analyses"])
@@ -1232,8 +1371,14 @@ class VineyardPackTest(ResearchTestCase):
             "pack_dirs": str(ROOT / "skills"),
         })
         self.assertEqual(result["status"], "success")
-        self.assertEqual(result["declared_questions"], 0)
         self.assertEqual(result["pack_errors"], [])
+        self.assertEqual(result["packs"], ["vineyard_guard"])
+        # The engine still asks its own coverage question; the domain adds none.
+        vineyard = [
+            item for item in result["investigated"]
+            if str(item.get("subject") or "").startswith("vineyard:")
+        ]
+        self.assertEqual(vineyard, [])
 
 
 if __name__ == "__main__":

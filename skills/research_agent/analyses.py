@@ -1398,7 +1398,102 @@ def baseline_deviation(ctx):
     return finding
 
 
+def coverage_gaps(ctx):
+    """What does this board not know, and what single instrument would help most?
+
+    Every other analysis attends to evidence that exists. This one attends to
+    the shape of what is absent: questions the board has already framed and
+    cannot answer because nothing here measures the thing they need.
+
+    Reported once, as a register — not once per blocked question. A board that
+    repeats "I cannot test this" every cycle has turned a gap into nagging.
+    """
+    connection = ctx.get("connection")
+    if connection is None:
+        raise ValueError("coverage_gaps needs the research database")
+    rows = connection.execute(
+        "SELECT id, subject, analysis, claim, metrics_json FROM findings "
+        "WHERE verdict=? ORDER BY updated_at DESC LIMIT 200",
+        (engine.VERDICT_INSUFFICIENT,),
+    ).fetchall()
+    missing = {}
+    thin = []
+    for row in rows:
+        try:
+            metrics = json.loads(row["metrics_json"])
+        except (TypeError, ValueError):
+            continue
+        names = metrics.get("missing_measurement")
+        if names:
+            for name in (names if isinstance(names, list) else [names]):
+                entry = missing.setdefault(str(name), {"blocks": [], "subjects": set()})
+                entry["blocks"].append(row["claim"])
+                entry["subjects"].add(row["subject"])
+        elif metrics.get("reason") or metrics.get("minimum_days") or metrics.get("minimum"):
+            thin.append({
+                "claim": row["claim"], "analysis": row["analysis"],
+                "reason": metrics.get("reason") or "not enough observations yet",
+            })
+    ranked = sorted(
+        (
+            {
+                "measurement": name,
+                "questions_unlocked": len(entry["blocks"]),
+                "subjects": sorted(entry["subjects"]),
+                "blocks": entry["blocks"][:5],
+            }
+            for name, entry in missing.items()
+        ),
+        key=lambda item: (-item["questions_unlocked"], item["measurement"]),
+    )
+    limitations = [
+        "A gap is a description of this board's instruments, not of the field.",
+        "Adding a measurement makes a question testable; it does not make the answer positive.",
+    ]
+    finding = base_finding(
+        ctx, "coverage_gaps",
+        ctx.get("claim") or "the board has framed questions it cannot measure",
+        f"Reviewed {len(rows)} findings that could not run, and grouped them by the "
+        "measurement each one would need.",
+        len(rows), {"label": "the board's own record"}, limitations,
+    )
+    finding["metrics"] = {
+        "findings_reviewed": len(rows),
+        "missing_measurements": ranked,
+        "questions_awaiting_more_data": thin[:10],
+        "best_single_addition": ranked[0]["measurement"] if ranked else None,
+        "questions_unlocked_by_it": ranked[0]["questions_unlocked"] if ranked else 0,
+    }
+    if not ranked:
+        finding.update({
+            "verdict": engine.VERDICT_NOT_MATERIAL, "confidence": 0.7,
+            "headline": {"missing": 0},
+        })
+        return finding
+    finding.update({
+        "verdict": engine.VERDICT_MATERIAL,
+        "confidence": 0.6,
+        "headline": {
+            "missing": len(ranked),
+            "best": ranked[0]["measurement"],
+        },
+        "open_question": params_open_question(ctx) or (
+            f"whether {ranked[0]['measurement']} is worth measuring here, which would "
+            f"let me answer {ranked[0]['questions_unlocked']} question(s) I cannot answer now"
+        ),
+        "options": (ctx.get("params") or {}).get("options") or [
+            {"id": "start_measurement", "cost": "low", "params": {}},
+        ],
+    })
+    return finding
+
+
+def params_open_question(ctx):
+    return ((ctx.get("params") or {}).get("open_question")) or None
+
+
 BUILTIN_ANALYSES = {
+    "coverage_gaps": coverage_gaps,
     "threshold_materiality": threshold_materiality,
     "neighbour_reports": neighbour_reports,
     "baseline_deviation": baseline_deviation,

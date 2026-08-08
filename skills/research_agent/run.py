@@ -167,6 +167,25 @@ def load_environment(params, errors):
     return packs, registry, context
 
 
+def builtin_questions(connection, context):
+    """Questions the engine always asks about itself.
+
+    The coverage register is the board attending to its own blind spots: which
+    questions it has framed and cannot measure, and which single addition would
+    unlock the most of them. Weekly, because a gap does not change hourly.
+    """
+    return [engine.open_question(
+        connection,
+        str(context.get("subject") or "board"),
+        "the board has framed questions it cannot measure",
+        "coverage_gaps",
+        {"min_interval_seconds": 7 * 24 * 3600},
+        source=engine.SOURCE_PACK,
+        origin="builtin",
+        priority=35,
+    )]
+
+
 def pack_questions(connection, packs, context):
     """Let each pack declare the questions its domain always cares about."""
     raised = []
@@ -236,7 +255,7 @@ def mode_cycle(connection, params):
             "wrote": False,
             "packs": [pack["name"] for pack in packs],
         }
-    declared = pack_questions(connection, packs, context)
+    declared = builtin_questions(connection, context) + pack_questions(connection, packs, context)
     result = engine.cycle(
         connection, registry, context,
         budget=limits,
@@ -270,7 +289,7 @@ def mode_cycle(connection, params):
 def mode_scan(connection, params):
     errors = []
     packs, _, context = load_environment(params, errors)
-    declared = pack_questions(connection, packs, context)
+    declared = builtin_questions(connection, context) + pack_questions(connection, packs, context)
     raised = []
     for scanner in collect_scanners(packs):
         try:

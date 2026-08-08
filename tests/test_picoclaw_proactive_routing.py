@@ -27,6 +27,44 @@ class PicoclawProactiveRoutingTest(unittest.TestCase):
         self.assertEqual(run_skill.call_args_list[0].args[1]["mode"], "tick")
         self.assertEqual(run_skill.call_args_list[1].args[1]["mode"], "status")
 
+    def test_a_bare_answer_to_a_pending_question_is_routed_deterministically(self):
+        """The board asked; this is the answer; no model should have to guess.
+
+        A real board looped eight times on "Si. Están mojados", exhausted its
+        tool budget, and delivered the runtime diagnostic to the farmer.
+        """
+        with mock.patch.object(MODULE, "_run_skill", side_effect=[
+            {"stdout": {"proposal": {"id": 25, "kind": "investigation:leaf_wetness_proxy"}}},
+            {"status": "success", "mode": "proposal_context", "written": False},
+        ]) as run_skill:
+            result = MODULE._proactive_preflight("Si. Están mojados")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["route"], "proposal_context")
+        params = run_skill.call_args.args[1]
+        self.assertEqual(params["mode"], "proposal_context")
+        self.assertEqual(params["raw_text"], "Si. Están mojados")
+
+    def test_a_bare_answer_with_nothing_pending_is_left_alone(self):
+        with mock.patch.object(MODULE, "_run_skill", return_value={"stdout": {"proposal": None}}):
+            self.assertIsNone(MODULE._proactive_preflight("Si. Están mojados"))
+
+    def test_a_long_request_is_not_mistaken_for_an_answer(self):
+        self.assertFalse(MODULE._looks_like_answer_text(
+            "Si us plau expliqueu-me quin risc de mildiu tenim aquesta setmana "
+            "i quin producte hauria d'aplicar al camp nord"
+        ))
+
+    def test_answers_are_recognised_in_the_three_board_languages(self):
+        for answer in (
+            "Si. Están mojados", "Sí, mullats", "yes, wet",
+            "no", "cap", "ninguna", "fals avís", "falsa alarma",
+            "la primera", "d'acord",
+        ):
+            self.assertTrue(
+                MODULE._looks_like_answer_text(answer), f"{answer!r} should read as an answer",
+            )
+
     def test_general_operation_is_drafted_not_written(self):
         with mock.patch.object(MODULE, "_run_skill", return_value={
             "status": "confirmation_required",

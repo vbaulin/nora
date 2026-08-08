@@ -933,6 +933,56 @@ def _proposal_decision_params(content: str) -> dict | None:
     }
 
 
+# Affirmative and negative answers, and the observations a proactive question
+# actually asks for, in the three languages the board speaks.
+_ANSWER_WORDS = frozenset((
+    "si", "yes", "yep", "no", "nope", "cap", "ninguna", "none",
+    "mullat", "mullats", "mullada", "mullades", "moja", "mojado", "mojados",
+    "mojada", "mojadas", "wet", "dry", "sec", "seca", "seco",
+    "net", "neta", "limpio", "limpia", "clean",
+    "simptoma", "simptomes", "sintoma", "sintomas", "symptom", "symptoms",
+    "primera", "primer", "segona", "segunda", "first", "second",
+    "acord", "acuerdo", "ok", "vale", "endavant", "adelante", "correcte", "correcto",
+))
+
+_ANSWER_PHRASES = (
+    "fals avis", "falsa alarma", "false alarm", "d acord", "de acuerdo",
+    "la 1", "la 2", "cap simptoma", "sin sintomas", "no symptoms",
+)
+
+_MAX_ANSWER_WORDS = 12
+
+
+def _looks_like_answer_text(content: str) -> bool:
+    """A short reply that reads as an answer rather than a new request.
+
+    The board asks precise questions and the reply often carries no reference:
+    "Si. Están mojados" is a complete answer to "are the leaves wet?" and must
+    never be handed to a model to improvise a tool call from.
+    """
+    lower = _normalize_intent_text(content)
+    flattened = " ".join(re.sub(r"[^a-z0-9]+", " ", lower).split())
+    words = flattened.split()
+    if not words or len(words) > _MAX_ANSWER_WORDS:
+        return False
+    if any(word in _ANSWER_WORDS for word in words):
+        return True
+    return any(phrase in flattened for phrase in _ANSWER_PHRASES)
+
+
+def _pending_proposal_awaiting_answer() -> dict | None:
+    """The proposal the board most recently put to the farmer, if any."""
+    result = _run_skill("proactive-field-agent", {
+        "repo_path": str(GOIDANICH_REPO_PATH),
+        "mode": "next_proposal",
+    })
+    payload = result.get("stdout") if isinstance(result, dict) else None
+    if not isinstance(payload, dict):
+        return None
+    proposal = payload.get("proposal")
+    return proposal if isinstance(proposal, dict) and proposal.get("id") else None
+
+
 def _general_field_operation_intent_text(content: str) -> bool:
     lower = _normalize_intent_text(content)
     return any(marker in lower for marker in (
@@ -1003,6 +1053,13 @@ def _proactive_preflight(question: str) -> dict | None:
         call({**base, "mode": "tick"})
         call({**base, "mode": "status"})
         route = "status"
+    elif _looks_like_answer_text(question) and _pending_proposal_awaiting_answer():
+        # The board asked something and this reads as the answer, even without a
+        # PF reference. proposal_context never writes: it resolves the pending
+        # subject or returns one clarification question, which is a far better
+        # outcome than letting a model invent a tool call and exhaust its budget.
+        call({**base, "mode": "proposal_context", "raw_text": question})
+        route = "proposal_context"
     else:
         return None
     return {"route": route, "tool_calls": calls, "results": results}
@@ -1073,9 +1130,41 @@ def _looks_like_bad_vineyard_summary(text: str) -> bool:
     return powdery_low_generic or path_without_payload or short_summary
 
 
+# Runtime diagnostics that must never be delivered to a farmer. Some come from
+# this process, others from the gateway, which has its own iteration budget and
+# says so in its own words.
+_INTERNAL_DIAGNOSTIC_MARKERS = (
+    "max_tool_iterations",
+    "tool-call limit reached",
+    "tool call limit reached",
+    "config.json",
+    "increase `max",
+    "without a final response",
+    "traceback (most recent call last)",
+)
+
+_STUCK_REPLY = (
+    "No he pogut completar la comprovació ara mateix i no vull enviar-vos una "
+    "resposta a mitges. Ho torno a intentar en la propera revisió. Si era una "
+    "resposta a una pregunta meva, torneu-la a enviar amb la referència PF "
+    "corresponent i la registro."
+)
+
+
+def _is_internal_diagnostic(text: str) -> bool:
+    lower = (text or "").lower()
+    return any(marker in lower for marker in _INTERNAL_DIAGNOSTIC_MARKERS)
+
+
 def _contract_safe_text(content: str) -> str:
     text = (content or "").strip()
     lower = text.lower()
+    if _is_internal_diagnostic(text):
+        # A farmer asked a question and the runtime ran out of steps. That is
+        # ours to fix, not theirs to read: never hand over an iteration budget,
+        # a config file name, or a stack trace.
+        logger.warning("suppressed internal diagnostic before delivery: %s", text[:200])
+        return _STUCK_REPLY
     old_identity = (
         "🦞" in text
         or "lobster" in lower
@@ -1321,7 +1410,11 @@ class PicoclawAgent:
                         if on_tool_call:
                             await on_tool_call(tool_call)
                         if tool_count > MAX_TOOL_CALLS:
-                            response.text = "Tool-call limit reached before a final answer."
+                            logger.warning(
+                                "tool-call limit reached after %s calls; last call was %s(%s)",
+                                tool_count, tool_call.name, (tool_call.args or "")[:160],
+                            )
+                            response.text = _STUCK_REPLY
                             break
                         tool_result = execute_local_tool(tool_call.name, tool_call.args)
                         tool_result_text = json.dumps(tool_result, ensure_ascii=False, indent=2)

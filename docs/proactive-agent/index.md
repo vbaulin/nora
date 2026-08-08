@@ -160,9 +160,13 @@ be collapsed into one claim.
 |---|---|---|
 | Evidence memory | Timestamped observations, artifacts, provenance | Why an observation occurred |
 | Autonomous research | A finding with a verdict and its limitations | That the finding generalizes beyond the window |
+| Hypothesis formation | A tested lead-lag relationship between two series | That the driver causes the response |
+| Research policy | Which analyses have been worth running on this board | That a demoted analysis is worthless elsewhere |
+| Coverage register | The measurements this board lacks, ranked | That adding one would make its answer positive |
 | Protocol adaptation | A bounded change to sampling or a next test | That the revised protocol is universally better |
 | Skill learning | A validated and promoted capability | That every future run will pass |
 | Model learning | Versioned fitted parameters and evaluation evidence | That an LLM explanation is a trained model |
+| Federated learning | A shared model plus its measured local calibration | That it performs the same on a board that did not contribute |
 | Human correction | A confirmed label, operation, or outcome | Causality between an action and a later state |
 
 The rest of the tutorial keeps these meanings explicit.

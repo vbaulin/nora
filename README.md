@@ -52,6 +52,44 @@ printf '%s' '{"mode":"cycle","state_dir":"/tmp/nora/state","journal_dirs":"/tmp/
 A board that cannot check something has discovered nothing, and must not turn
 its own blind spot into a request for attention or hardware.
 
+### What it can find
+
+| Analysis | Question |
+|---|---|
+| `level_shift` | Did the level move beyond its own noise? |
+| `ceiling_saturation` | Is a channel piling up against a limit? |
+| `data_gap` | Did a source go quiet? |
+| `threshold_materiality` | Did an uncertainty ever change a decision? |
+| `source_disagreement` | Do two sources that should agree, agree? |
+| `outcome_calibration` | Are the board's own alerts earning their interruptions? |
+| `neighbour_reports` | Do nearby boards see something this one does not? |
+| `baseline_deviation` | Is this period unlike the ones before it? |
+| `lagged_association` | Does one series move before another, by a fixed number of days? |
+| `coverage_gaps` | Which questions has the board framed that nothing here can measure? |
+
+`lagged_association` is the one that forms hypotheses nobody wrote down. It
+pairs any two daily series — for a vineyard, night humidity against powdery
+mildew risk — and reports **precedence, never causation**. Guards are tuned so
+a negative is the easy answer: first differences, persistence across both
+halves, correction for the number of lags tried, a 30-day floor, and permanent
+memory of refuted pairs. Measured: **0 false positives in 200 noise trials**,
+100% detection of a moderate real lead.
+
+### From a pattern to a study
+
+```text
+anomaly → hypothesis → "is this worth investigating?" → you confirm → study drafted
+```
+
+A confirmed hypothesis drafts a bounded task written as `status: template`,
+which the executor does not run. Promotion is a human act. A published disease
+model can likewise be drafted as a candidate skill — sources attached, marked
+unvalidated, installed by nobody until it passes `validate-skill`.
+
+The board also reweights its own research from its own record: an analysis that
+has produced nothing material here is demoted, one whose findings you keep
+declining is demoted too, and neither is ever silenced.
+
 ## Evidence Before Explanation
 
 <table>

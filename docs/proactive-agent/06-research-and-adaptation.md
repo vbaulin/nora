@@ -150,6 +150,49 @@ humid nights precede a change in insect pressure at Camp Nord
 A hypothesis without evidence is stated as a hypothesis. It is not a finding,
 it does not reach the farmer as one, and it does not become a standing nag.
 
+## Attending to what is missing
+
+Every analysis so far studies evidence that exists. `coverage_gaps` studies its
+absence: it gathers the questions the board has framed and could not run,
+groups them by the measurement each needs, and reports the register **once**.
+
+```text
+3 missing measurements. The most useful would be insect counts:
+it would let me answer 2 questions I cannot answer now.
+```
+
+Once, not per blocked question — a board that repeats "I cannot test this"
+every cycle has turned a gap into nagging. A gap describes the board's
+instruments, not the field, and adding a measurement makes a question testable
+rather than making its answer positive.
+
+## Drafting a published model as a skill
+
+Research sometimes finds a model in the literature that this board does not
+have. It may be written down as a candidate skill — with sources attached, and
+only after a person agrees. The manifest carries `status: draft`,
+`requires_validation: true`, its sources, and the checks it must pass, and it
+lands where nothing discovers it as a capability.
+
+The route refuses without a published source: a model nobody has written down
+is a hypothesis, and this is for putting literature into testable shape, not
+for inventing agronomy. A disease model is not a sensor driver, because its
+output becomes treatment advice — so validation against confirmed local
+outcomes and promotion stay separate human acts.
+
+## Learning what to research
+
+The board keeps a record of what its own research has been worth. An analysis
+with no material finding after six attempts is demoted; one whose findings the
+human keeps declining is demoted too, because that is evidence about the
+question rather than about the human; a productive one gains a little.
+
+Demoted, never silenced: an analysis that stops running can never earn its
+place back, so the penalty is bounded and the floor is one.
+
+Two boards do not have the same questions worth asking, and only a board's own
+record can say which it is.
+
 ## Reusing a skill instead of reimplementing it
 
 A board that already has a skill for seasonal averages should not have that

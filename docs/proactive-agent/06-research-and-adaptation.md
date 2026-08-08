@@ -105,6 +105,37 @@ of a moderate real lead. Pair discovery is budgeted at two new pairs per cycle.
 It reports **precedence, never causation**. The question it asks is whether the
 driver acts on the response, *or both follow something else*.
 
+### Confirming is what starts a study
+
+A pattern found in the record that produced it has been *described*, not
+confirmed. So the first option on a hypothesis is not "act on it" but "shall I
+test it properly?", and accepting it drafts a prospective study:
+
+```yaml
+- id: study_lagged_association_1
+  name: "Prospective check: night humidity precedes powdery mildew risk"
+  status: template          # the executor does not run a template
+  steps:
+    - id: measure
+      action: call_skill
+      parameters:
+        skill_name: research_agent
+        mode: investigate
+        question_id: 1
+      repeat:
+        interval_sec: 604800
+        max_iterations: 8
+        journal_path: /tmp/monitors/study_lagged_association_1.jsonl
+```
+
+Re-running the same question weekly on data collected *after* the hypothesis
+was formed is the cheapest honest experiment, and it needs no new hardware.
+
+The draft is written as `status: template`, which the executor ignores.
+Promoting it to `pending` is a human act. The board proposes an experiment; it
+does not start one, and the skill name is validated and the repeat bounds
+clamped before anything is written.
+
 ### When it cannot test its own hypothesis
 
 Humid nights plausibly bear on insect pressure, and this board has no insect

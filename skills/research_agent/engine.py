@@ -23,6 +23,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import sqlite3
 import sys
 import time
@@ -553,6 +554,121 @@ def mark_finding(connection, finding_id, status):
 DEEPER_ANALYSIS_OPTION = "deeper_analysis"
 DEEPER_ANALYSIS_FACTOR = 4
 
+MEASUREMENT_TASK_OPTION = "run_measurement_task"
+DEFAULT_DRAFTS_DIR = "/root/.picoclaw/workspace/research/task_drafts"
+MAX_TASK_ITERATIONS = 52
+MIN_TASK_INTERVAL_SECONDS = 300
+
+
+def yaml_scalar(value):
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    text = str(value)
+    if text == "" or any(character in text for character in ":#{}[],&*?|-<>=!%@`\"'\n"):
+        return '"' + text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ") + '"'
+    return text
+
+
+def measurement_task_yaml(finding, spec):
+    """A bounded task a person can read, then enable — never enabled here.
+
+    Written as `status: template`, which the executor does not run. Promotion is
+    a human act, and that is the whole point of drafting rather than starting.
+    """
+    identifier = re.sub(r"[^a-z0-9_]+", "_", f"study_{finding.get('analysis')}_{finding.get('id')}".lower())
+    skill = str(spec.get("skill") or "research_agent")
+    if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", skill):
+        raise ValueError(f"unsafe skill name: {skill}")
+    interval = max(MIN_TASK_INTERVAL_SECONDS, int(spec.get("interval_sec") or 604800))
+    iterations = max(1, min(MAX_TASK_ITERATIONS, int(spec.get("max_iterations") or 8)))
+    journal = str(spec.get("journal_path") or f"/tmp/monitors/{identifier}.jsonl")
+    parameters = dict(spec.get("params") or {})
+    parameters.setdefault("skill_name", skill)
+    lines = [
+        f"- id: {identifier}",
+        f"  name: {yaml_scalar(spec.get('name') or finding.get('claim') or identifier)}",
+        "  priority: 3",
+        # A draft is never runnable. A person promotes it to `pending`.
+        "  status: template",
+        f"  # Drafted by research-agent from finding {finding.get('id')}"
+        f" ({finding.get('analysis')}), after a human agreed it was worth measuring.",
+        f"  # Question: {str(finding.get('claim') or '')[:160]}",
+        "  steps:",
+        "    - id: measure",
+        "      action: call_skill",
+        "      parameters:",
+    ]
+    for key, value in sorted(parameters.items()):
+        lines.append(f"        {key}: {yaml_scalar(value)}")
+    lines.extend([
+        "      expect:",
+        "        status: success",
+        f"      timeout: {int(spec.get('timeout') or 120)}",
+        "      on_fail: continue",
+        "      repeat:",
+        f"        interval_sec: {interval}",
+        f"        max_iterations: {iterations}",
+        f"        journal_path: {journal}",
+        "        continue_on_fail: true",
+        "  success_criteria:",
+        f"    - test -f {journal}",
+        "",
+    ])
+    return "\n".join(lines)
+
+
+def default_measurement_spec(finding, question):
+    """Re-test the same question on data collected after it was asked.
+
+    A relationship found in the record it was discovered in has not been
+    confirmed; it has been described. Re-running it prospectively, weekly, is
+    the cheapest honest next experiment and needs no new hardware.
+    """
+    if not question:
+        return None
+    return {
+        "name": f"Prospective check: {finding.get('claim') or question.get('claim')}",
+        "skill": "research_agent",
+        "params": {
+            "mode": "investigate",
+            "question_id": int(question["id"]),
+        },
+        "interval_sec": 7 * 24 * 3600,
+        "max_iterations": 8,
+        "timeout": 120,
+    }
+
+
+def draft_measurement_task(connection, finding, drafts_dir=None, spec=None):
+    """Write the drafted study to disk and return where it went."""
+    question = None
+    if finding.get("question_id"):
+        row = connection.execute(
+            "SELECT * FROM questions WHERE id=?", (finding["question_id"],)
+        ).fetchone()
+        question = question_dict(row) if row else None
+    spec = spec or (question or {}).get("params", {}).get("measurement_task") \
+        or default_measurement_spec(finding, question)
+    if not spec:
+        return {"drafted": False, "reason": "no measurement is defined for this finding"}
+    directory = Path(drafts_dir or DEFAULT_DRAFTS_DIR)
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        content = measurement_task_yaml(finding, spec)
+        name = re.sub(r"[^a-z0-9_]+", "_", f"study_{finding.get('analysis')}_{finding.get('id')}".lower())
+        path = directory / f"{name}.yaml"
+        path.write_text(content, encoding="utf-8")
+    except (OSError, ValueError) as exc:
+        return {"drafted": False, "reason": str(exc)}
+    return {
+        "drafted": True,
+        "path": str(path),
+        "status": "template",
+        "note": "Drafted only. Promote it to status: pending to let the executor run it.",
+    }
+
 
 def widen_question(connection, question, factor=DEEPER_ANALYSIS_FACTOR):
     """Open the same question again over a wider window.
@@ -614,7 +730,7 @@ def record_external_decision(connection, subject, analysis, decision, option_id=
 
 
 def record_decision(connection, finding_id, decision, option_id=None, note=None,
-                    source="human"):
+                    source="human", drafts_dir=None):
     """Store what the human decided, and honour a refusal as an answer."""
     finding = finding_by_id(connection, finding_id)
     if not finding:
@@ -637,6 +753,11 @@ def record_decision(connection, finding_id, decision, option_id=None, note=None,
         (status, now, finding["id"]),
     )
     follow_up = None
+    drafted = None
+    if decision == "accepted" and option_id == MEASUREMENT_TASK_OPTION:
+        # The human agreed the hypothesis is worth measuring. That authorizes a
+        # draft study, not a running one.
+        drafted = draft_measurement_task(connection, finding, drafts_dir)
     if finding.get("question_id") and decision in {"accepted", "rejected"}:
         connection.execute(
             "UPDATE questions SET status=?, updated_at=? WHERE id=?",
@@ -657,6 +778,8 @@ def record_decision(connection, finding_id, decision, option_id=None, note=None,
             "claim": follow_up.get("claim"),
             "analysis": follow_up.get("analysis"),
         }
+    if record is not None and drafted:
+        record["drafted_task"] = drafted
     return record
 
 

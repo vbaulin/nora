@@ -1292,6 +1292,10 @@ def lagged_association(ctx):
             "follow something else"
         ),
         "options": params.get("options") or [
+            # A pattern found in the record that produced it has been described,
+            # not confirmed. The cheapest honest next step is to say so and
+            # offer to test it prospectively.
+            {"id": "run_measurement_task", "cost": "none", "params": {}},
             {"id": "deeper_analysis", "cost": "none", "params": {}},
             {"id": "confirm_context_change", "cost": "none", "params": {}},
         ],

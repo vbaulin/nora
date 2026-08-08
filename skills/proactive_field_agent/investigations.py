@@ -959,6 +959,11 @@ OPTION_TEXTS = {
         "es": "que le dedique más tiempo yo mismo: repetir el análisis sobre una ventana mucho más larga del registro y decirle si el patrón se mantiene",
         "en": "let me spend more of my own time on it: repeat the analysis over a much longer window and tell you whether the pattern holds",
     },
+    "run_measurement_task": {
+        "ca": "que prepari un estudi de seguiment per comprovar-ho amb dades noves durant les properes setmanes (me'l deixo escrit i el reviseu abans que s'engegui)",
+        "es": "que prepare un estudio de seguimiento para comprobarlo con datos nuevos durante las próximas semanas (lo dejo escrito y usted lo revisa antes de que arranque)",
+        "en": "let me draft a follow-up study that checks this against new data over the coming weeks (I write it down and you review it before anything runs)",
+    },
     "start_insect_counts": {
         "ca": "començar a registrar recomptes de trampes o observacions d'insectes, que és l'única manera que ho pugui comprovar",
         "es": "empezar a registrar conteos de trampas u observaciones de insectos, que es la única forma de que pueda comprobarlo",

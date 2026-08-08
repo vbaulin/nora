@@ -347,6 +347,7 @@ def mode_decision(connection, params):
         connection, int(finding_id), decision,
         option_id=params.get("option_id"), note=params.get("note"),
         source=str(params.get("source") or "human"),
+        drafts_dir=params.get("task_drafts_dir"),
     )
     if not record:
         return {"status": "error", "error": "finding not found"}
@@ -364,8 +365,13 @@ def mode_decision(connection, params):
         "finding": engine.compact_finding(record),
         "option_id": params.get("option_id"),
         "watch": watch,
+        "follow_up_question": record.get("follow_up_question"),
+        "drafted_task": record.get("drafted_task"),
         "executed_action": False,
-        "message": "Decision recorded. Nothing was executed automatically.",
+        "message": (
+            "Decision recorded. Nothing was executed automatically; a drafted study "
+            "is written as status: template and runs only after a person promotes it."
+        ),
     }
 
 

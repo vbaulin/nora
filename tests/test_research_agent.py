@@ -683,6 +683,101 @@ class DiscoveryTest(ResearchTestCase):
         )
 
 
+class MeasurementDraftTest(ResearchTestCase):
+    """Confirming a hypothesis drafts a study. It never starts one."""
+
+    def hypothesis(self, connection):
+        random.seed(3)
+        driver = [random.gauss(0, 1) for _ in range(140)]
+        response = [
+            (driver[index - 3] * 1.2 if index >= 3 else 0.0) + random.gauss(0, 0.5)
+            for index in range(140)
+        ]
+        base = dt.date(2026, 4, 1)
+        records = lambda values, key: [
+            {"timestamp": (base + dt.timedelta(days=index)).isoformat(), key: value}
+            for index, value in enumerate(values)
+        ]
+        question = ENGINE.open_question(
+            connection, "vineyard:field_1",
+            "night humidity precedes powdery mildew risk", "lagged_association",
+            {
+                "driver": {"source": {"kind": "inline", "records": records(driver, "x")},
+                           "key": "x", "label": "night humidity"},
+                "response": {"source": {"kind": "inline", "records": records(response, "y")},
+                             "key": "y", "label": "powdery risk"},
+            },
+        )
+        return ENGINE.run_question(
+            connection, question, ANALYSES.BUILTIN_ANALYSES, self.context(),
+        )
+
+    def test_a_hypothesis_offers_to_be_measured(self):
+        finding = self.hypothesis(self.connection())
+        self.assertEqual(finding["verdict"], ENGINE.VERDICT_MATERIAL)
+        self.assertEqual(
+            [option["id"] for option in finding["options"]][0],
+            ENGINE.MEASUREMENT_TASK_OPTION,
+        )
+
+    def test_confirming_drafts_a_task_that_cannot_run(self):
+        connection = self.connection()
+        finding = self.hypothesis(connection)
+        drafts = self.root / "drafts"
+        stored = ENGINE.record_decision(
+            connection, finding["id"], "accepted",
+            option_id=ENGINE.MEASUREMENT_TASK_OPTION, drafts_dir=str(drafts),
+        )
+        drafted = stored["drafted_task"]
+        self.assertTrue(drafted["drafted"])
+        path = Path(drafted["path"])
+        self.assertEqual(path.parent, drafts)
+        content = path.read_text(encoding="utf-8")
+        self.assertIn("status: template", content)
+        self.assertNotIn("status: pending", content)
+        self.assertIn("skill_name: research_agent", content)
+        self.assertIn(f"from finding {finding['id']}", content)
+
+    def test_the_draft_is_a_prospective_test_of_the_same_question(self):
+        connection = self.connection()
+        finding = self.hypothesis(connection)
+        stored = ENGINE.record_decision(
+            connection, finding["id"], "accepted",
+            option_id=ENGINE.MEASUREMENT_TASK_OPTION,
+            drafts_dir=str(self.root / "drafts"),
+        )
+        content = Path(stored["drafted_task"]["path"]).read_text(encoding="utf-8")
+        self.assertIn(f"question_id: {finding['question_id']}", content)
+        self.assertIn("interval_sec: 604800", content)
+        self.assertIn("max_iterations: 8", content)
+
+    def test_declining_drafts_nothing(self):
+        connection = self.connection()
+        finding = self.hypothesis(connection)
+        drafts = self.root / "drafts"
+        stored = ENGINE.record_decision(
+            connection, finding["id"], "rejected",
+            option_id=ENGINE.MEASUREMENT_TASK_OPTION, drafts_dir=str(drafts),
+        )
+        self.assertIsNone(stored.get("drafted_task"))
+        self.assertFalse(drafts.exists())
+
+    def test_a_draft_may_not_name_an_arbitrary_command(self):
+        with self.assertRaises(ValueError):
+            ENGINE.measurement_task_yaml(
+                {"id": 1, "analysis": "x", "claim": "c"},
+                {"skill": "rm -rf /; echo"},
+            )
+
+    def test_repeat_bounds_are_clamped(self):
+        content = ENGINE.measurement_task_yaml(
+            {"id": 2, "analysis": "x", "claim": "c"},
+            {"skill": "research_agent", "interval_sec": 1, "max_iterations": 100000},
+        )
+        self.assertIn(f"interval_sec: {ENGINE.MIN_TASK_INTERVAL_SECONDS}", content)
+        self.assertIn(f"max_iterations: {ENGINE.MAX_TASK_ITERATIONS}", content)
+
+
 class QuietBoardTest(ResearchTestCase):
     """Flash is the scarcest thing on the board. A quiet hour must cost nothing."""
 

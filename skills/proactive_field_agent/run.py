@@ -307,6 +307,14 @@ def load_yaml(path):
         with open(path, "r", encoding="utf-8") as handle:
             return yaml.safe_load(handle) or {}
     except (ImportError, OSError, ValueError):
+        # JSON is valid YAML but the dependency-free fallback below only reads
+        # the indented board/fields subset. Without this a JSON-formatted
+        # configuration on a board with no PyYAML reports no configured fields
+        # at all, which reads as an empty vineyard rather than a parse failure.
+        try:
+            return json.loads(Path(path).read_text(encoding="utf-8")) or {}
+        except (OSError, ValueError):
+            pass
         return load_yaml_subset(path)
 
 
@@ -2548,6 +2556,7 @@ def mirror_decision_to_research(proposal, decision, note, params):
                     connection, finding_id, decision,
                     option_id=params.get("option_id"), note=note or None,
                     source="proactive-field-agent",
+                    drafts_dir=params.get("task_drafts_dir"),
                 )
                 record = {
                     "finding_id": finding_id,
@@ -2556,6 +2565,7 @@ def mirror_decision_to_research(proposal, decision, note, params):
                     "decision": decision,
                     "option_id": params.get("option_id"),
                     "follow_up_question": (stored or {}).get("follow_up_question"),
+                    "drafted_task": (stored or {}).get("drafted_task"),
                 }
             else:
                 record = research_engine.record_external_decision(

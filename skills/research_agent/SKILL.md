@@ -57,6 +57,12 @@ parameters:
   - name: idle_recheck_seconds
     type: number
     default: 21600
+  - name: task_drafts_dir
+    type: string
+    default: /root/.picoclaw/workspace/research/task_drafts
+  - name: max_new_pairs
+    type: integer
+    default: 2
   - name: status
     type: string
   - name: verdict
@@ -140,6 +146,19 @@ separately, so a pattern that only appears at one scale stays visible as such.
 
 An adapter that delivers findings should present this option in the reader's
 language and pass `option_id` back with the decision.
+
+## Confirming a hypothesis drafts a study
+
+A pattern found in the record that produced it has been described, not
+confirmed. The first option on a hypothesis is therefore `run_measurement_task`:
+"shall I test this properly?" Accepting it writes a bounded task that re-runs
+the same question weekly on data collected *after* the hypothesis was formed.
+
+The draft is written to `task_drafts_dir` as `status: template`, which the
+executor does not run. Promotion to `pending` is a human act. The skill name is
+validated as an identifier and the repeat interval and iteration count are
+clamped before anything reaches disk. The board proposes an experiment; it never
+starts one.
 
 ## Built-in analyses
 

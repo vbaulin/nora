@@ -389,6 +389,7 @@ def mode_self_test(connection, params):
         "journals_found": journals,
         "open_questions": len(engine.list_questions(connection, status=engine.QUESTION_OPEN)),
         "armed_watches": len(engine.armed_watches(connection)),
+        "analysis_policy": engine.analysis_policy(connection),
     }
     installed = integrity == "ok" and bool(registry)
     return {
@@ -454,6 +455,16 @@ def main():
                     question_id=params.get("question_id"),
                     note=params.get("note"),
                     expires_days=int(params.get("watch_days") or 180),
+                ),
+            }
+        elif mode == "policy":
+            result = {
+                "status": "success", "mode": mode,
+                "policy": engine.refresh_policy(connection),
+                "note": (
+                    "Priority adjustment per analysis, from this board's own record. "
+                    "An analysis is demoted, never silenced: one that stops running "
+                    "can never earn its place back."
                 ),
             }
         elif mode == "watches":

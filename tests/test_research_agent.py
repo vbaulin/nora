@@ -778,6 +778,58 @@ class MeasurementDraftTest(ResearchTestCase):
         self.assertIn(f"max_iterations: {ENGINE.MAX_TASK_ITERATIONS}", content)
 
 
+class PolicyTest(ResearchTestCase):
+    """The board reallocates its own idle time toward what has paid off here."""
+
+    def store(self, connection, analysis, verdict, count, declined=0):
+        for index in range(count):
+            record = ENGINE.store_finding(connection, {
+                "subject": "bench", "analysis": analysis, "scope": f"{analysis}-{index}",
+                "claim": "c", "method": "m", "verdict": verdict,
+                "headline": {"n": index},
+            })
+            if index < declined:
+                ENGINE.record_decision(connection, record["id"], "rejected")
+
+    def test_an_analysis_that_never_finds_anything_is_demoted(self):
+        connection = self.connection()
+        self.store(connection, "data_gap", ENGINE.VERDICT_NOT_MATERIAL, 8)
+        policy = ENGINE.refresh_policy(connection)
+        self.assertEqual(policy["data_gap"]["delta"], ENGINE.POLICY_MAX_PENALTY)
+        question = ENGINE.open_question(
+            connection, "bench", "did it stop", "data_gap", {"k": 1}, priority=50,
+        )
+        self.assertEqual(question["priority"], 50 + ENGINE.POLICY_MAX_PENALTY)
+
+    def test_a_productive_analysis_gains_a_little(self):
+        connection = self.connection()
+        self.store(connection, "level_shift", ENGINE.VERDICT_MATERIAL, 8)
+        policy = ENGINE.refresh_policy(connection)
+        self.assertEqual(policy["level_shift"]["delta"], ENGINE.POLICY_MAX_BONUS)
+
+    def test_findings_the_human_keeps_declining_are_demoted_too(self):
+        connection = self.connection()
+        self.store(connection, "ceiling_saturation", ENGINE.VERDICT_MATERIAL, 8, declined=8)
+        policy = ENGINE.refresh_policy(connection)
+        self.assertLess(policy["ceiling_saturation"]["delta"], 0)
+
+    def test_a_demoted_analysis_is_never_silenced(self):
+        connection = self.connection()
+        self.store(connection, "data_gap", ENGINE.VERDICT_NOT_MATERIAL, 20)
+        ENGINE.refresh_policy(connection)
+        question = ENGINE.open_question(
+            connection, "bench", "did it stop", "data_gap", {"k": 2}, priority=10,
+        )
+        # Still runnable: an analysis that stops running can never redeem itself.
+        self.assertGreaterEqual(question["priority"], 1)
+        self.assertEqual(question["status"], ENGINE.QUESTION_OPEN)
+
+    def test_too_little_history_changes_nothing(self):
+        connection = self.connection()
+        self.store(connection, "level_shift", ENGINE.VERDICT_NOT_MATERIAL, 3)
+        self.assertEqual(ENGINE.refresh_policy(connection), {})
+
+
 class QuietBoardTest(ResearchTestCase):
     """Flash is the scarcest thing on the board. A quiet hour must cost nothing."""
 

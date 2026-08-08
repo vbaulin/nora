@@ -179,6 +179,34 @@ Run the analyses without contacting anyone:
 printf '%s' '{"mode":"investigate"}' | /root/nano-os-agent/skills/proactive_field_agent/run.sh
 ```
 
+## Telegram Groups
+
+A bot in a Telegram group does not receive every message, and no board-side
+configuration changes that. Telegram enables **privacy mode** by default, and a
+bot in that mode receives only:
+
+- commands addressed to it (`/command@this_bot`);
+- general commands when it was the last bot to speak;
+- inline messages sent through it;
+- **replies to its own messages**.
+
+A farmer who types `Si. Están mojados` as an ordinary group message is never
+delivered to the bot. The same words sent with Telegram's *reply* action on the
+board's message arrive normally. Two ways to make a group work:
+
+1. **Ask farmers to reply** to the board's message rather than typing a new one.
+   This is also the better habit: the quoted message carries the `PF-<id>`.
+2. **Disable privacy mode**: `/setprivacy` → Disable in @BotFather, then remove
+   and re-add the bot to the group. The bot then receives all group messages,
+   which is a real privacy decision for everyone in that group.
+
+Direct conversations are unaffected: a bot always receives private messages.
+
+A short reply that reads as an answer is routed deterministically even without
+a `PF-<id>`, through read-only `proposal_context`, so a group reply that does
+reach the board is resolved against the pending proposal rather than handed to
+a model to interpret.
+
 ## Farmer Feedback
 
 Farmer feedback is a two-step structured workflow:

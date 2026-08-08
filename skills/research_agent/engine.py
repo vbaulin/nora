@@ -207,6 +207,72 @@ def connect(state_dir):
     return connection
 
 
+# How far the board may reweight its own research on its own record. An
+# analysis that has never paid off here loses priority; one that keeps producing
+# real findings gains a little. The floor matters more than the ceiling: an
+# analysis that is never run again can never redeem itself, so it is demoted,
+# never silenced.
+POLICY_MIN_ATTEMPTS = 6
+POLICY_MAX_PENALTY = -20
+POLICY_MAX_BONUS = 10
+
+
+def refresh_policy(connection):
+    """Reweight analyses by what they have actually produced on this board.
+
+    Two boards do not have the same questions worth asking. A humidity ceiling
+    check earns its place on a station that sits near saturation and wastes
+    cycles on one that never does, and only the board's own record can tell
+    which it is.
+    """
+    rows = connection.execute(
+        """
+        SELECT f.analysis AS analysis,
+               COUNT(*) AS findings,
+               SUM(CASE WHEN f.verdict=? THEN 1 ELSE 0 END) AS material,
+               SUM(CASE WHEN d.decision IN ('rejected','corrected') THEN 1 ELSE 0 END) AS declined
+        FROM findings f
+        LEFT JOIN decisions d ON d.finding_id = f.id
+        GROUP BY f.analysis
+        """,
+        (VERDICT_MATERIAL,),
+    ).fetchall()
+    policy = {}
+    for row in rows:
+        findings = int(row["findings"] or 0)
+        if findings < POLICY_MIN_ATTEMPTS:
+            continue
+        material = int(row["material"] or 0)
+        declined = int(row["declined"] or 0)
+        if material == 0:
+            delta = POLICY_MAX_PENALTY
+        elif declined >= material:
+            # It finds things, and the human keeps saying they were not worth
+            # raising. That is evidence about the question, not about the human.
+            delta = POLICY_MAX_PENALTY // 2
+        else:
+            share = material / findings
+            delta = int(round(POLICY_MAX_BONUS * min(1.0, share * 2)))
+        policy[row["analysis"]] = {
+            "delta": max(POLICY_MAX_PENALTY, min(POLICY_MAX_BONUS, delta)),
+            "findings": findings, "material": material, "declined": declined,
+        }
+    meta_set(connection, "analysis_policy", json_text(policy))
+    return policy
+
+
+def analysis_policy(connection):
+    try:
+        return json.loads(meta_get(connection, "analysis_policy") or "{}")
+    except ValueError:
+        return {}
+
+
+def policy_delta(connection, analysis):
+    entry = analysis_policy(connection).get(str(analysis))
+    return int((entry or {}).get("delta") or 0)
+
+
 def meta_get(connection, key, default=None):
     row = connection.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
     return row["value"] if row else default
@@ -314,6 +380,8 @@ def open_question(connection, subject, claim, analysis, params=None, source=SOUR
         "subject": subject, "analysis": analysis,
         "params": normalize_params(params),
     })
+    # What this analysis has been worth on this board, so far.
+    priority = max(1, min(100, int(priority) + policy_delta(connection, analysis)))
     known = connection.execute(
         "SELECT * FROM questions WHERE fingerprint=?", (fingerprint,)
     ).fetchone()
@@ -1041,6 +1109,9 @@ def cycle(connection, registry, context, budget=None, scanners=(), journal_path=
                 "budget": limits, "wrote": False,
             }
     started = time.monotonic()
+    # Reweight before raising anything, so this cycle's new questions already
+    # reflect what has been worth asking here.
+    refresh_policy(connection)
     raised = []
     for scanner in scanners:
         if time.monotonic() - started > limits["max_seconds"]:

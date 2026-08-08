@@ -29,8 +29,8 @@ def weather_db():
     return connection
 
 
-def add_weather(connection, timestamp, temp, humidity, rain, suffix=""):
-    for code, value in ((32, temp), (33, humidity), (35, rain)):
+def add_weather(connection, timestamp, temp, humidity, rain, solar=0.0, suffix=""):
+    for code, value in ((32, temp), (33, humidity), (35, rain), (36, solar)):
         connection.execute(
             "INSERT INTO meteo_raw VALUES (?, ?, ?, ?, ?)",
             (f"{timestamp}-{code}-{suffix}", "D9", code, timestamp, value),
@@ -39,9 +39,9 @@ def add_weather(connection, timestamp, temp, humidity, rain, suffix=""):
 
 def test_hourly_aggregation_and_rain_totals_do_not_double_average():
     connection = weather_db()
-    add_weather(connection, "2026-04-01T10:00:00+02:00", 20.0, 60.0, 0.4, "a")
-    add_weather(connection, "2026-04-01T10:30:00+02:00", 22.0, 70.0, 0.6, "b")
-    add_weather(connection, "2026-04-02T22:00:00+02:00", 12.0, 95.0, 2.0, "c")
+    add_weather(connection, "2026-04-01T10:00:00+02:00", 20.0, 60.0, 0.4, 600.0, "a")
+    add_weather(connection, "2026-04-01T10:30:00+02:00", 22.0, 70.0, 0.6, 800.0, "b")
+    add_weather(connection, "2026-04-02T22:00:00+02:00", 12.0, 95.0, 2.0, 0.0, "c")
     observations, counts = MODULE.fetch_observations(
         connection,
         "D9",
@@ -54,7 +54,8 @@ def test_hourly_aggregation_and_rain_totals_do_not_double_average():
     first = observations[datetime(2026, 4, 1, 10, tzinfo=ZoneInfo("Europe/Madrid"))]
     assert first["temp"] == 21.0
     assert first["humidity"] == 65.0
-    records = MODULE.daily_records(observations, date(2026, 4, 1), date(2026, 4, 2))
+    assert first["solar_w_m2"] == 700.0
+    records = MODULE.daily_records(observations, date(2026, 4, 1), date(2026, 4, 2), 41.2)
     summary = MODULE.subset_statistics(records)
     assert summary["rain_total_mm"] == 3.0
     observed_coverage = MODULE.coverage(counts, date(2026, 4, 1), date(2026, 4, 2))

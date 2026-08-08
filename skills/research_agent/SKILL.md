@@ -153,6 +153,7 @@ language and pass `option_id` back with the decision.
 | `level_shift` | Did the level of a series change beyond its own noise? |
 | `neighbour_reports` | Do nearby reporters see something this board's own indicator does not? |
 | `baseline_deviation` | Is the current period unlike the periods before it? |
+| `lagged_association` | Does one series move before another, by a fixed number of days? |
 
 All of them read either a JSONL journal or a local SQLite table, so any
 experiment nora runs is already in a supported format.
@@ -168,6 +169,47 @@ Two combinations worth naming, because they are what a networked board is for:
   station later measured answers whether the forecast driving a risk projection
   can still be trusted. Vineyard Guard compares `weather_forecast_daily`
   against the observed daily temperature with a two-degree tolerance.
+
+## Forming a hypothesis nobody wrote down
+
+The analyses above answer questions somebody registered. `lagged_association`
+is different: any two daily series can be paired, so the board can propose a
+relationship of its own — "night humidity precedes powdery risk by three days"
+— and test it.
+
+That is also where an autonomous researcher starts finding patterns in noise,
+so every guard exists to make a negative result the easy outcome:
+
+- the test runs on **first differences**, so two series that merely share a
+  seasonal trend cannot produce a result;
+- the effect must **persist in both halves** of the record with the same sign;
+- the significance level is **corrected for the number of lags tried**, so
+  trying more lags does not buy a result;
+- a **sample floor** of 30 overlapping days, and a minimum effect size;
+- a pair answered `not_material` **stays answered**, so a refuted relationship
+  is never re-proposed.
+
+Measured on synthetic series: 0 false positives in 200 trials of independent
+noise, and 100% detection of a moderate real lead. It reports **precedence,
+never causation** — a driver that leads a response may share a cause with it or
+proxy for it, and the finding says so.
+
+Pair discovery is budgeted with `max_new_pairs` (default two per cycle) and
+draws on numeric journal channels plus the series a pack declares:
+
+```python
+"series": declare_series,   # [{name, role: driver|response|both, source, key,
+                            #   hours: [22, 6], statistic, label, window_label}]
+```
+
+`hours` derives a daily feature from an hourly series, which is what separates
+night from day: a window that wraps midnight belongs to the morning it ends on.
+
+When a hypothesis needs a series the board does not have, the verdict is
+`insufficient_data` naming the missing measurement, with an option to start
+collecting it. The board may state that humid nights could bear on insect
+pressure; without trap counts it cannot test it, and it says so rather than
+implying a result.
 
 ## Sources
 

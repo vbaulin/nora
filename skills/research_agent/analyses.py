@@ -1023,6 +1023,282 @@ def neighbour_reports(ctx):
     return finding
 
 
+# ---------------------------------------------------------------------------
+# Cross-series association
+#
+# The step from "run the registered analyses" to "form a hypothesis" is where
+# an autonomous researcher starts inventing relationships nobody declared. That
+# is exactly where one starts finding patterns in noise, so every guard here
+# exists to make a negative result the easy outcome: detrending, a persistence
+# requirement across halves, correction for the number of lags tried, a floor
+# on sample size, and a memory of pairs already refuted.
+# ---------------------------------------------------------------------------
+
+MIN_ASSOCIATION_PAIRS = 30
+DEFAULT_LAGS = (0, 1, 2, 3, 5, 7)
+ASSOCIATION_ALPHA = 0.01
+MIN_ABS_RHO = 0.35
+
+
+def rank(values):
+    """Fractional ranks, ties averaged."""
+    order = sorted(range(len(values)), key=lambda index: values[index])
+    ranks = [0.0] * len(values)
+    position = 0
+    while position < len(order):
+        stop = position
+        while stop + 1 < len(order) and values[order[stop + 1]] == values[order[position]]:
+            stop += 1
+        shared = (position + stop) / 2.0 + 1.0
+        for index in range(position, stop + 1):
+            ranks[order[index]] = shared
+        position = stop + 1
+    return ranks
+
+
+def spearman(left, right):
+    """Rank correlation: no distributional assumption, robust to outliers."""
+    if len(left) != len(right) or len(left) < 3:
+        return None
+    left_ranks, right_ranks = rank(left), rank(right)
+    mean_left = sum(left_ranks) / len(left_ranks)
+    mean_right = sum(right_ranks) / len(right_ranks)
+    covariance = sum(
+        (a - mean_left) * (b - mean_right) for a, b in zip(left_ranks, right_ranks)
+    )
+    spread_left = math.sqrt(sum((a - mean_left) ** 2 for a in left_ranks))
+    spread_right = math.sqrt(sum((b - mean_right) ** 2 for b in right_ranks))
+    if spread_left <= 0 or spread_right <= 0:
+        return None
+    return covariance / (spread_left * spread_right)
+
+
+def correlation_p_value(rho, count):
+    """Two-sided p-value via Fisher's z. Adequate for the sample floor used here."""
+    if rho is None or count < 6:
+        return 1.0
+    bounded = max(-0.999999, min(0.999999, rho))
+    z = math.atanh(bounded) * math.sqrt(count - 3)
+    return math.erfc(abs(z) / math.sqrt(2.0))
+
+
+def difference(series):
+    """First differences remove a shared trend or slow seasonal drift.
+
+    Two series that both rise through a season correlate beautifully and mean
+    nothing. Testing the day-to-day changes asks the sharper question: when the
+    driver moves, does the response move afterwards?
+    """
+    return [later - earlier for earlier, later in zip(series, series[1:])]
+
+
+def daily_window_series(records, key, time_key=None, hours=None, statistic="mean"):
+    """Collapse an hourly series into one value per day for a window of hours.
+
+    A window that wraps midnight belongs to the day it ends on, which is what
+    "last night" means to the person reading the result.
+    """
+    buckets = {}
+    start_hour, end_hour = (hours or (0, 23))
+    wraps = start_hour > end_hour
+    for record in records:
+        moment = record_moment(record, time_key)
+        value = engine.as_float(pluck(record, key))
+        if moment is None or value is None:
+            continue
+        hour = moment.hour
+        inside = (hour >= start_hour or hour <= end_hour) if wraps else (
+            start_hour <= hour <= end_hour
+        )
+        if not inside:
+            continue
+        day = moment.date()
+        if wraps and hour >= start_hour:
+            day = day + dt.timedelta(days=1)
+        buckets.setdefault(day.isoformat(), []).append(value)
+    reducer = {
+        "mean": lambda values: sum(values) / len(values),
+        "max": max,
+        "min": min,
+        "sum": sum,
+        "median": median,
+    }.get(statistic, lambda values: sum(values) / len(values))
+    return {day: reducer(values) for day, values in buckets.items() if values}
+
+
+def daily_series(records, key, time_key=None, statistic="mean"):
+    """One value per day from records that may be hourly or already daily."""
+    return daily_window_series(records, key, time_key, (0, 23), statistic)
+
+
+def load_daily(ctx, spec):
+    """Build a day -> value map from a declared series specification."""
+    records = load_records(spec.get("source") or {}, ctx.get("limits"))
+    hours = spec.get("hours")
+    statistic = spec.get("statistic") or "mean"
+    if hours:
+        return daily_window_series(
+            records, spec.get("key"), spec.get("time_key"), tuple(hours), statistic,
+        )
+    return daily_series(records, spec.get("key"), spec.get("time_key"), statistic)
+
+
+def series_label(spec):
+    base = spec.get("label") or spec.get("key") or "series"
+    window = spec.get("window_label")
+    if window and window.lower() not in base.lower():
+        return f"{window} {base}"
+    return base
+
+
+def lagged_association(ctx):
+    """Does one series move before another, by a fixed number of days?
+
+    This is the engine's hypothesis test rather than another fixed rule: any
+    two daily series can be paired, and the honest answer is usually no.
+
+    It reports precedence, never causation. A driver that leads a response by
+    three days may share a cause with it, may be a proxy for it, or may be a
+    coincidence that survived the guards.
+    """
+    params = ctx.get("params") or {}
+    driver_spec = params.get("driver") or {}
+    response_spec = params.get("response") or {}
+    lags = [int(value) for value in (params.get("lags") or DEFAULT_LAGS)]
+    minimum = int(params.get("min_pairs") or MIN_ASSOCIATION_PAIRS)
+    alpha = float(params.get("alpha") or ASSOCIATION_ALPHA)
+    min_rho = float(params.get("min_abs_rho") or MIN_ABS_RHO)
+
+    limitations = [
+        "Precedence is not causation: a leading series may share a cause with the response, or proxy for it.",
+        "Only days present in both series are compared; gaps reduce the sample rather than the conclusion.",
+        "Day-to-day changes are tested, so a shared seasonal trend cannot create the result.",
+        f"{len(lags)} lags were tried and the significance level was corrected for that.",
+    ]
+    driver_daily = load_daily(ctx, driver_spec)
+    response_daily = load_daily(ctx, response_spec)
+    finding = base_finding(
+        ctx, "lagged_association",
+        ctx.get("claim") or "one series precedes another",
+        f"Tested whether {series_label(driver_spec)} precedes {series_label(response_spec)} "
+        f"at lags {lags} days, on first differences, requiring the same direction in both "
+        f"halves of the record.",
+        0, driver_spec.get("source") or {}, limitations,
+    )
+
+    missing = [
+        series_label(spec) for spec, daily in
+        ((driver_spec, driver_daily), (response_spec, response_daily))
+        if len(daily) < minimum
+    ]
+    if missing:
+        finding.update({
+            "verdict": engine.VERDICT_INSUFFICIENT,
+            "confidence": 0.2,
+            "sample_size": min(len(driver_daily), len(response_daily)),
+            "metrics": {
+                "driver_days": len(driver_daily),
+                "response_days": len(response_daily),
+                "minimum_days": minimum,
+                "missing_measurement": missing,
+            },
+            "headline": {"missing": missing},
+            "options": params.get("missing_options") or [],
+            "open_question": params.get("missing_question"),
+        })
+        return finding
+
+    results = []
+    for lag in lags:
+        days = sorted(set(response_daily) & {
+            (dt.date.fromisoformat(day) + dt.timedelta(days=lag)).isoformat()
+            for day in driver_daily
+        })
+        pairs = []
+        for day in days:
+            driver_day = (dt.date.fromisoformat(day) - dt.timedelta(days=lag)).isoformat()
+            if driver_day in driver_daily:
+                pairs.append((driver_daily[driver_day], response_daily[day]))
+        if len(pairs) < minimum:
+            continue
+        driver_values = difference([pair[0] for pair in pairs])
+        response_values = difference([pair[1] for pair in pairs])
+        rho = spearman(driver_values, response_values)
+        if rho is None:
+            continue
+        half = len(driver_values) // 2
+        first = spearman(driver_values[:half], response_values[:half])
+        second = spearman(driver_values[half:], response_values[half:])
+        persistent = (
+            first is not None and second is not None
+            and (first > 0) == (second > 0) == (rho > 0)
+        )
+        results.append({
+            "lag_days": lag,
+            "pairs": len(driver_values),
+            "rho": round(rho, 3),
+            "p_value": round(correlation_p_value(rho, len(driver_values)), 5),
+            "first_half_rho": round(first, 3) if first is not None else None,
+            "second_half_rho": round(second, 3) if second is not None else None,
+            "persistent": persistent,
+        })
+
+    if not results:
+        finding.update({
+            "verdict": engine.VERDICT_INSUFFICIENT, "confidence": 0.2,
+            "sample_size": 0,
+            "metrics": {"reason": "no lag had enough overlapping days", "minimum_days": minimum},
+            "headline": {"reason": "no_overlap"},
+        })
+        return finding
+
+    corrected = alpha / max(1, len(results))
+    surviving = [
+        item for item in results
+        if item["p_value"] <= corrected
+        and abs(item["rho"]) >= min_rho
+        and item["persistent"]
+    ]
+    best = max(results, key=lambda item: abs(item["rho"]))
+    finding["sample_size"] = best["pairs"]
+    finding["metrics"] = {
+        "driver": series_label(driver_spec),
+        "response": series_label(response_spec),
+        "lags_tested": lags,
+        "corrected_alpha": round(corrected, 5),
+        "minimum_abs_rho": min_rho,
+        "by_lag": results,
+        "strongest_lag_days": best["lag_days"],
+        "strongest_rho": best["rho"],
+        "surviving_lags": [item["lag_days"] for item in surviving],
+    }
+    if not surviving:
+        finding.update({
+            "verdict": engine.VERDICT_NOT_MATERIAL, "confidence": 0.7,
+            "headline": {"surviving": 0},
+        })
+        return finding
+    leading = max(surviving, key=lambda item: abs(item["rho"]))
+    finding.update({
+        "verdict": engine.VERDICT_MATERIAL,
+        "confidence": min(0.8, 0.4 + 0.1 * len(surviving)),
+        "headline": {
+            "lag": leading["lag_days"],
+            "direction": "up" if leading["rho"] > 0 else "down",
+        },
+        "open_question": params.get("open_question") or (
+            f"whether {series_label(driver_spec)} is acting on "
+            f"{series_label(response_spec)} {leading['lag_days']} days later, or both "
+            "follow something else"
+        ),
+        "options": params.get("options") or [
+            {"id": "deeper_analysis", "cost": "none", "params": {}},
+            {"id": "confirm_context_change", "cost": "none", "params": {}},
+        ],
+    })
+    return finding
+
+
 def baseline_deviation(ctx):
     """Is the current period unusual against the periods that came before it?
 
@@ -1122,6 +1398,7 @@ BUILTIN_ANALYSES = {
     "threshold_materiality": threshold_materiality,
     "neighbour_reports": neighbour_reports,
     "baseline_deviation": baseline_deviation,
+    "lagged_association": lagged_association,
     "ceiling_saturation": ceiling_saturation,
     "source_disagreement": source_disagreement,
     "outcome_calibration": outcome_calibration,
@@ -1265,4 +1542,75 @@ def scan_feedback(connection, context, limits=None):
     return raised
 
 
-BUILTIN_SCANNERS = (scan_journals, scan_feedback)
+def journal_series(context, limits):
+    """Numeric channels in monitor journals, usable as drivers or responses."""
+    series = []
+    for path in journal_paths(context.get("journal_dirs"), int(limits.get("max_files") or 12)):
+        records = read_journal(path, max_lines=int(limits.get("max_lines") or 400))
+        if len(records) < MIN_ASSOCIATION_PAIRS:
+            continue
+        for key in numeric_keys(records, limit=4):
+            values = [value for _, value in numeric_series(records, key)]
+            if len(values) < MIN_ASSOCIATION_PAIRS or mad(values) <= 0:
+                continue
+            series.append({
+                "name": f"{path.stem}.{key}",
+                "role": "both",
+                "subject": path.stem,
+                "source": {"kind": "journal", "path": str(path), "label": path.name},
+                "key": key,
+                "label": f"{key} in {path.stem}",
+            })
+    return series
+
+
+def scan_series_pairs(connection, context, limits=None):
+    """Propose cross-series hypotheses nobody wrote down in advance.
+
+    This is where the board starts inventing relationships, so it is bounded on
+    purpose: only pairs of distinct series, only a couple of new questions per
+    cycle, and never a pair that has already been asked and refuted — a
+    question answered `not_material` stays answered, which is how a negative
+    result is remembered.
+    """
+    limits = dict(engine.DEFAULT_BUDGET, **(limits or {}))
+    catalogue = list(context.get("series") or [])
+    catalogue.extend(journal_series(context, limits))
+    drivers = [item for item in catalogue if item.get("role") in {"driver", "both"}]
+    responses = [item for item in catalogue if item.get("role") in {"response", "both"}]
+    budget = int(context.get("max_new_pairs") or 2)
+    raised = []
+    for response in responses:
+        for driver in drivers:
+            if len(raised) >= budget:
+                return raised
+            if driver["name"] == response["name"]:
+                continue
+            if driver.get("subject") and driver.get("subject") == response.get("subject") \
+                    and driver.get("key") == response.get("key"):
+                continue
+            params = {
+                "driver": {key: driver[key] for key in
+                           ("source", "key", "time_key", "hours", "statistic", "label",
+                            "window_label") if key in driver},
+                "response": {key: response[key] for key in
+                             ("source", "key", "time_key", "hours", "statistic", "label",
+                              "window_label") if key in response},
+                "lags": list(driver.get("lags") or response.get("lags") or DEFAULT_LAGS),
+            }
+            question = engine.open_question(
+                connection,
+                response.get("subject") or context.get("subject") or "board",
+                f"{driver.get('label') or driver['name']} precedes "
+                f"{response.get('label') or response['name']}",
+                "lagged_association", params,
+                source=engine.SOURCE_SIGNAL,
+                origin=f"pair:{driver['name']}->{response['name']}",
+                priority=40,
+            )
+            if question.get("created"):
+                raised.append(question)
+    return raised
+
+
+BUILTIN_SCANNERS = (scan_journals, scan_feedback, scan_series_pairs)

@@ -860,6 +860,10 @@ def run_question(connection, question, registry, context):
     ctx = dict(context)
     ctx["question"] = question
     ctx["params"] = question.get("params") or {}
+    # The question's own words, so a finding is reported as the thing that was
+    # asked rather than as the shape of the analysis that answered it.
+    ctx["claim"] = question.get("claim")
+    ctx["subject"] = question.get("subject")
     try:
         finding = analysis(ctx)
     except Exception as exc:  # analyses are pack code

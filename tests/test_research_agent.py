@@ -524,6 +524,165 @@ class SkillBackedEvidenceTest(ResearchTestCase):
         self.assertEqual(ENGINE.due_questions(connection, limit=3), [])
 
 
+class LaggedAssociationTest(ResearchTestCase):
+    """A hypothesis generator that finds patterns in noise is worse than none."""
+
+    def series(self, values, key, start=dt.date(2026, 4, 1)):
+        return [
+            {"timestamp": (start + dt.timedelta(days=index)).isoformat(), key: value}
+            for index, value in enumerate(values)
+        ]
+
+    def ask(self, driver, response, lags=(0, 1, 2, 3, 5, 7), **extra):
+        context = self.context()
+        context["params"] = {
+            "driver": {"source": {"kind": "inline", "records": self.series(driver, "x")},
+                       "key": "x", "label": "driver"},
+            "response": {"source": {"kind": "inline", "records": self.series(response, "y")},
+                         "key": "y", "label": "response"},
+            "lags": list(lags),
+            **extra,
+        }
+        context["subject"] = "bench"
+        return ANALYSES.lagged_association(context)
+
+    def noise(self, seed, count=140):
+        random.seed(seed)
+        return [random.gauss(0, 1) for _ in range(count)]
+
+    def test_independent_noise_produces_no_hypothesis(self):
+        for seed in range(12):
+            finding = self.ask(self.noise(seed), self.noise(seed + 100))
+            self.assertEqual(
+                finding["verdict"], ENGINE.VERDICT_NOT_MATERIAL,
+                f"seed {seed} invented a relationship in noise",
+            )
+
+    def test_a_shared_seasonal_trend_is_not_a_relationship(self):
+        random.seed(7)
+        trend = [index * 0.05 for index in range(140)]
+        left = [trend[index] + random.gauss(0, 1) for index in range(140)]
+        right = [trend[index] + random.gauss(0, 1) for index in range(140)]
+        finding = self.ask(left, right)
+        self.assertEqual(finding["verdict"], ENGINE.VERDICT_NOT_MATERIAL)
+
+    def test_a_real_lead_is_found_at_the_right_lag(self):
+        random.seed(3)
+        driver = [random.gauss(0, 1) for _ in range(140)]
+        response = [
+            (driver[index - 3] * 1.2 if index >= 3 else 0.0) + random.gauss(0, 0.5)
+            for index in range(140)
+        ]
+        finding = self.ask(driver, response)
+        self.assertEqual(finding["verdict"], ENGINE.VERDICT_MATERIAL)
+        self.assertEqual(finding["metrics"]["strongest_lag_days"], 3)
+        self.assertIn(3, finding["metrics"]["surviving_lags"])
+
+    def test_it_reports_precedence_and_refuses_causation(self):
+        random.seed(3)
+        driver = [random.gauss(0, 1) for _ in range(140)]
+        response = [
+            (driver[index - 3] * 1.2 if index >= 3 else 0.0) + random.gauss(0, 0.5)
+            for index in range(140)
+        ]
+        finding = self.ask(driver, response)
+        text = " ".join(finding["limitations"]).lower()
+        self.assertIn("not causation", text)
+        self.assertIn("or both", finding["open_question"])
+        self.assertNotIn("causes", finding["open_question"])
+
+    def test_trying_more_lags_does_not_buy_a_result(self):
+        finding = self.ask(self.noise(21), self.noise(22), lags=tuple(range(11)))
+        self.assertEqual(finding["verdict"], ENGINE.VERDICT_NOT_MATERIAL)
+        self.assertLess(finding["metrics"]["corrected_alpha"], 0.01)
+
+    def test_too_little_overlap_is_not_a_conclusion(self):
+        finding = self.ask(self.noise(1, count=20), self.noise(2, count=20))
+        self.assertEqual(finding["verdict"], ENGINE.VERDICT_INSUFFICIENT)
+
+    def test_a_missing_response_series_names_what_it_would_need(self):
+        context = self.context()
+        context["params"] = {
+            "driver": {"source": {"kind": "inline", "records": self.series(self.noise(4), "x")},
+                       "key": "x", "label": "night humidity"},
+            "response": {"source": {"kind": "inline", "records": []},
+                         "key": "count", "label": "insect counts"},
+            "missing_question": "whether insect pressure follows humid nights here",
+            "missing_options": [{"id": "start_insect_counts", "cost": "low", "params": {}}],
+        }
+        finding = ANALYSES.lagged_association(context)
+        self.assertEqual(finding["verdict"], ENGINE.VERDICT_INSUFFICIENT)
+        self.assertEqual(finding["metrics"]["missing_measurement"], ["insect counts"])
+        self.assertEqual(
+            [option["id"] for option in finding["options"]], ["start_insect_counts"],
+        )
+
+    def test_night_and_day_windows_are_separated(self):
+        base = dt.date(2026, 5, 1)
+        records = []
+        for day in range(3):
+            for hour in range(24):
+                moment = dt.datetime.combine(
+                    base + dt.timedelta(days=day), dt.time(hour), dt.timezone.utc,
+                )
+                records.append({
+                    "timestamp": moment.isoformat(),
+                    "rh": 90.0 if (hour >= 22 or hour <= 6) else 40.0,
+                })
+        night = ANALYSES.daily_window_series(records, "rh", "timestamp", (22, 6), "mean")
+        day_time = ANALYSES.daily_window_series(records, "rh", "timestamp", (10, 18), "mean")
+        self.assertTrue(all(value == 90.0 for value in night.values()))
+        self.assertTrue(all(value == 40.0 for value in day_time.values()))
+        # A window that wraps midnight belongs to the morning it ends on.
+        self.assertIn((base + dt.timedelta(days=1)).isoformat(), night)
+
+
+class DiscoveryTest(ResearchTestCase):
+    """The board may pair series nobody paired for it, within a budget."""
+
+    def catalogue(self):
+        return [
+            {"name": "a", "role": "driver", "subject": "weather",
+             "source": {"kind": "inline", "records": []}, "key": "x", "label": "driver a"},
+            {"name": "b", "role": "driver", "subject": "weather",
+             "source": {"kind": "inline", "records": []}, "key": "y", "label": "driver b"},
+            {"name": "c", "role": "response", "subject": "field",
+             "source": {"kind": "inline", "records": []}, "key": "z", "label": "response c"},
+        ]
+
+    def test_pairs_are_proposed_within_a_budget(self):
+        connection = self.connection()
+        context = self.context(series=self.catalogue(), max_new_pairs=1)
+        first = ANALYSES.scan_series_pairs(connection, context)
+        self.assertEqual(len(first), 1)
+        second = ANALYSES.scan_series_pairs(connection, context)
+        self.assertEqual(len(second), 1)
+        self.assertNotEqual(first[0]["id"], second[0]["id"])
+        self.assertEqual(len(ANALYSES.scan_series_pairs(connection, context)), 0)
+
+    def test_a_refuted_pair_is_not_proposed_again(self):
+        connection = self.connection()
+        context = self.context(series=self.catalogue(), max_new_pairs=5)
+        raised = ANALYSES.scan_series_pairs(connection, context)
+        self.assertEqual(len(raised), 2)
+        for question in raised:
+            ENGINE.mark_question(connection, question["id"], status=ENGINE.QUESTION_ANSWERED)
+        self.assertEqual(ANALYSES.scan_series_pairs(connection, context), [])
+        self.assertEqual(
+            ENGINE.list_questions(connection, status=ENGINE.QUESTION_OPEN), [],
+        )
+
+    def test_a_series_is_never_paired_with_itself(self):
+        connection = self.connection()
+        both = [{
+            "name": "solo", "role": "both", "subject": "s",
+            "source": {"kind": "inline", "records": []}, "key": "v", "label": "solo",
+        }]
+        self.assertEqual(
+            ANALYSES.scan_series_pairs(connection, self.context(series=both)), [],
+        )
+
+
 class QuietBoardTest(ResearchTestCase):
     """Flash is the scarcest thing on the board. A quiet hour must cost nothing."""
 

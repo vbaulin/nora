@@ -106,6 +106,10 @@ def build_context(params, packs):
     context = {
         "journal_dirs": journal_dirs,
         "calibration_sources": {},
+        # Series a domain considers meaningful as drivers or responses. The
+        # engine pairs them to form cross-series hypotheses nobody declared.
+        "series": [],
+        "max_new_pairs": int(params.get("max_new_pairs") or 2),
         "now": engine.utcnow(),
         "limits": {"max_lines": int(params.get("max_lines") or 400)},
         "params_in": {
@@ -113,6 +117,14 @@ def build_context(params, packs):
             if key in {"repo_path", "state_dir", "subject"}
         },
     }
+    for pack in packs:
+        declared = pack.get("series")
+        if callable(declared):
+            try:
+                declared = declared(context)
+            except Exception:
+                declared = []
+        context["series"].extend(declared or [])
     # A pack may declare its calibration sources as a callable so it can resolve
     # deployment paths at run time rather than at import time.
     for pack in packs:

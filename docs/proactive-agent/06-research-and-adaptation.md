@@ -66,6 +66,59 @@ later measured answers whether the forecast driving a risk projection can still
 be trusted. `baseline_deviation` asks the question a person actually asks about
 weather: not "is it warm" but "is this season unlike the last several".
 
+## Forming a hypothesis nobody wrote down
+
+Everything above answers a question somebody registered. That makes the board a
+scheduler for a research catalogue — useful, but not a scientist. The step
+across is `lagged_association`: any two daily series can be paired, so the
+board can propose a relationship of its own and test it.
+
+Given hourly humidity and a disease model, it forms and answers this without a
+rule for it:
+
+```text
+night humidity precedes powdery mildew risk at Camp Nord
+  -> material_unresolved, lag 3 days, rho 0.83, n=146
+day humidity precedes powdery mildew risk        -> not_material
+night temperature precedes powdery mildew risk   -> not_material
+night humidity precedes black-rot index          -> not_material
+```
+
+The negatives matter as much as the positive: the pattern is specific to
+*night* humidity, and a daily mean would have hidden it.
+
+### Why it does not find patterns in noise
+
+A generator that proposes relationships will find them in randomness unless
+every guard pushes toward the negative:
+
+- the test runs on **first differences**, so two series that merely share a
+  seasonal trend cannot produce a result;
+- the effect must **persist in both halves** of the record with the same sign;
+- significance is **corrected for the number of lags tried**;
+- a floor of **30 overlapping days** and a minimum effect size;
+- a refuted pair **stays refuted** and is never proposed again.
+
+Measured: 0 false positives in 200 trials of independent noise, 100% detection
+of a moderate real lead. Pair discovery is budgeted at two new pairs per cycle.
+
+It reports **precedence, never causation**. The question it asks is whether the
+driver acts on the response, *or both follow something else*.
+
+### When it cannot test its own hypothesis
+
+Humid nights plausibly bear on insect pressure, and this board has no insect
+measurement at all. The verdict is `insufficient_data` naming what is missing:
+
+```text
+humid nights precede a change in insect pressure at Camp Nord
+  -> insufficient_data: missing ['insect counts']
+     option: start recording trap counts, the only way I could ever test it
+```
+
+A hypothesis without evidence is stated as a hypothesis. It is not a finding,
+it does not reach the farmer as one, and it does not become a standing nag.
+
 ## Reusing a skill instead of reimplementing it
 
 A board that already has a skill for seasonal averages should not have that

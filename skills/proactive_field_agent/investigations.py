@@ -959,6 +959,11 @@ OPTION_TEXTS = {
         "es": "que le dedique más tiempo yo mismo: repetir el análisis sobre una ventana mucho más larga del registro y decirle si el patrón se mantiene",
         "en": "let me spend more of my own time on it: repeat the analysis over a much longer window and tell you whether the pattern holds",
     },
+    "start_insect_counts": {
+        "ca": "començar a registrar recomptes de trampes o observacions d'insectes, que és l'única manera que ho pugui comprovar",
+        "es": "empezar a registrar conteos de trampas u observaciones de insectos, que es la única forma de que pueda comprobarlo",
+        "en": "start recording trap counts or insect observations, which is the only way I could ever test it",
+    },
     "check_source": {
         "ca": "que comproveu si l'aparell o la tasca que genera aquestes dades segueix funcionant",
         "es": "que compruebe si el aparato o la tarea que genera esos datos sigue funcionando",

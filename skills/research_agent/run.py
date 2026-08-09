@@ -109,6 +109,10 @@ def build_context(params, packs):
         # Series a domain considers meaningful as drivers or responses. The
         # engine pairs them to form cross-series hypotheses nobody declared.
         "series": [],
+        # Schema-discovered evidence sources. A domain supplies a database or
+        # journal root, while the engine infers tables, temporal axes, numeric
+        # channels and repeated entity partitions from the data itself.
+        "catalog_sources": [],
         "max_new_pairs": int(params.get("max_new_pairs") or 2),
         "now": engine.utcnow(),
         "limits": {"max_lines": int(params.get("max_lines") or 400)},
@@ -125,6 +129,13 @@ def build_context(params, packs):
             except Exception:
                 declared = []
         context["series"].extend(declared or [])
+        catalogues = pack.get("catalog_sources")
+        if callable(catalogues):
+            try:
+                catalogues = catalogues(context)
+            except Exception:
+                catalogues = []
+        context["catalog_sources"].extend(catalogues or [])
     # A pack may declare its calibration sources as a callable so it can resolve
     # deployment paths at run time rather than at import time.
     for pack in packs:
@@ -194,13 +205,28 @@ def pack_questions(connection, packs, context):
         if not callable(declare):
             continue
         try:
+            current_ids = set()
             for item in declare(engine.pack_context(pack, context)) or []:
-                raised.append(engine.open_question(
+                question = engine.open_question(
                     connection,
                     item["subject"], item["claim"], item["analysis"],
                     item.get("params"), source=item.get("source", engine.SOURCE_PACK),
                     origin=pack["name"], priority=int(item.get("priority", 50)),
-                ))
+                )
+                raised.append(question)
+                current_ids.add(int(question["id"]))
+            # Packs describe standing model checks. When a pack stops declaring
+            # one, close its open row so removed application logic cannot keep
+            # asking through persisted state. Findings and decisions remain.
+            stale = connection.execute(
+                "SELECT id FROM questions WHERE source=? AND origin=? AND status=?",
+                (engine.SOURCE_PACK, pack["name"], engine.QUESTION_OPEN),
+            ).fetchall()
+            for row in stale:
+                if int(row["id"]) not in current_ids:
+                    engine.mark_question(
+                        connection, row["id"], status=engine.QUESTION_CLOSED,
+                    )
         except Exception as exc:  # pack code
             raised.append({"pack": pack["name"], "error": str(exc)})
     return raised
@@ -309,6 +335,42 @@ def mode_scan(connection, params):
             }
             for item in raised + declared if isinstance(item, dict) and item.get("id")
         ],
+    }
+
+
+def mode_catalog(params):
+    """Describe inferred channels without returning their measurements."""
+    errors = []
+    packs, _, context = load_environment(params, errors)
+    limits = budget_from(params)
+    catalogue = list(context.get("series") or [])
+    catalogue.extend(analyses.catalog_series(context, limits))
+    catalogue.extend(analyses.journal_series(context, limits))
+    compact = []
+    seen = set()
+    for item in catalogue:
+        name = str(item.get("name") or "")
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        source = item.get("source") or {}
+        compact.append({
+            "name": name,
+            "subject": item.get("subject"),
+            "label": item.get("label"),
+            "source_kind": source.get("kind"),
+            "table": source.get("table"),
+            "key": item.get("key"),
+            "time_key": item.get("time_key"),
+            "entity_values": source.get("where_values") or [],
+            "adaptive_clock_windows": bool(item.get("discover_time_windows")),
+        })
+    result_limit = max(1, min(int(params.get("limit") or 300), 1000))
+    return {
+        "status": "success", "mode": "catalog",
+        "count": len(compact), "series": compact[:result_limit],
+        "truncated": len(compact) > result_limit,
+        "packs": [pack["name"] for pack in packs], "pack_errors": errors,
     }
 
 
@@ -434,6 +496,8 @@ def main():
             result = mode_cycle(connection, params)
         elif mode == "scan":
             result = mode_scan(connection, params)
+        elif mode == "catalog":
+            result = mode_catalog(params)
         elif mode == "investigate":
             result = mode_investigate(connection, params)
         elif mode == "questions":

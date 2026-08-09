@@ -72,22 +72,21 @@ weather: not "is it warm" but "is this season unlike the last several".
 
 Everything above answers a question somebody registered. That makes the board a
 scheduler for a research catalogue — useful, but not a scientist. The step
-across is `lagged_association`: any two daily series can be paired, so the
-board can propose a relationship of its own and test it.
+across is schema discovery plus `lagged_association`. A domain pack points to
+an evidence store. It does not list expected variables, divide the clock into
+named agronomic periods, or prescribe candidate relationships.
 
-Given hourly humidity and a disease model, it forms and answers this without a
-rule for it:
+For each SQLite table the engine infers a parseable temporal axis, changing
+numeric columns, and repeated entity dimensions from cardinality and table
+keys. Numeric JSONL channels are discovered in the same way. Every channel is
+eligible to lead or respond. If a channel is subdaily, cyclic windows are
+generated from its observed clock coverage and retained as hour ranges. A
+surviving window may later be interpreted by a domain adapter, but the search
+does not begin with words such as night, humidity, disease, camera, or sensor.
 
-```text
-night humidity precedes powdery mildew risk at Camp Nord
-  -> material_unresolved, lag 3 days, rho 0.83, n=146
-day humidity precedes powdery mildew risk        -> not_material
-night temperature precedes powdery mildew risk   -> not_material
-night humidity precedes black-rot index          -> not_material
-```
-
-The negatives matter as much as the positive: the pattern is specific to
-*night* humidity, and a daily mean would have hidden it.
+This means a newly connected instrument or a newly written model-output column
+enters the hypothesis space on the next evidence cycle without a source-code
+change. A channel that does not exist cannot become a speculative question.
 
 ### Why it does not find patterns in noise
 
@@ -97,7 +96,7 @@ every guard pushes toward the negative:
 - the test runs on **first differences**, so two series that merely share a
   seasonal trend cannot produce a result;
 - the effect must **persist in both halves** of the record with the same sign;
-- significance is **corrected for the number of lags tried**;
+- significance is **corrected jointly for generated clock windows and lags**;
 - a floor of **30 overlapping days** and a minimum effect size;
 - a refuted pair **stays refuted** and is never proposed again.
 
@@ -115,7 +114,7 @@ test it properly?", and accepting it drafts a prospective study:
 
 ```yaml
 - id: study_lagged_association_1
-  name: "Prospective check: night humidity precedes powdery mildew risk"
+  name: "Prospective check: channel A precedes channel B"
   status: template          # the executor does not run a template
   steps:
     - id: measure
@@ -138,19 +137,13 @@ Promoting it to `pending` is a human act. The board proposes an experiment; it
 does not start one, and the skill name is validated and the repeat bounds
 clamped before anything is written.
 
-### When it cannot test its own hypothesis
+### When evidence is incomplete
 
-Humid nights plausibly bear on insect pressure, and this board has no insect
-measurement at all. The verdict is `insufficient_data` naming what is missing:
-
-```text
-humid nights precede a change in insect pressure at Camp Nord
-  -> insufficient_data: missing ['insect counts']
-     option: start recording trap counts, the only way I could ever test it
-```
-
-A hypothesis without evidence is stated as a hypothesis. It is not a finding,
-it does not reach the farmer as one, and it does not become a standing nag.
+A discovered pair can still return `insufficient_data` when fewer than 30
+overlapping days remain after gaps and lags. That is a property of two series
+the board actually holds. The engine does not manufacture an absent response
+channel or ask a person to collect a preselected measurement. Coverage gaps are
+reported separately from the open questions already present in evidence.
 
 ## From understanding to anticipation
 
@@ -159,10 +152,10 @@ The driver is watched; when it runs unusually high, the board reports the
 observation and what it would imply:
 
 ```text
-Night humidity crossed its high threshold on 2026-08-08 (93.0). By the
-relationship you confirmed in this field (0.958 over 146 days), that would
-point at powdery mildew risk around 2026-08-11 — a projection of that
-relationship, not a measurement.
+Channel A crossed its local high threshold on 2026-08-08. By the relationship
+confirmed for this apparatus (rho 0.958 over 146 days), that would point at a
+change in channel B around 2026-08-11 — a projection of that relationship, not
+a measurement.
 ```
 
 The finding is still an observation first. The projection follows only when

@@ -112,6 +112,8 @@ signals and human feedback
 - `cycle`: one budgeted idle cycle. Scan for new questions, investigate the
   oldest few, journal the findings. This is the mode a schedule should call.
 - `scan`: raise questions from journals and feedback without investigating.
+- `catalog`: list inferred channel metadata, entity partitions and adaptive
+  clock-window eligibility without returning measurement values.
 - `investigate`: run one question (`question_id`), one ad-hoc analysis
   (`analysis` + `params`), or the next few open questions.
 - `questions` / `findings` / `reportable`: read stored state. `reportable`
@@ -246,9 +248,8 @@ Two combinations worth naming, because they are what a networked board is for:
 ## Forming a hypothesis nobody wrote down
 
 The analyses above answer questions somebody registered. `lagged_association`
-is different: any two daily series can be paired, so the board can propose a
-relationship of its own — "night humidity precedes powdery risk by three days"
-— and test it.
+is different: the board can propose a lead between two measured channels and
+test it without a pack naming that relationship.
 
 That is also where an autonomous researcher starts finding patterns in noise,
 so every guard exists to make a negative result the easy outcome:
@@ -256,8 +257,8 @@ so every guard exists to make a negative result the easy outcome:
 - the test runs on **first differences**, so two series that merely share a
   seasonal trend cannot produce a result;
 - the effect must **persist in both halves** of the record with the same sign;
-- the significance level is **corrected for the number of lags tried**, so
-  trying more lags does not buy a result;
+- the significance level is **corrected jointly for inferred clock windows and
+  lags**, so trying more views of the record does not buy a result;
 - a **sample floor** of 30 overlapping days, and a minimum effect size;
 - a pair answered `not_material` **stays answered**, so a refuted relationship
   is never re-proposed.
@@ -267,22 +268,23 @@ noise, and 100% detection of a moderate real lead. It reports **precedence,
 never causation** — a driver that leads a response may share a cause with it or
 proxy for it, and the finding says so.
 
-Pair discovery is budgeted with `max_new_pairs` (default two per cycle) and
-draws on numeric journal channels plus the series a pack declares:
+Pair discovery is budgeted with `max_new_pairs` (default two per cycle). A pack
+normally exposes a database without declaring variables:
 
 ```python
-"series": declare_series,   # [{name, role: driver|response|both, source, key,
-                            #   hours: [22, 6], statistic, label, window_label}]
+"catalog_sources": lambda context: [{
+    "kind": "sqlite_catalog",
+    "path": "/path/to/domain.db",
+}]
 ```
 
-`hours` derives a daily feature from an hourly series, which is what separates
-night from day: a window that wraps midnight belongs to the morning it ends on.
-
-When a hypothesis needs a series the board does not have, the verdict is
-`insufficient_data` naming the missing measurement, with an option to start
-collecting it. The board may state that humid nights could bear on insect
-pressure; without trap counts it cannot test it, and it says so rather than
-implying a result.
+The engine discovers tables, parseable temporal axes, changing numerical
+columns, and repeated entity dimensions from the values. Every inferred
+channel can be either antecedent or response. For subdaily channels it derives
+cyclic windows from observed clock coverage; the windows carry hour ranges, no
+semantic labels. JSONL monitor channels enter by the same route. A measurement
+that does not exist cannot generate a hypothesis: the engine never invents a
+missing response merely to ask for a sensor.
 
 ## Sources
 

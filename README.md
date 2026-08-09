@@ -67,13 +67,15 @@ its own blind spot into a request for attention or hardware.
 | `lagged_association` | Does one series move before another, by a fixed number of days? |
 | `coverage_gaps` | Which questions has the board framed that nothing here can measure? |
 
-`lagged_association` is the one that forms hypotheses nobody wrote down. It
-pairs any two daily series — for a vineyard, night humidity against powdery
-mildew risk — and reports **precedence, never causation**. Guards are tuned so
-a negative is the easy answer: first differences, persistence across both
-halves, correction for the number of lags tried, a 30-day floor, and permanent
-memory of refuted pairs. Measured: **0 false positives in 200 noise trials**,
-100% detection of a moderate real lead.
+`lagged_association` is the one that forms hypotheses nobody wrote down. Packs
+expose evidence stores, not a catalogue of expected relationships. The engine
+infers timestamped numeric channels and entity partitions from SQLite schemas
+and JSONL journals, generates unlabeled clock windows for subdaily data, then
+tests candidate leads. It reports **precedence, never causation**. Guards are
+tuned so a negative is the easy answer: first differences, persistence across
+both halves, joint correction for clock windows and lags, a 30-day floor, and
+permanent memory of refuted pairs. New sensors and model outputs therefore
+enter the research space without a code change.
 
 ### From a pattern to a study
 

@@ -113,7 +113,11 @@ def read_sqlite(path, table, columns, time_column=None, limit=2000, where=None,
             return []
         query = f"SELECT {', '.join(selected)} FROM {table}"
         if where:
-            if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=\s*\?$", where.strip()):
+            clauses = [item.strip() for item in re.split(r"\s+AND\s+", where, flags=re.I)]
+            if not clauses or any(
+                not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*\s*=\s*\?", item)
+                for item in clauses
+            ):
                 raise ValueError(f"unsafe filter: {where}")
             query += f" WHERE {where}"
         if time_column and time_column in available:
@@ -1146,6 +1150,67 @@ def load_daily(ctx, spec):
     return daily_series(records, spec.get("key"), spec.get("time_key"), statistic)
 
 
+def inferred_clock_windows(records, time_key=None):
+    """Generate generic cyclic windows when a source has subdaily coverage.
+
+    The windows are derived from temporal resolution only. They are not named
+    day, night, shift, irrigation period, or any other domain interpretation.
+    That interpretation belongs to a surviving result, after testing.
+    """
+    hours = sorted({
+        moment.hour for moment in (record_moment(record, time_key) for record in records)
+        if moment is not None
+    })
+    if len(hours) < 4:
+        return []
+    coverage = len(hours)
+    widths = sorted({max(3, round(coverage / 4)), max(6, round(coverage / 2))})
+    windows = []
+    for width in widths:
+        width = min(12, int(width))
+        step = max(1, width // 2)
+        for start in range(0, 24, step):
+            end = (start + width - 1) % 24
+            item = (start, end)
+            if item not in windows:
+                windows.append(item)
+    return windows
+
+
+def load_daily_variants(ctx, spec, adaptive=True):
+    """Return labelled daily reductions, optionally discovering clock windows."""
+    records = load_records(spec.get("source") or {}, ctx.get("limits"))
+    statistic = spec.get("statistic") or "mean"
+    base_label = series_label(spec)
+    variants = [{
+        "daily": daily_series(records, spec.get("key"), spec.get("time_key"), statistic),
+        "label": base_label,
+        "hours": None,
+    }]
+    if not adaptive or not spec.get("discover_time_windows") or spec.get("hours"):
+        if spec.get("hours"):
+            hours = tuple(spec["hours"])
+            return [{
+                "daily": daily_window_series(
+                    records, spec.get("key"), spec.get("time_key"), hours, statistic,
+                ),
+                "label": base_label,
+                "hours": list(hours),
+            }]
+        return variants
+    for start, end in inferred_clock_windows(records, spec.get("time_key")):
+        daily = daily_window_series(
+            records, spec.get("key"), spec.get("time_key"), (start, end), statistic,
+        )
+        if daily:
+            variants.append({
+                "daily": daily,
+                "label": f"{start:02d}:00-{end:02d}:59 {base_label}",
+                "hours": [start, end],
+            })
+    return variants
+
+
 def series_label(spec):
     base = spec.get("label") or spec.get("key") or "series"
     window = spec.get("window_label")
@@ -1176,10 +1241,15 @@ def lagged_association(ctx):
         "Precedence is not causation: a leading series may share a cause with the response, or proxy for it.",
         "Only days present in both series are compared; gaps reduce the sample rather than the conclusion.",
         "Day-to-day changes are tested, so a shared seasonal trend cannot create the result.",
-        f"{len(lags)} lags were tried and the significance level was corrected for that.",
+        "Candidate clock windows and lags were generated without domain labels and corrected jointly.",
     ]
-    driver_daily = load_daily(ctx, driver_spec)
-    response_daily = load_daily(ctx, response_spec)
+    driver_variants = load_daily_variants(ctx, driver_spec, adaptive=True)
+    # Direction is tested twice by the pair scanner. In one direction only the
+    # putative driver receives adaptive windows, preventing a Cartesian search
+    # over two clocks while still allowing either channel to lead.
+    response_variants = load_daily_variants(ctx, response_spec, adaptive=False)
+    driver_daily = max((item["daily"] for item in driver_variants), key=len, default={})
+    response_daily = max((item["daily"] for item in response_variants), key=len, default={})
     finding = base_finding(
         ctx, "lagged_association",
         ctx.get("claim") or "one series precedes another",
@@ -1212,39 +1282,49 @@ def lagged_association(ctx):
         return finding
 
     results = []
-    for lag in lags:
-        days = sorted(set(response_daily) & {
-            (dt.date.fromisoformat(day) + dt.timedelta(days=lag)).isoformat()
-            for day in driver_daily
-        })
-        pairs = []
-        for day in days:
-            driver_day = (dt.date.fromisoformat(day) - dt.timedelta(days=lag)).isoformat()
-            if driver_day in driver_daily:
-                pairs.append((driver_daily[driver_day], response_daily[day]))
-        if len(pairs) < minimum:
-            continue
-        driver_values = difference([pair[0] for pair in pairs])
-        response_values = difference([pair[1] for pair in pairs])
-        rho = spearman(driver_values, response_values)
-        if rho is None:
-            continue
-        half = len(driver_values) // 2
-        first = spearman(driver_values[:half], response_values[:half])
-        second = spearman(driver_values[half:], response_values[half:])
-        persistent = (
-            first is not None and second is not None
-            and (first > 0) == (second > 0) == (rho > 0)
-        )
-        results.append({
-            "lag_days": lag,
-            "pairs": len(driver_values),
-            "rho": round(rho, 3),
-            "p_value": round(correlation_p_value(rho, len(driver_values)), 5),
-            "first_half_rho": round(first, 3) if first is not None else None,
-            "second_half_rho": round(second, 3) if second is not None else None,
-            "persistent": persistent,
-        })
+    for driver_variant in driver_variants:
+        for response_variant in response_variants:
+            driver_daily = driver_variant["daily"]
+            response_daily = response_variant["daily"]
+            for lag in lags:
+                days = sorted(set(response_daily) & {
+                    (dt.date.fromisoformat(day) + dt.timedelta(days=lag)).isoformat()
+                    for day in driver_daily
+                })
+                pairs = []
+                for day in days:
+                    driver_day = (
+                        dt.date.fromisoformat(day) - dt.timedelta(days=lag)
+                    ).isoformat()
+                    if driver_day in driver_daily:
+                        pairs.append((driver_daily[driver_day], response_daily[day]))
+                if len(pairs) < minimum:
+                    continue
+                driver_values = difference([pair[0] for pair in pairs])
+                response_values = difference([pair[1] for pair in pairs])
+                rho = spearman(driver_values, response_values)
+                if rho is None:
+                    continue
+                half = len(driver_values) // 2
+                first = spearman(driver_values[:half], response_values[:half])
+                second = spearman(driver_values[half:], response_values[half:])
+                persistent = (
+                    first is not None and second is not None
+                    and (first > 0) == (second > 0) == (rho > 0)
+                )
+                results.append({
+                    "lag_days": lag,
+                    "pairs": len(driver_values),
+                    "rho": round(rho, 3),
+                    "p_value": round(correlation_p_value(rho, len(driver_values)), 5),
+                    "first_half_rho": round(first, 3) if first is not None else None,
+                    "second_half_rho": round(second, 3) if second is not None else None,
+                    "persistent": persistent,
+                    "driver": driver_variant["label"],
+                    "driver_hours": driver_variant["hours"],
+                    "response": response_variant["label"],
+                    "response_hours": response_variant["hours"],
+                })
 
     if not results:
         finding.update({
@@ -1265,9 +1345,12 @@ def lagged_association(ctx):
     best = max(results, key=lambda item: abs(item["rho"]))
     finding["sample_size"] = best["pairs"]
     finding["metrics"] = {
-        "driver": series_label(driver_spec),
-        "response": series_label(response_spec),
+        "driver": best["driver"],
+        "response": best["response"],
+        "driver_hours": best["driver_hours"],
+        "response_hours": best["response_hours"],
         "lags_tested": lags,
+        "comparisons_tested": len(results),
         "corrected_alpha": round(corrected, 5),
         "minimum_abs_rho": min_rho,
         "by_lag": results,
@@ -1288,10 +1371,12 @@ def lagged_association(ctx):
         "headline": {
             "lag": leading["lag_days"],
             "direction": "up" if leading["rho"] > 0 else "down",
+            "driver": leading["driver"],
+            "response": leading["response"],
         },
         "open_question": params.get("open_question") or (
-            f"whether {series_label(driver_spec)} is acting on "
-            f"{series_label(response_spec)} {leading['lag_days']} days later, or both "
+            f"whether {leading['driver']} is acting on "
+            f"{leading['response']} {leading['lag_days']} days later, or both "
             "follow something else"
         ),
         "options": params.get("options") or [
@@ -1818,6 +1903,360 @@ def journal_series(context, limits):
     return series
 
 
+def _sqlite_sample(connection, table, limit):
+    """Return a bounded table sample after validating its schema identifier."""
+    if not IDENTIFIER.fullmatch(str(table or "")):
+        return []
+    try:
+        try:
+            bounds = connection.execute(
+                f"SELECT MIN(rowid), MAX(rowid), COUNT(*) FROM {table}"
+            ).fetchone()
+        except sqlite3.Error:
+            return [dict(row) for row in connection.execute(
+                f"SELECT * FROM {table} LIMIT ?", (int(limit),),
+            ).fetchall()]
+        lower, upper, count = bounds[0], bounds[1], int(bounds[2] or 0)
+        if count <= int(limit) or lower is None or upper is None:
+            rows = connection.execute(
+                f"SELECT * FROM {table} LIMIT ?", (int(limit),),
+            ).fetchall()
+        else:
+            # Indexed rowid slices preserve channels written in long blocks
+            # without scanning through every preceding row as OFFSET does.
+            slices = min(5, int(limit))
+            per_slice = max(1, int(limit) // slices)
+            rows = []
+            for index in range(slices):
+                start = round(lower + index * (upper - lower) / max(1, slices - 1))
+                rows.extend(connection.execute(
+                    f"SELECT * FROM {table} WHERE rowid >= ? LIMIT ?",
+                    (start, per_slice),
+                ).fetchall())
+    except sqlite3.Error:
+        return []
+    return [dict(row) for row in rows]
+
+
+def _moment_column(rows, columns):
+    """Infer the temporal axis from values, not a domain-specific column name."""
+    ranked = []
+    for column in columns:
+        values = [row.get(column) for row in rows if row.get(column) not in (None, "")]
+        if not values:
+            continue
+        moments = [engine.parse_moment(value) for value in values]
+        valid = [value for value in moments if value is not None]
+        ratio = len(valid) / len(values)
+        distinct = len({value.isoformat() for value in valid})
+        if ratio >= 0.8 and distinct >= min(4, len(valid)):
+            ranked.append((ratio, distinct, column, valid))
+    if not ranked:
+        return None, False
+    _, _, column, moments = max(ranked, key=lambda item: (item[0], item[1], item[2]))
+    clock_values = {(item.hour, item.minute, item.second) for item in moments}
+    subdaily = len(clock_values) >= 4 and any(value != (0, 0, 0) for value in clock_values)
+    return column, subdaily
+
+
+def _column_profile(rows, column):
+    values = [row.get(column) for row in rows if row.get(column) not in (None, "")]
+    numeric = [engine.as_float(value) for value in values]
+    numeric = [value for value in numeric if value is not None and math.isfinite(value)]
+    counts = {}
+    for value in values:
+        marker = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+        counts[marker] = counts.get(marker, 0) + 1
+    return {
+        "values": values,
+        "numeric": numeric,
+        "numeric_ratio": len(numeric) / len(values) if values else 0.0,
+        "distinct": len(counts),
+        "counts": counts,
+        "temporal_ratio": (
+            sum(engine.parse_moment(value) is not None for value in values) / len(values)
+            if values else 0.0
+        ),
+    }
+
+
+def _category_values(rows, column, minimum):
+    groups = {}
+    originals = {}
+    for row in rows:
+        value = row.get(column)
+        if value in (None, ""):
+            continue
+        marker = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+        groups[marker] = groups.get(marker, 0) + 1
+        originals[marker] = value
+    return [
+        originals[marker] for marker, count in sorted(groups.items())
+        if count >= minimum
+    ]
+
+
+def discover_sqlite_series(catalog_source, limits=None):
+    """Infer time-varying numeric series from an arbitrary SQLite schema.
+
+    A research pack declares only a database path. Tables, temporal axes,
+    numeric channels and repeated entity partitions are inferred from the
+    stored values. The result deliberately gives every channel role ``both``:
+    direction is a hypothesis to test, not metadata supplied by the app.
+    """
+    limits = limits or {}
+    path = Path(str((catalog_source or {}).get("path") or ""))
+    if not path.is_file():
+        return []
+    sample_limit = int(catalog_source.get("sample_rows") or limits.get("max_lines") or 400)
+    sample_limit = max(MIN_ASSOCIATION_PAIRS, min(sample_limit, 1000))
+    max_tables = int(catalog_source.get("max_tables") or 32)
+    max_series = int(catalog_source.get("max_series") or 96)
+    read_limit = int(catalog_source.get("read_limit") or 4000)
+    try:
+        stat = path.stat()
+        cache_key = engine.digest({
+            "path": str(path), "size": stat.st_size,
+            "mtime_ns": stat.st_mtime_ns, "sample_limit": sample_limit,
+            "max_tables": max_tables, "max_series": max_series,
+            "max_categories": int(catalog_source.get("max_categories") or 32),
+        })
+    except OSError:
+        return []
+    cache_path = Path(str(catalog_source.get("cache_path") or (
+        f"/tmp/nora_research_catalog_{engine.digest(str(path))[:16]}.json"
+    )))
+    if catalog_source.get("cache", True):
+        try:
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+            if cached.get("key") == cache_key and isinstance(cached.get("series"), list):
+                return cached["series"]
+        except (OSError, ValueError, AttributeError):
+            pass
+    connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    discovered = []
+    try:
+        tables = [
+            row[0] for row in connection.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            ).fetchall()
+            if IDENTIFIER.fullmatch(str(row[0] or ""))
+        ][:max_tables]
+        for table in tables:
+            schema = connection.execute(f"PRAGMA table_info({table})").fetchall()
+            columns = [row[1] for row in schema if IDENTIFIER.fullmatch(str(row[1] or ""))]
+            primary = {row[1] for row in schema if int(row[5] or 0) > 0}
+            rows = _sqlite_sample(connection, table, sample_limit)
+            if len(rows) < MIN_ASSOCIATION_PAIRS:
+                continue
+            time_column, subdaily = _moment_column(rows, columns)
+            if not time_column:
+                continue
+            profiles = {
+                column: _column_profile(rows, column)
+                for column in columns if column != time_column
+            }
+            metrics = []
+            categories = []
+            for column, profile in profiles.items():
+                if (
+                    column not in primary
+                    and profile["numeric_ratio"] >= 0.9
+                    and len(profile["numeric"]) >= MIN_ASSOCIATION_PAIRS
+                    and profile["distinct"] >= 2
+                    and min(profile["numeric"]) != max(profile["numeric"])
+                ):
+                    metrics.append(column)
+                # Repeated low-cardinality values are candidate entity axes.
+                # This rule is based only on cardinality and replication; it
+                # knows nothing about fields, diseases, sensors or model names.
+                max_categories = int(catalog_source.get("max_categories") or 32)
+                if (
+                    profile["temporal_ratio"] < 0.8
+                    and 1 <= profile["distinct"] <= max_categories
+                    and (profile["distinct"] > 1 or column in primary)
+                ):
+                    minimum_group = max(4, MIN_ASSOCIATION_PAIRS // 6)
+                    if len(_category_values(rows, column, minimum_group)) >= 1:
+                        categories.append(column)
+            if not metrics:
+                continue
+            minimum_group = max(4, MIN_ASSOCIATION_PAIRS // 6)
+            primary_categories = [column for column in categories if column in primary]
+            dimensions = primary_categories or categories
+            dimensions.sort(key=lambda column: (
+                -profiles[column]["distinct"], column,
+            ))
+            dimensions = dimensions[:2]
+            partitions = [()]
+            if dimensions:
+                grouped = {}
+                for row in rows:
+                    values = tuple(row.get(column) for column in dimensions)
+                    if any(value in (None, "") for value in values):
+                        continue
+                    marker = tuple(
+                        json.dumps(value, ensure_ascii=False, default=str)
+                        for value in values
+                    )
+                    grouped.setdefault(marker, [values, 0])[1] += 1
+                max_partitions = int(catalog_source.get("max_partitions_per_table") or 32)
+                grouped_partitions = [
+                    tuple(zip(dimensions, item[0]))
+                    for _, item in sorted(
+                        grouped.items(), key=lambda pair: (-pair[1][1], pair[0])
+                    )
+                    if item[1] >= minimum_group
+                ][:max_partitions]
+                if grouped_partitions:
+                    # Once an entity axis is measurable, the aggregate would
+                    # duplicate and sometimes blend independent apparatuses.
+                    partitions = grouped_partitions
+            for metric in metrics:
+                profile = profiles[metric]
+                for partition in partitions:
+                    partition_rows = [
+                        row for row in rows
+                        if all(row.get(key) == value for key, value in partition)
+                    ]
+                    partition_values = [
+                        engine.as_float(row.get(metric)) for row in partition_rows
+                    ]
+                    partition_values = [
+                        value for value in partition_values
+                        if value is not None and math.isfinite(value)
+                    ]
+                    if (
+                        len(partition_values) < minimum_group
+                        or min(partition_values) == max(partition_values)
+                    ):
+                        continue
+                    suffix = ", ".join(f"{key}={value}" for key, value in partition)
+                    where = " AND ".join(f"{key} = ?" for key, _ in partition) or None
+                    values = [value for _, value in partition]
+                    identity = ",".join(
+                        f"{key}={json.dumps(value, sort_keys=True, default=str)}"
+                        for key, value in partition
+                    )
+                    name = f"sqlite:{path.name}:{table}:{metric}:{identity or 'all'}"
+                    label = f"{table}.{metric}" + (f" [{suffix}]" if suffix else "")
+                    discovered.append({
+                        "name": name,
+                        "role": "both",
+                        "subject": f"sqlite:{path.stem}:{table}" + (
+                            f":{identity}" if identity else ""
+                        ),
+                        "source": {
+                            "kind": "sqlite", "path": str(path), "table": table,
+                            "columns": [metric], "time_column": time_column,
+                            "where": where, "where_values": values,
+                            "label": label, "limit": read_limit,
+                        },
+                        "key": metric,
+                        "time_key": time_column,
+                        "statistic": "mean",
+                        "label": label,
+                        "discover_time_windows": subdaily,
+                        "_table": table,
+                        "_metric": metric,
+                        "_score": (
+                            len(profile["numeric"]) + min(profile["distinct"], 50) * 2
+                            + (25 if subdaily else 0)
+                            + sum(30 if key in primary else 10 for key, _ in partition)
+                        ),
+                    })
+    finally:
+        connection.close()
+    by_table_metric = {}
+    for item in discovered:
+        by_table_metric.setdefault((item["_table"], item["_metric"]), []).append(item)
+    for items in by_table_metric.values():
+        items.sort(key=lambda item: (-item["_score"], item["name"]))
+    table_queues = {}
+    for table in sorted({group[0] for group in by_table_metric}):
+        groups = [group for group in sorted(by_table_metric) if group[0] == table]
+        queue = []
+        depth = 0
+        while True:
+            added = False
+            for group in groups:
+                items = by_table_metric[group]
+                if depth < len(items):
+                    queue.append(items[depth])
+                    added = True
+            if not added:
+                break
+            depth += 1
+        table_queues[table] = queue
+    selected = []
+    depth = 0
+    while len(selected) < max_series:
+        added = False
+        for table in sorted(table_queues):
+            queue = table_queues[table]
+            if depth < len(queue):
+                selected.append(queue[depth])
+                added = True
+                if len(selected) >= max_series:
+                    break
+        if not added:
+            break
+        depth += 1
+    for item in selected:
+        item.pop("_score", None)
+        item.pop("_table", None)
+        item.pop("_metric", None)
+    if catalog_source.get("cache", True):
+        try:
+            temporary = cache_path.with_name(f"{cache_path.name}.{os.getpid()}.tmp")
+            temporary.write_text(
+                json.dumps({"key": cache_key, "series": selected}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            temporary.replace(cache_path)
+        except OSError:
+            pass
+    return selected
+
+
+def catalog_series(context, limits):
+    series = []
+    seen = set()
+    for source in context.get("catalog_sources") or []:
+        if str((source or {}).get("kind") or "") != "sqlite_catalog":
+            continue
+        for item in discover_sqlite_series(source, limits):
+            if item["name"] in seen:
+                continue
+            seen.add(item["name"])
+            series.append(item)
+    return series
+
+
+def retire_legacy_pair_questions(connection):
+    """Close generated pair questions from the pre-catalogue representation."""
+    rows = connection.execute(
+        "SELECT id, params_json FROM questions "
+        "WHERE source=? AND analysis='lagged_association' AND status=?",
+        (engine.SOURCE_SIGNAL, engine.QUESTION_OPEN),
+    ).fetchall()
+    retired = []
+    for row in rows:
+        try:
+            params = json.loads(row["params_json"] or "{}")
+        except ValueError:
+            params = {}
+        if params.get("driver_name") and params.get("response_name"):
+            continue
+        engine.mark_question(
+            connection, row["id"], status=engine.QUESTION_CLOSED,
+        )
+        retired.append(row["id"])
+    return retired
+
+
 def scan_series_pairs(connection, context, limits=None):
     """Propose cross-series hypotheses nobody wrote down in advance.
 
@@ -1828,7 +2267,9 @@ def scan_series_pairs(connection, context, limits=None):
     result is remembered.
     """
     limits = dict(engine.DEFAULT_BUDGET, **(limits or {}))
+    retire_legacy_pair_questions(connection)
     catalogue = list(context.get("series") or [])
+    catalogue.extend(catalog_series(context, limits))
     catalogue.extend(journal_series(context, limits))
     drivers = [item for item in catalogue if item.get("role") in {"driver", "both"}]
     responses = [item for item in catalogue if item.get("role") in {"response", "both"}]
@@ -1844,12 +2285,14 @@ def scan_series_pairs(connection, context, limits=None):
                     and driver.get("key") == response.get("key"):
                 continue
             params = {
+                "driver_name": driver["name"],
+                "response_name": response["name"],
                 "driver": {key: driver[key] for key in
                            ("source", "key", "time_key", "hours", "statistic", "label",
-                            "window_label") if key in driver},
+                            "window_label", "discover_time_windows") if key in driver},
                 "response": {key: response[key] for key in
                              ("source", "key", "time_key", "hours", "statistic", "label",
-                              "window_label") if key in response},
+                              "window_label", "discover_time_windows") if key in response},
                 "lags": list(driver.get("lags") or response.get("lags") or DEFAULT_LAGS),
             }
             question = engine.open_question(

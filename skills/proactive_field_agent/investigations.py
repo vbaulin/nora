@@ -1358,20 +1358,10 @@ def anomaly_open_question(language, finding):
 
 SERIES_LABELS = {
     "ca": {
-        "night humidity": "la humitat nocturna",
-        "day humidity": "la humitat diürna",
-        "night temperature": "la temperatura nocturna",
-        "powdery mildew risk": "el risc d'oïdi",
-        "black-rot infection index": "l'índex d'infecció de black rot",
         "season.rain_total_mm": "la pluja de la temporada",
         "indices.gdd_base10": "la calor acumulada",
     },
     "es": {
-        "night humidity": "la humedad nocturna",
-        "day humidity": "la humedad diurna",
-        "night temperature": "la temperatura nocturna",
-        "powdery mildew risk": "el riesgo de oídio",
-        "black-rot infection index": "el índice de infección de black rot",
         "season.rain_total_mm": "la lluvia de la temporada",
         "indices.gdd_base10": "el calor acumulado",
     },
@@ -1380,10 +1370,10 @@ SERIES_LABELS = {
 
 
 def localized_series(language, label):
-    """Say a declared series in the reader's language when we know how.
+    """Say a derived or model-audit series in the reader's language when known.
 
-    Series labels are technical identifiers written once by a pack. Leaving
-    them raw drops English into the middle of a Catalan sentence.
+    Automatically discovered labels remain source identifiers until a domain
+    adapter can resolve their metadata; no relationship is inferred here.
     """
     text = str(label or "")
     table = SERIES_LABELS.get(language_key(language)) or {}

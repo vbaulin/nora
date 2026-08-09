@@ -604,17 +604,17 @@ class LaggedAssociationTest(ResearchTestCase):
         context = self.context()
         context["params"] = {
             "driver": {"source": {"kind": "inline", "records": self.series(self.noise(4), "x")},
-                       "key": "x", "label": "night humidity"},
+                       "key": "x", "label": "channel A"},
             "response": {"source": {"kind": "inline", "records": []},
-                         "key": "count", "label": "insect counts"},
-            "missing_question": "whether insect pressure follows humid nights here",
-            "missing_options": [{"id": "start_insect_counts", "cost": "low", "params": {}}],
+                         "key": "count", "label": "unmeasured channel"},
+            "missing_question": "whether channel A precedes an unmeasured channel",
+            "missing_options": [{"id": "start_measurement", "cost": "low", "params": {}}],
         }
         finding = ANALYSES.lagged_association(context)
         self.assertEqual(finding["verdict"], ENGINE.VERDICT_INSUFFICIENT)
-        self.assertEqual(finding["metrics"]["missing_measurement"], ["insect counts"])
+        self.assertEqual(finding["metrics"]["missing_measurement"], ["unmeasured channel"])
         self.assertEqual(
-            [option["id"] for option in finding["options"]], ["start_insect_counts"],
+            [option["id"] for option in finding["options"]], ["start_measurement"],
         )
 
     def test_night_and_day_windows_are_separated(self):
@@ -682,6 +682,129 @@ class DiscoveryTest(ResearchTestCase):
             ANALYSES.scan_series_pairs(connection, self.context(series=both)), [],
         )
 
+    def test_pre_catalogue_generated_pairs_are_closed(self):
+        connection = self.connection()
+        legacy = ENGINE.open_question(
+            connection, "old", "pre-catalogue pair", "lagged_association",
+            {"driver": {"key": "x"}, "response": {"key": "y"}},
+            source=ENGINE.SOURCE_SIGNAL, origin="pair:old-a->old-b",
+        )
+        ANALYSES.scan_series_pairs(
+            connection, self.context(series=self.catalogue(), max_new_pairs=1),
+        )
+        row = connection.execute(
+            "SELECT status FROM questions WHERE id=?", (legacy["id"],),
+        ).fetchone()
+        self.assertEqual(row["status"], ENGINE.QUESTION_CLOSED)
+
+
+class SchemaDiscoveryTest(ResearchTestCase):
+    """Unseen board schemas become candidate series without a domain list."""
+
+    def database(self):
+        path = self.root / "unseen.db"
+        connection = sqlite3.connect(path)
+        connection.execute(
+            "CREATE TABLE arbitrary_trace("
+            "sample_id INTEGER PRIMARY KEY, captured TEXT, cohort TEXT, "
+            "channel_alpha REAL, channel_omega REAL, novel_signal REAL)"
+        )
+        base = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
+        rows = []
+        for day in range(45):
+            for hour in (0, 6, 12, 18):
+                moment = base + dt.timedelta(days=day, hours=hour)
+                rows.append((
+                    moment.isoformat(), "unit-a" if day % 2 else "unit-b",
+                    day + hour / 24.0,
+                    ((day * 7) % 19) + hour / 10.0,
+                    ((day * 11) % 23) - hour / 20.0,
+                ))
+        connection.executemany(
+            "INSERT INTO arbitrary_trace(captured,cohort,channel_alpha,channel_omega,novel_signal) "
+            "VALUES(?,?,?,?,?)", rows,
+        )
+        connection.commit()
+        connection.close()
+        return path
+
+    def test_unknown_numeric_columns_and_entities_are_discovered(self):
+        items = ANALYSES.discover_sqlite_series({
+            "kind": "sqlite_catalog", "path": str(self.database()), "max_series": 64,
+        })
+        names = [item["name"] for item in items]
+        self.assertTrue(any("channel_alpha" in name for name in names))
+        self.assertTrue(any("channel_omega" in name for name in names))
+        self.assertTrue(any("novel_signal" in name for name in names))
+        self.assertFalse(any(":sample_id:" in name for name in names))
+        self.assertTrue(any(item.get("discover_time_windows") for item in items))
+        self.assertTrue(all(item["role"] == "both" for item in items))
+
+    def test_catalogue_is_consumed_without_declared_series(self):
+        connection = self.connection()
+        context = self.context(
+            series=[],
+            catalog_sources=[{
+                "kind": "sqlite_catalog", "path": str(self.database()), "max_series": 16,
+            }],
+            max_new_pairs=2,
+        )
+        raised = ANALYSES.scan_series_pairs(connection, context)
+        self.assertEqual(len(raised), 2)
+        self.assertTrue(all(item["analysis"] == "lagged_association" for item in raised))
+
+    def test_unchanged_schema_catalogue_is_reused_from_tmpfs(self):
+        path = self.database()
+        source = {
+            "kind": "sqlite_catalog", "path": str(path), "max_series": 32,
+            "cache_path": str(self.root / "catalog-cache.json"),
+        }
+        first = ANALYSES.discover_sqlite_series(source)
+        with mock.patch.object(
+            ANALYSES, "_sqlite_sample", side_effect=AssertionError("cache was not reused"),
+        ):
+            second = ANALYSES.discover_sqlite_series(source)
+        self.assertEqual(second, first)
+
+    def test_clock_window_is_selected_from_data_not_named_in_advance(self):
+        random.seed(19)
+        base = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
+        signal = [random.gauss(0, 1) for _ in range(150)]
+        driver_records = []
+        response_records = []
+        for day, value in enumerate(signal):
+            for hour in range(24):
+                observed = value if hour < 6 else random.gauss(0, 2.5)
+                driver_records.append({
+                    "captured": (base + dt.timedelta(days=day, hours=hour)).isoformat(),
+                    "channel": observed,
+                })
+            response_records.append({
+                "captured": (base + dt.timedelta(days=day)).isoformat(),
+                "outcome": (signal[day - 2] if day >= 2 else 0.0) + random.gauss(0, 0.2),
+            })
+        context = self.context()
+        context.update({
+            "subject": "unseen-apparatus",
+            "params": {
+                "driver": {
+                    "source": {"kind": "inline", "records": driver_records},
+                    "key": "channel", "time_key": "captured",
+                    "label": "arbitrary_trace.channel", "discover_time_windows": True,
+                },
+                "response": {
+                    "source": {"kind": "inline", "records": response_records},
+                    "key": "outcome", "time_key": "captured",
+                    "label": "arbitrary_trace.outcome",
+                },
+            },
+        })
+        finding = ANALYSES.lagged_association(context)
+        self.assertEqual(finding["verdict"], ENGINE.VERDICT_MATERIAL)
+        self.assertEqual(finding["metrics"]["strongest_lag_days"], 2)
+        self.assertIsNotNone(finding["metrics"]["driver_hours"])
+        self.assertGreater(finding["metrics"]["comparisons_tested"], len(ANALYSES.DEFAULT_LAGS))
+
 
 class MeasurementDraftTest(ResearchTestCase):
     """Confirming a hypothesis drafts a study. It never starts one."""
@@ -700,12 +823,12 @@ class MeasurementDraftTest(ResearchTestCase):
         ]
         question = ENGINE.open_question(
             connection, "vineyard:field_1",
-            "night humidity precedes powdery mildew risk", "lagged_association",
+            "channel A precedes channel B", "lagged_association",
             {
                 "driver": {"source": {"kind": "inline", "records": records(driver, "x")},
-                           "key": "x", "label": "night humidity"},
+                           "key": "x", "label": "channel A"},
                 "response": {"source": {"kind": "inline", "records": records(response, "y")},
-                             "key": "y", "label": "powdery risk"},
+                             "key": "y", "label": "channel B"},
             },
         )
         return ENGINE.run_question(
@@ -803,26 +926,26 @@ class CoverageRegisterTest(ResearchTestCase):
 
     def test_gaps_are_ranked_by_how_many_questions_they_unlock(self):
         connection = self.connection()
-        self.blocked(connection, "insect counts", "humid nights precede insects", "a")
-        self.blocked(connection, "insect counts", "rain precedes insects", "b")
-        self.blocked(connection, "leaf wetness", "wetness precedes black rot", "c")
+        self.blocked(connection, "channel gamma", "channel alpha precedes gamma", "a")
+        self.blocked(connection, "channel gamma", "channel beta precedes gamma", "b")
+        self.blocked(connection, "channel delta", "channel alpha precedes delta", "c")
         finding = self.ask(connection)
         self.assertEqual(finding["verdict"], ENGINE.VERDICT_MATERIAL)
-        self.assertEqual(finding["metrics"]["best_single_addition"], "insect counts")
+        self.assertEqual(finding["metrics"]["best_single_addition"], "channel gamma")
         self.assertEqual(finding["metrics"]["questions_unlocked_by_it"], 2)
         self.assertEqual(len(finding["metrics"]["missing_measurements"]), 2)
 
     def test_it_reports_once_rather_than_per_blocked_question(self):
         connection = self.connection()
         for index in range(5):
-            self.blocked(connection, "insect counts", f"claim {index}", f"s{index}")
+            self.blocked(connection, "channel gamma", f"claim {index}", f"s{index}")
         finding = self.ask(connection)
         self.assertEqual(len(finding["metrics"]["missing_measurements"]), 1)
         self.assertEqual(finding["metrics"]["missing_measurements"][0]["questions_unlocked"], 5)
 
     def test_a_gap_describes_the_instruments_not_the_field(self):
         connection = self.connection()
-        self.blocked(connection, "insect counts", "humid nights precede insects", "a")
+        self.blocked(connection, "channel gamma", "channel alpha precedes gamma", "a")
         finding = self.ask(connection)
         text = " ".join(finding["limitations"]).lower()
         self.assertIn("not of the field", text)
@@ -935,12 +1058,12 @@ class ForwardWarningTest(ResearchTestCase):
         ]
         question = ENGINE.open_question(
             connection, "vineyard:field_1",
-            "night humidity precedes powdery mildew risk", "lagged_association",
+            "channel A precedes channel B", "lagged_association",
             {
                 "driver": {"source": {"kind": "inline", "records": series(driver, "x")},
-                           "key": "x", "label": "night humidity"},
+                           "key": "x", "label": "channel A"},
                 "response": {"source": {"kind": "inline", "records": series(response, "y")},
-                             "key": "y", "label": "powdery mildew risk"},
+                             "key": "y", "label": "channel B"},
             },
         )
         return ENGINE.run_question(
@@ -1022,9 +1145,9 @@ class ForwardWarningTest(ResearchTestCase):
                     {"timestamp": (dt.date.today() - dt.timedelta(days=index)).isoformat(),
                      "x": 90.0 if index == 1 else 50.0}
                     for index in range(60)
-                ]}, "key": "x", "label": "night humidity"},
+                ]}, "key": "x", "label": "channel A"},
                 "lag_days": 3,
-                "relationship": {"response": "powdery risk", "rho": 0.2, "samples": 140},
+                "relationship": {"response": "channel B", "rho": 0.2, "samples": 140},
             },
         )
         finding = ENGINE.run_question(
@@ -1042,9 +1165,9 @@ class ForwardWarningTest(ResearchTestCase):
                     {"timestamp": (dt.date.today() - dt.timedelta(days=index)).isoformat(),
                      "x": 90.0 if index == 1 else 50.0}
                     for index in range(60)
-                ]}, "key": "x", "label": "night humidity"},
+                ]}, "key": "x", "label": "channel A"},
                 "lag_days": 3,
-                "relationship": {"response": "powdery risk", "rho": 0.9, "samples": 20},
+                "relationship": {"response": "channel B", "rho": 0.9, "samples": 20},
             },
         )
         finding = ENGINE.run_question(

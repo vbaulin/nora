@@ -60,6 +60,10 @@ class ProactiveDeploymentContractTest(unittest.TestCase):
         pack = (ROOT / "skills" / "proactive_field_agent" / "pack.py").read_text(encoding="utf-8")
         self.assertIn('"analysis": "threshold_materiality"', pack)
         self.assertIn('"analysis": "ceiling_saturation"', pack)
+        self.assertIn('"catalog_sources": catalog_sources', pack)
+        self.assertNotIn('"series": ' + "declare_" + "series", pack)
+        self.assertNotIn("night_" + "humidity", pack)
+        self.assertNotIn("powdery_" + "risk:", pack)
         # A domain pack that ships its own analysis has broken the layering.
         self.assertNotIn('"analyses"', pack)
 

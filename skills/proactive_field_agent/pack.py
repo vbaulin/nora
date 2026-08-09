@@ -194,56 +194,6 @@ def declare_questions(context):
                     ),
                 },
             })
-        # A hypothesis the board can state but not test: humid nights are
-        # associated with insect pressure in the literature, and this board has
-        # no insect measurement at all. The honest outcome is insufficient_data
-        # naming what is missing — never a claim, and never a standing nag.
-        questions.append({
-            "subject": f"vineyard:{field_id}",
-            "claim": (
-                f"humid nights precede a change in insect pressure at {field['name']}"
-            ),
-            "analysis": "lagged_association",
-            "priority": 30,
-            "params": {
-                "driver": {
-                    "source": hourly_source(repo, HUMIDITY_CODE, "hourly humidity"),
-                    "key": "valor_lectura",
-                    "time_key": "data_lectura",
-                    "hours": list(NIGHT_HOURS),
-                    "statistic": "mean",
-                    "label": "night humidity",
-                    "window_label": "night",
-                },
-                "response": {
-                    # Written by farmer-feedback-capture when trap counts or
-                    # scouting observations are recorded. Absent on most boards.
-                    "source": {
-                        "kind": "sqlite",
-                        "path": str(Path(repo) / "goidanich.db"),
-                        "table": "insect_observations",
-                        "columns": ["count"],
-                        "time_column": "day",
-                        "where": "field_id = ?",
-                        "where_values": [field_id],
-                        "label": "insect observations",
-                        "limit": 2000,
-                    },
-                    "key": "count",
-                    "time_key": "day",
-                    "label": "insect counts",
-                },
-                "lags": [0, 1, 2, 3, 5, 7],
-                "min_interval_seconds": 30 * 24 * 3600,
-                "missing_question": (
-                    "whether insect pressure follows humid nights here, which no "
-                    "measurement on this board can currently answer"
-                ),
-                "missing_options": [
-                    {"id": "start_insect_counts", "cost": "low", "params": {}},
-                ],
-            },
-        })
         # Can the forecast that drives the risk projection be trusted lately?
         questions.append({
             "subject": f"vineyard:{field_id}",
@@ -368,113 +318,20 @@ def calibration_sources(context):
     return sources
 
 
-# Meteocat variable codes, mirrored from vineyard_season_climate.
-TEMPERATURE_CODE = 32
-HUMIDITY_CODE = 33
-RAIN_CODE = 35
-
-# Night is when a canopy stays wet and a fungal spore does its work. Splitting
-# the hourly record this way is what lets a night-only pattern be visible at
-# all: a daily mean hides it.
-NIGHT_HOURS = (22, 6)
-DAY_HOURS = (10, 18)
-
-
-def hourly_source(repo, code, label):
-    return {
-        "kind": "sqlite",
-        "path": str(Path(repo) / "goidanich.db"),
-        "table": "meteo_raw",
-        "columns": ["codi_estacio", "codi_variable", "data_lectura", "valor_lectura"],
-        "time_column": "data_lectura",
-        "where": "codi_variable = ?",
-        "where_values": [code],
-        "label": label,
-        "limit": 20000,
-    }
-
-
-def declare_series(context):
-    """Series the engine may pair into cross-series hypotheses.
-
-    Declaring a series is not declaring a relationship. The board decides which
-    pairs are worth testing and, far more often, reports that a pair shows
-    nothing.
-    """
+def catalog_sources(context):
+    """Expose evidence storage without naming a variable or relationship."""
     repo = repo_path(context)
-    if not (Path(repo) / "goidanich.db").exists():
+    database = Path(repo) / "goidanich.db"
+    if not database.exists():
         return []
-    series = [
-        {
-            "name": "night_humidity",
-            "role": "driver",
-            "subject": "vineyard:weather",
-            "source": hourly_source(repo, HUMIDITY_CODE, "hourly humidity"),
-            "key": "valor_lectura",
-            "time_key": "data_lectura",
-            "hours": list(NIGHT_HOURS),
-            "statistic": "mean",
-            "label": "night humidity",
-            "window_label": "night",
-        },
-        {
-            "name": "day_humidity",
-            "role": "driver",
-            "subject": "vineyard:weather",
-            "source": hourly_source(repo, HUMIDITY_CODE, "hourly humidity"),
-            "key": "valor_lectura",
-            "time_key": "data_lectura",
-            "hours": list(DAY_HOURS),
-            "statistic": "mean",
-            "label": "day humidity",
-            "window_label": "day",
-        },
-        {
-            "name": "night_temperature",
-            "role": "driver",
-            "subject": "vineyard:weather",
-            "source": hourly_source(repo, TEMPERATURE_CODE, "hourly temperature"),
-            "key": "valor_lectura",
-            "time_key": "data_lectura",
-            "hours": list(NIGHT_HOURS),
-            "statistic": "mean",
-            "label": "night temperature",
-            "window_label": "night",
-        },
-    ]
-    for field in configured_fields(repo):
-        field_id = field["id"]
-        series.append({
-            "name": f"powdery_risk:{field_id}",
-            "role": "response",
-            "subject": f"vineyard:{field_id}",
-            "source": {
-                "kind": "sqlite",
-                "path": str(Path(repo) / "goidanich.db"),
-                "table": "powdery_daily_predictions",
-                "columns": ["powdery_risk"],
-                "time_column": "day",
-                "where": "field_id = ?",
-                "where_values": [field_id],
-                "label": f"powdery risk[{field_id}]",
-                "limit": 2000,
-            },
-            "key": "powdery_risk",
-            "time_key": "day",
-            "label": "powdery mildew risk",
-            "lags": [0, 1, 2, 3, 5, 7],
-        })
-        series.append({
-            "name": f"black_rot_index:{field_id}",
-            "role": "response",
-            "subject": f"vineyard:{field_id}",
-            "source": black_rot_source(repo, field_id, ["infection_index"]),
-            "key": "infection_index",
-            "time_key": "day",
-            "label": "black-rot infection index",
-            "lags": [0, 1, 2, 3, 5, 7],
-        })
-    return series
+    return [{
+        "kind": "sqlite_catalog",
+        "path": str(database),
+        "sample_rows": 200,
+        "read_limit": 5000,
+        "max_tables": 40,
+        "max_series": 160,
+    }]
 
 
 def evidence_paths(context):
@@ -497,7 +354,7 @@ PACK = {
         "and the quality of the board's own alerts."
     ),
     "questions": declare_questions,
-    "series": declare_series,
+    "catalog_sources": catalog_sources,
     "calibration_sources": calibration_sources,
     "evidence_paths": evidence_paths,
     "journal_dirs": ["/tmp/monitors/vineyard"],

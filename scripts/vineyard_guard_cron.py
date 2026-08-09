@@ -73,6 +73,115 @@ def configured_fields():
     return fields
 
 
+def personalized_training_settings():
+    config_path = os.path.join(REPO, "network_config.yaml")
+    try:
+        import yaml
+        config = yaml.safe_load(open(config_path, encoding="utf-8")) or {}
+        training = config.get("personalized_training") or {}
+        return {
+            "lookback_days": int(training.get("lookback_days", 365)),
+            "min_labels": int(training.get("min_labels", 4)),
+        }
+    except Exception:
+        return {"lookback_days": 365, "min_labels": 4}
+
+
+def train_personalized_models(fields, observed_end):
+    script = os.path.join(REPO, "train_personalized_model.py")
+    if not os.path.exists(script):
+        return {"ok": False, "failures": [{"error": "train_personalized_model.py missing"}]}
+    settings = personalized_training_settings()
+    start = (
+        dt.date.fromisoformat(observed_end)
+        - dt.timedelta(days=settings["lookback_days"])
+    ).isoformat()
+    models = []
+    failures = []
+    for field in fields:
+        for disease in ("downy_mildew", "powdery_mildew"):
+            result = run_json(
+                [
+                    "python3", script,
+                    "--db", os.path.join(REPO, "goidanich.db"),
+                    "--field", field,
+                    "--disease", disease,
+                    "--start", start,
+                    "--end", observed_end,
+                    "--min-labels", str(settings["min_labels"]),
+                ],
+                timeout=180,
+                cwd=REPO,
+            )
+            payload = result.get("stdout") or {}
+            record = {
+                "field": field,
+                "disease": disease,
+                "trained": bool(payload.get("trained")),
+                "counts": payload.get("counts") or {},
+                "model": payload.get("model"),
+            }
+            if result.get("ok") and "trained" in payload:
+                models.append(record)
+            else:
+                failures.append({
+                    **record,
+                    "returncode": result.get("returncode"),
+                    "stderr": result.get("stderr"),
+                    "stdout": payload,
+                })
+    return {"ok": not failures, "models": models, "failures": failures}
+
+
+def validate_shared_models(fields):
+    script = os.path.join(REPO, "validate_shared_model.py")
+    if not os.path.exists(script):
+        return {"ok": False, "failures": [{"error": "validate_shared_model.py missing"}]}
+    results = []
+    failures = []
+    for disease in ("downy_mildew", "powdery_mildew"):
+        shared_model = os.path.join(REPO, "models", f"{disease}_shared_personalized_model.json")
+        if not os.path.exists(shared_model):
+            results.append({"disease": disease, "status": "no_model"})
+            continue
+        for field in fields:
+            safe_field = re.sub(r"[^A-Za-z0-9_.-]+", "_", field)
+            output = os.path.join(
+                REPO, "results", f"federated_validation_{disease}_{safe_field}.json",
+            )
+            result = run_json(
+                [
+                    "python3", script,
+                    "--db", os.path.join(REPO, "goidanich.db"),
+                    "--field", field,
+                    "--disease", disease,
+                    "--model", shared_model,
+                    "--output", output,
+                    "--push",
+                ],
+                timeout=180,
+                cwd=REPO,
+            )
+            payload = result.get("stdout") or {}
+            record = {
+                "field": field,
+                "disease": disease,
+                "status": payload.get("status"),
+                "num_labelled": payload.get("num_labelled"),
+                "published": payload.get("published"),
+            }
+            if result.get("ok") and payload.get("status") in {"success", "insufficient_labels"}:
+                results.append(record)
+            else:
+                failures.append({
+                    **record,
+                    "returncode": result.get("returncode"),
+                    "stderr": result.get("stderr"),
+                    "stdout": payload,
+                })
+    return {"ok": not failures, "results": results, "failures": failures}
+
+
 def call_vineyard_risk(env):
     return run_json(
         [os.path.join(SKILLS, "vineyard_disease_risk", "run.sh")],
@@ -203,7 +312,17 @@ def mode_refresh(args):
         print("Vineyard Guard daily cache refresh incomplete.")
         print(json.dumps({"refreshed": refreshed, "failures": failures}, ensure_ascii=False)[:4000])
         return 1
-    print(f"Vineyard Guard daily cache refreshed for {len(fields)} fields and 3 diseases.")
+    training = train_personalized_models(fields, observed_end)
+    if not training.get("ok"):
+        print("Vineyard Guard personalized training incomplete.")
+        print(json.dumps(training.get("failures") or [], ensure_ascii=False)[:4000])
+        return 1
+    trained = sum(1 for model in training.get("models") or [] if model.get("trained"))
+    awaiting = len(training.get("models") or []) - trained
+    print(
+        f"Vineyard Guard daily cache refreshed for {len(fields)} fields and 3 diseases; "
+        f"{trained} personalized models trained, {awaiting} awaiting confirmed labels."
+    )
     return 0
 
 
@@ -399,7 +518,19 @@ def mode_supabase(args):
         print("Vineyard Guard Supabase sync failed:")
         print("\n".join(failures))
         return 1
-    print("Vineyard Guard Supabase sync completed for downy mildew, powdery mildew, and black rot.")
+    validation = validate_shared_models(configured_fields())
+    if not validation.get("ok"):
+        print("Vineyard Guard shared-model validation failed:")
+        print(json.dumps(validation.get("failures") or [], ensure_ascii=False)[:4000])
+        return 1
+    validated = sum(
+        1 for result in validation.get("results") or []
+        if result.get("status") == "success"
+    )
+    print(
+        "Vineyard Guard Supabase sync completed for downy mildew, powdery mildew, "
+        f"and black rot; {validated} shared-model field validations completed."
+    )
     return 0
 
 

@@ -582,8 +582,8 @@ Dated stamps and locks make each stage run at most once per local day:
 
 | Local time | Stage |
 |---|---|
-| 07:55 | Synchronize board identity, neighbours, feedback events, and model deltas with Supabase |
-| 08:00 | Refresh weather, forecasts, dashboards, reports, and plots |
+| 07:55 | Synchronize board identity, neighbours, feedback events, disease history, training policy, peer/model deltas, and released models with Supabase; validate a released model locally when one exists |
+| 08:00 | Refresh weather, forecasts, dashboards, reports, and plots; fit field-specific downy and powdery models from confirmed outcomes |
 | 08:15 | Evaluate downy mildew, powdery mildew, and grapevine black rot independently; package one daily summary |
 | 08:35 | Ingest evidence, create bounded proposals, run at most one queued research request, and suppress duplicates |
 | 17:00 | Ingest later operations or observations and create a follow-up only when justified |
@@ -591,6 +591,13 @@ Dated stamps and locks make each stage run at most once per local day:
 The three disease families remain independent. A low result in one cannot
 suppress an alert or plot from another. A proactive proposal already covered
 by the daily report is retained as evidence and skipped for duplicate delivery.
+
+Federated transport being enabled does not imply that a model delta exists.
+The local trainer requires enough labelled windows and at least one confirmed
+positive and one confirmed negative outcome. Until then the artifact remains
+untrained, deterministic disease layers continue to operate, and no fallback
+coefficient is shared. Black-rot disease history is synchronized separately;
+the current black-rot implementation is not a learned federated classifier.
 
 ### 11.8 Test Telegram packaging without sending
 

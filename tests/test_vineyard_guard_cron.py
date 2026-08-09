@@ -14,6 +14,64 @@ SPEC.loader.exec_module(MODULE)
 
 
 class VineyardGuardCronTest(unittest.TestCase):
+    def test_daily_refresh_trains_downy_and_powdery_after_cache_refresh(self):
+        args = types.SimpleNamespace(
+            days=31,
+            high_threshold=70,
+            watch_threshold=50,
+            delta_threshold=15,
+        )
+        success = {"ok": True, "stdout": {"status": "success"}}
+        with mock.patch.object(MODULE, "refresh_forecast_once", return_value={"ok": True}), mock.patch.object(
+            MODULE, "configured_fields", return_value=["field_1"]
+        ), mock.patch.object(
+            MODULE, "call_daily", return_value=success
+        ) as daily, mock.patch.object(
+            MODULE, "call_black_rot", return_value=success
+        ), mock.patch.object(
+            MODULE,
+            "train_personalized_models",
+            return_value={
+                "ok": True,
+                "models": [
+                    {"field": "field_1", "disease": "downy_mildew", "trained": False},
+                    {"field": "field_1", "disease": "powdery_mildew", "trained": False},
+                ],
+                "failures": [],
+            },
+        ) as train:
+            status = MODULE.mode_refresh(args)
+
+        self.assertEqual(status, 0)
+        self.assertEqual(daily.call_count, 2)
+        train.assert_called_once()
+        self.assertEqual(train.call_args.args[0], ["field_1"])
+
+    def test_supabase_cycle_syncs_three_diseases_then_validates_released_models(self):
+        sync = {"ok": True, "stdout": {"status": "success"}}
+        with mock.patch.object(MODULE, "call_vineyard_risk", return_value=sync) as call, mock.patch.object(
+            MODULE, "configured_fields", return_value=["field_1"]
+        ), mock.patch.object(
+            MODULE,
+            "validate_shared_models",
+            return_value={
+                "ok": True,
+                "results": [
+                    {"field": "field_1", "disease": "downy_mildew", "status": "success"}
+                ],
+                "failures": [],
+            },
+        ) as validate:
+            status = MODULE.mode_supabase(types.SimpleNamespace())
+
+        self.assertEqual(status, 0)
+        self.assertEqual(call.call_count, 3)
+        self.assertEqual(
+            [item.args[0]["SKILL_DISEASE"] for item in call.call_args_list],
+            ["downy_mildew", "powdery_mildew", "black_rot"],
+        )
+        validate.assert_called_once_with(["field_1"])
+
     def test_black_rot_near_saturation_watch_is_an_alert(self):
         skill_result = {
             "ok": True,

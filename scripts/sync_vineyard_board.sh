@@ -76,6 +76,7 @@ if [ -d "$GOIDANICH_ROOT" ]; then
     disease_tasks.py \
     disease_tasks.yaml \
     field_config.py \
+    network_config.yaml \
     forecast_projection.py \
     goidanich_agent.py \
     personalized_model.py \
@@ -87,7 +88,8 @@ if [ -d "$GOIDANICH_ROOT" ]; then
     season_gate.py \
     stations.py \
     supabase_sync.py \
-    train_personalized_model.py
+    train_personalized_model.py \
+    validate_shared_model.py
   do
     if [ -f "$GOIDANICH_ROOT/$module" ]; then
       scp_board "$GOIDANICH_ROOT/$module" "$BOARD:/tmp/goidanich_sync/$module"

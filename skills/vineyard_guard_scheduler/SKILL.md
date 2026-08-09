@@ -96,15 +96,22 @@ Valid daily refresh / risk-only alert result:
 
 Recommended schedule:
 
-- 07:55 `vineyard-disease-risk mode=supabase_sync disease=downy_mildew` to pull
-  neighbour network, neighbour risk signals, shared model updates, and push
-  pending downy farmer feedback/events.
-- 07:56 `vineyard-disease-risk mode=supabase_sync disease=powdery_mildew` to
-  push/pull the powdery event stream too. Do not rely on a downy-only sync for
-  powdery treatment or PMI feedback.
-- 08:00 `both_disease_report notify=false` for cache refresh.
-- 08:05 `both_disease_report notify_mode=risk_only channel=picoclaw_telegram`
-  for farmer alerts only when risk/treatment conditions require it.
+- 07:55 synchronize downy mildew, powdery mildew, and black-rot history through
+  Supabase. The learned mildew routes also pull the active training policy,
+  peer deltas, and released shared models; any released model is evaluated on
+  the board's own labelled windows before validation metrics are published.
+- 08:00 refresh weather, forecasts, deterministic disease layers, dashboards,
+  reports, and plots for every configured field. Then fit the field-specific
+  downy and powdery models from cached evidence. An artifact with insufficient
+  confirmed positive and negative outcomes remains explicitly untrained and is
+  never uploaded as a model delta.
+- 08:15 evaluate all three disease families independently and package one
+  Telegram summary. Only active alerts contribute plots.
+
+The next 07:55 pass contributes any local model that became trainable during
+the preceding refresh. Grapevine black rot remains a deterministic infection
+model: its separated history is synchronized, but it does not emit logistic
+model coefficients.
 
 If PicoClaw cron is used through agent-turn messages, the message must contain
 the exact skill call above. A vague trigger phrase is invalid because the LLM

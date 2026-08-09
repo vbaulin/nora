@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Preserve provenance, quarantine failed runs, and avoid turning temporal order into causality.">
+  <meta name="theme-color" content="#0b1410">
+  <title>Evidence Memory and Release Gates / nora</title>
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body class="">
+  <a class="skip-link" href="#content">Skip to content</a>
+  <div class="reading-progress" aria-hidden="true"><span style="width:56%"></span></div>
+  <header class="topbar">
+    <a class="brand" href="index.html"><span class="brand-mark">N</span><span>nora</span></a>
+    <nav class="top-links" aria-label="Project links">
+      <a href="https://github.com/vbaulin/nora/blob/main/README.md">README</a>
+      <a href="https://github.com/vbaulin/nora">GitHub</a>
+    </nav>
+  </header>
+  
+        <header class="chapter-heading">
+          <p class="eyebrow">Chapter 4</p>
+          <h1>Evidence Memory and Release Gates</h1>
+          <p>Preserve provenance, quarantine failed runs, and avoid turning temporal order into causality.</p>
+          <div class="chapter-meta">Chapter 4 of 8 / 2 min read</div>
+        </header>
+        
+  <details class="mobile-nav">
+    <summary>Browse chapters</summary>
+    <nav class="mobile-chapter-links" aria-label="Tutorial chapters"><a class="" href="index.html">Overview</a><a class="" href="01-reasoning-and-execution.html">1. Reasoning and Deterministic Execution</a><a class="" href="02-task-contract.html">2. Tasks, Steps, and Journals</a><a class="" href="03-skill-lifecycle.html">3. Skills and the Hardware Boundary</a><a class="active" href="04-evidence-release.html" aria-current="page">4. Evidence Memory and Release Gates</a><a class="" href="05-proactive-dialogue.html">5. Proactive Dialogue and Confirmation</a><a class="" href="06-research-and-adaptation.html">6. Research the Evidence on Idle Time</a><a class="" href="07-run-an-experiment.html">7. Run and Extend an Experiment</a><a class="" href="08-vineyard-guard.html">8. Adapt It to Your Own Domain</a></nav>
+  </details>
+  <div class="docs-shell">
+    <aside class="sidebar">
+      <p class="sidebar-label">Tutorial chapters</p>
+      <nav class="chapter-links" aria-label="Tutorial chapters"><a class="" href="index.html">Overview</a><a class="" href="01-reasoning-and-execution.html">1. Reasoning and Deterministic Execution</a><a class="" href="02-task-contract.html">2. Tasks, Steps, and Journals</a><a class="" href="03-skill-lifecycle.html">3. Skills and the Hardware Boundary</a><a class="active" href="04-evidence-release.html" aria-current="page">4. Evidence Memory and Release Gates</a><a class="" href="05-proactive-dialogue.html">5. Proactive Dialogue and Confirmation</a><a class="" href="06-research-and-adaptation.html">6. Research the Evidence on Idle Time</a><a class="" href="07-run-an-experiment.html">7. Run and Extend an Experiment</a><a class="" href="08-vineyard-guard.html">8. Adapt It to Your Own Domain</a></nav>
+      <div class="sidebar-note">
+        <strong>Evidence rule</strong>
+        <span>Observed, confirmed, sourced, and proposed are different states.</span>
+      </div>
+    </aside>
+    <main id="content" class="content">
+      <p>A proactive system needs memory, but not every stored value has the same
+epistemic status. nano-os-agent journals attempted experiments. Application
+adapters maintain observations and confirmed facts. PicoClaw explains released
+evidence. Chat history is not a truth source for board state.</p>
+<h2 id="evidence-classes">Evidence classes</h2>
+<table>
+<thead>
+<tr>
+<th>Class</th>
+<th>Example</th>
+<th>Permitted statement</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Observation</td>
+<td>A calibrated sensor read <code>31.2 C</code> at a timestamp</td>
+<td>The sensor reported this value under the recorded conditions</td>
+</tr>
+<tr>
+<td>Released experiment result</td>
+<td>A focus-control task passed all declared checks</td>
+<td>This run passed its checks</td>
+</tr>
+<tr>
+<td>Human-confirmed fact</td>
+<td>The operator confirmed a treatment or sample identity</td>
+<td>The event was reported and confirmed</td>
+</tr>
+<tr>
+<td>Public source</td>
+<td>A paper or manual with URL and retrieval time</td>
+<td>The source states or supports a candidate method</td>
+</tr>
+<tr>
+<td>Proposal</td>
+<td>Inspect a sample or test a sensor placement</td>
+<td>This is a suggested next action, not an executed fact</td>
+</tr>
+</tbody>
+</table>
+<h2 id="release-gate">Release gate</h2>
+<p>Field-related nano-os-agent results use a narrow release rule:</p>
+<ul>
+<li><strong>Passing and internally consistent:</strong> retain as <code>observed_success</code> with the
+  scope of that run.</li>
+<li><strong>Failed, partial, blocked, or step-inconsistent:</strong> quarantine the result and
+  exclude its measurements from operational advice.</li>
+<li><strong>Missing current application state:</strong> create an internal refresh or
+  investigation request rather than inventing a current value.</li>
+</ul>
+<p>The gate limits what may influence downstream explanations. It does not erase
+failure; failure remains valuable diagnostic evidence.</p>
+<h2 id="provenance">Provenance</h2>
+<p>Every durable item should answer:</p>
+<ol>
+<li>What subject or sample did this concern?</li>
+<li>When was it observed or reported?</li>
+<li>Which skill, task, sensor, person, or source produced it?</li>
+<li>Which units, model version, and configuration applied?</li>
+<li>Did release checks pass?</li>
+<li>Was the item observed, confirmed, inferred, or proposed?</li>
+</ol>
+<p>Without these fields, a numeric value may be precise but scientifically weak.</p>
+<h2 id="temporal-association-is-not-causality">Temporal association is not causality</h2>
+<p>Suppose a farmer confirms an operation and a later observation is clean. The
+agent may store:</p>
+<pre><code class="language-json">{
+  &quot;relation&quot;: &quot;observed_association&quot;,
+  &quot;operation_id&quot;: 41,
+  &quot;outcome_id&quot;: 57,
+  &quot;causal_claim&quot;: false
+}
+</code></pre>
+<p>The sequence can guide a future question, but it does not establish that the
+operation caused the outcome. Stronger claims require controls, replication,
+or another defensible design.</p>
+<h2 id="staleness">Staleness</h2>
+<p>Evidence also has a time boundary. A fresh dashboard, sensor snapshot, or task
+result can answer a current question. Yesterday's value may remain valid
+history, but it should not be silently reused as today's state. Application
+adapters therefore define freshness and regeneration rules.</p>
+<p>Next: <a href="05-proactive-dialogue.html">use released evidence to initiate a bounded dialogue</a>.</p>
+      <nav class="chapter-footer" aria-label="Previous and next chapter"><a class="chapter-direction previous" href="03-skill-lifecycle.html"><span>Previous</span><strong>Skills and the Hardware Boundary</strong></a><a class="chapter-direction next" href="05-proactive-dialogue.html"><span>Next</span><strong>Proactive Dialogue and Confirmation</strong></a></nav>
+    </main>
+  </div>
+  <footer class="site-footer">
+    <p>Built from repository-verified contracts and code. Chapter structure adapted from PocketFlow Tutorial Codebase Knowledge.</p>
+  </footer>
+  <script type="module" src="assets/site.js"></script>
+</body>
+</html>

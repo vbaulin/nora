@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Express experiments as inspectable YAML with expectations, retries, and local repetition.">
+  <meta name="theme-color" content="#0b1410">
+  <title>Tasks, Steps, and Journals / nora</title>
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body class="">
+  <a class="skip-link" href="#content">Skip to content</a>
+  <div class="reading-progress" aria-hidden="true"><span style="width:33%"></span></div>
+  <header class="topbar">
+    <a class="brand" href="index.html"><span class="brand-mark">N</span><span>nora</span></a>
+    <nav class="top-links" aria-label="Project links">
+      <a href="https://github.com/vbaulin/nora/blob/main/README.md">README</a>
+      <a href="https://github.com/vbaulin/nora">GitHub</a>
+    </nav>
+  </header>
+  
+        <header class="chapter-heading">
+          <p class="eyebrow">Chapter 2</p>
+          <h1>Tasks, Steps, and Journals</h1>
+          <p>Express experiments as inspectable YAML with expectations, retries, and local repetition.</p>
+          <div class="chapter-meta">Chapter 2 of 8 / 2 min read</div>
+        </header>
+        
+  <details class="mobile-nav">
+    <summary>Browse chapters</summary>
+    <nav class="mobile-chapter-links" aria-label="Tutorial chapters"><a class="" href="index.html">Overview</a><a class="" href="01-reasoning-and-execution.html">1. Reasoning and Deterministic Execution</a><a class="active" href="02-task-contract.html" aria-current="page">2. Tasks, Steps, and Journals</a><a class="" href="03-skill-lifecycle.html">3. Skills and the Hardware Boundary</a><a class="" href="04-evidence-release.html">4. Evidence Memory and Release Gates</a><a class="" href="05-proactive-dialogue.html">5. Proactive Dialogue and Confirmation</a><a class="" href="06-research-and-adaptation.html">6. Research the Evidence on Idle Time</a><a class="" href="07-run-an-experiment.html">7. Run and Extend an Experiment</a><a class="" href="08-vineyard-guard.html">8. Adapt It to Your Own Domain</a></nav>
+  </details>
+  <div class="docs-shell">
+    <aside class="sidebar">
+      <p class="sidebar-label">Tutorial chapters</p>
+      <nav class="chapter-links" aria-label="Tutorial chapters"><a class="" href="index.html">Overview</a><a class="" href="01-reasoning-and-execution.html">1. Reasoning and Deterministic Execution</a><a class="active" href="02-task-contract.html" aria-current="page">2. Tasks, Steps, and Journals</a><a class="" href="03-skill-lifecycle.html">3. Skills and the Hardware Boundary</a><a class="" href="04-evidence-release.html">4. Evidence Memory and Release Gates</a><a class="" href="05-proactive-dialogue.html">5. Proactive Dialogue and Confirmation</a><a class="" href="06-research-and-adaptation.html">6. Research the Evidence on Idle Time</a><a class="" href="07-run-an-experiment.html">7. Run and Extend an Experiment</a><a class="" href="08-vineyard-guard.html">8. Adapt It to Your Own Domain</a></nav>
+      <div class="sidebar-note">
+        <strong>Evidence rule</strong>
+        <span>Observed, confirmed, sourced, and proposed are different states.</span>
+      </div>
+    </aside>
+    <main id="content" class="content">
+      <p>The task is nano-os-agent's unit of experimental intent. In
+<a href="https://github.com/vbaulin/nora/blob/main/main.go"><code>main.go</code></a>, <code>Task</code> contains
+identity, priority, status, optional hypothesis linkage, success criteria,
+steps, and subtasks. Each <code>Step</code> declares an action, parameters, timeout,
+expectations, retry policy, failure policy, optional saved name, and optional
+repeat configuration.</p>
+<h2 id="minimal-task">Minimal task</h2>
+<pre><code class="language-yaml">- id: tutorial_system_snapshot
+  name: &quot;Tutorial system snapshot&quot;
+  priority: 1
+  status: pending
+  steps:
+    - id: read_system
+      action: call_skill
+      save_as: system
+      parameters:
+        skill_name: system_info
+      expect:
+        ram_total_mb: &quot;&gt;=1&quot;
+      timeout: 15
+      max_retries: 1
+      on_fail: block
+</code></pre>
+<p>This is more than a command wrapper. It states what operation is allowed, how
+long it may run, what output must be present, what is retained, and what failure
+means.</p>
+<h2 id="step-semantics">Step semantics</h2>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>action</code></td>
+<td>Native action such as <code>call_skill</code>, <code>capture_image</code>, or another registered executor path</td>
+</tr>
+<tr>
+<td><code>parameters</code></td>
+<td>Typed or structured inputs for the action</td>
+</tr>
+<tr>
+<td><code>expect</code></td>
+<td>Output checks that must pass for the step to pass</td>
+</tr>
+<tr>
+<td><code>timeout</code></td>
+<td>Maximum duration for one attempt</td>
+</tr>
+<tr>
+<td><code>max_retries</code></td>
+<td>Bounded recovery from transient failure</td>
+</tr>
+<tr>
+<td><code>on_fail</code></td>
+<td>Continue or block the remaining chain</td>
+</tr>
+<tr>
+<td><code>save_as</code></td>
+<td>Stable alias for use by later steps</td>
+</tr>
+<tr>
+<td><code>repeat</code></td>
+<td>Local interval, duration/iteration bound, journal, and failure behavior</td>
+</tr>
+</tbody>
+</table>
+<p>Later steps can reference earlier outputs with <code>${step_id.field}</code> or
+<code>${save_as.field}</code>. This keeps data flow inside the task instead of copying
+intermediate values through chat.</p>
+<h2 id="local-repetition">Local repetition</h2>
+<pre><code class="language-yaml">repeat:
+  interval_sec: 300
+  max_iterations: 288
+  journal_path: /tmp/monitors/environmental_baseline.jsonl
+  continue_on_fail: true
+</code></pre>
+<p>The example records one day of five-minute observations. Each iteration writes
+a compact JSON object to the declared journal. A later summary skill can reduce
+the series to extrema, trends, failures, and representative artifacts.</p>
+<p>This is the cost-control mechanism: one task can collect hundreds of samples
+without hundreds of LLM calls.</p>
+<h2 id="experiment-journal">Experiment journal</h2>
+<p>After a task, nano-os-agent records an <code>ExperimentEntry</code> with:</p>
+<ul>
+<li>task identity and optional hypothesis reference;</li>
+<li>metrics before and after execution;</li>
+<li>steps run and steps passed;</li>
+<li>duration and timestamp;</li>
+<li>a verdict and compact summary.</li>
+</ul>
+<p>Task state and experiment evidence are different. State answers <em>what the
+executor is doing now</em>. The journal answers <em>what was attempted and what
+happened</em>.</p>
+<h2 id="template-versus-pending">Template versus pending</h2>
+<p>Long-running examples should remain <code>status: template</code>. This makes them
+discoverable without launching them automatically. An operator or PicoClaw
+creates a deliberate pending copy when the experiment is ready to run.</p>
+<p>Next: <a href="03-skill-lifecycle.html">turn repeated task logic into a reusable skill</a>.</p>
+      <nav class="chapter-footer" aria-label="Previous and next chapter"><a class="chapter-direction previous" href="01-reasoning-and-execution.html"><span>Previous</span><strong>Reasoning and Deterministic Execution</strong></a><a class="chapter-direction next" href="03-skill-lifecycle.html"><span>Next</span><strong>Skills and the Hardware Boundary</strong></a></nav>
+    </main>
+  </div>
+  <footer class="site-footer">
+    <p>Built from repository-verified contracts and code. Chapter structure adapted from PocketFlow Tutorial Codebase Knowledge.</p>
+  </footer>
+  <script type="module" src="assets/site.js"></script>
+</body>
+</html>

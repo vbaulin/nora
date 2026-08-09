@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Software that runs experiments, keeps the evidence honest, and asks you only when the answer would change something.">
+  <meta name="theme-color" content="#0b1410">
+  <title>Build an Autonomous Research Executor / nora</title>
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body class="home">
+  <a class="skip-link" href="#content">Skip to content</a>
+  <div class="reading-progress" aria-hidden="true"><span style="width:11%"></span></div>
+  <header class="topbar">
+    <a class="brand" href="index.html"><span class="brand-mark">N</span><span>nora</span></a>
+    <nav class="top-links" aria-label="Project links">
+      <a href="https://github.com/vbaulin/nora/blob/main/README.md">README</a>
+      <a href="https://github.com/vbaulin/nora">GitHub</a>
+    </nav>
+  </header>
+  
+        <header class="home-hero">
+          <div class="hero-content">
+            <p class="eyebrow">nora tutorial</p>
+            <h1>Build an Autonomous Research Executor</h1>
+            <p>Software that runs experiments, keeps the evidence honest, and asks you only when the answer would change something.</p>
+            <div class="hero-links">
+              <a class="primary-link" href="01-reasoning-and-execution.html">Start chapter 1</a>
+              <a class="secondary-link" href="https://github.com/vbaulin/nora">View source</a>
+            </div>
+          </div>
+        </header>
+        
+  <details class="mobile-nav">
+    <summary>Browse chapters</summary>
+    <nav class="mobile-chapter-links" aria-label="Tutorial chapters"><a class="active" href="index.html" aria-current="page">Overview</a><a class="" href="01-reasoning-and-execution.html">1. Reasoning and Deterministic Execution</a><a class="" href="02-task-contract.html">2. Tasks, Steps, and Journals</a><a class="" href="03-skill-lifecycle.html">3. Skills and the Hardware Boundary</a><a class="" href="04-evidence-release.html">4. Evidence Memory and Release Gates</a><a class="" href="05-proactive-dialogue.html">5. Proactive Dialogue and Confirmation</a><a class="" href="06-research-and-adaptation.html">6. Research the Evidence on Idle Time</a><a class="" href="07-run-an-experiment.html">7. Run and Extend an Experiment</a><a class="" href="08-vineyard-guard.html">8. Adapt It to Your Own Domain</a></nav>
+  </details>
+  <div class="docs-shell">
+    <aside class="sidebar">
+      <p class="sidebar-label">Tutorial chapters</p>
+      <nav class="chapter-links" aria-label="Tutorial chapters"><a class="active" href="index.html" aria-current="page">Overview</a><a class="" href="01-reasoning-and-execution.html">1. Reasoning and Deterministic Execution</a><a class="" href="02-task-contract.html">2. Tasks, Steps, and Journals</a><a class="" href="03-skill-lifecycle.html">3. Skills and the Hardware Boundary</a><a class="" href="04-evidence-release.html">4. Evidence Memory and Release Gates</a><a class="" href="05-proactive-dialogue.html">5. Proactive Dialogue and Confirmation</a><a class="" href="06-research-and-adaptation.html">6. Research the Evidence on Idle Time</a><a class="" href="07-run-an-experiment.html">7. Run and Extend an Experiment</a><a class="" href="08-vineyard-guard.html">8. Adapt It to Your Own Domain</a></nav>
+      <div class="sidebar-note">
+        <strong>Evidence rule</strong>
+        <span>Observed, confirmed, sourced, and proposed are different states.</span>
+      </div>
+    </aside>
+    <main id="content" class="content">
+      <p>nora runs experiments, keeps the evidence honest, and asks you only when the
+answer would change something.</p>
+<p>It is not a chatbot. Nothing here waits for a prompt: you describe an
+experiment once, a deterministic runtime performs it on a schedule, and the
+results are studied without anyone opening a conversation.</p>
+<p>The domain is yours. A vineyard board, a bench rig with a light sensor, and a
+cloud VM watching an uploaded dataset run the same engine and differ only in
+configuration.</p>
+<h2 id="the-whole-idea-in-one-picture">The whole idea in one picture</h2>
+<p>A board that samples once an hour is idle for fifty-nine minutes. nora spends a
+few of those seconds reading what it already recorded, and speaks up only when
+something is both real and worth your time.</p>
+<p><img alt="The research loop: signals and feedback become a question, a bounded analysis produces a finding, and the verdict decides who hears about it" src="assets/readme/research-loop.svg"></p>
+<p>Most of what it finds, it keeps to itself. That is the feature.</p>
+<h2 id="try-it-in-sixty-seconds">Try it in sixty seconds</h2>
+<p>The research engine is standard-library Python, so the core loop runs on your
+laptop with no board and no install. Clone the repository, then create a
+journal that looks like something a sensor task would have written:</p>
+<pre><code class="language-bash">mkdir -p /tmp/nora-demo/monitors &amp;&amp; python3 - &lt;&lt;'PY'
+import json, datetime as dt, random
+random.seed(1)
+now = dt.datetime.now(dt.timezone.utc)
+rows = [
+    {
+        &quot;timestamp&quot;: (now - dt.timedelta(minutes=(48 - i) * 30)).isoformat(),
+        &quot;lux&quot;: min(100.0, round(random.gauss(86, 15), 1)),
+        &quot;temp_c&quot;: round(21 + random.gauss(0, 0.4), 2),
+    }
+    for i in range(48)
+]
+open(&quot;/tmp/nora-demo/monitors/light_probe.jsonl&quot;, &quot;w&quot;).write(
+    &quot;\n&quot;.join(json.dumps(row) for row in rows))
+PY
+</code></pre>
+<p>Now let the board research it:</p>
+<pre><code class="language-bash">printf '%s' '{&quot;mode&quot;:&quot;cycle&quot;,&quot;state_dir&quot;:&quot;/tmp/nora-demo/state&quot;,&quot;journal_dirs&quot;:&quot;/tmp/nora-demo/monitors&quot;,&quot;evidence_journal&quot;:&quot;/tmp/nora-demo/experiments.jsonl&quot;}' | ./skills/research_agent/run.sh
+</code></pre>
+<pre><code class="language-json">{&quot;status&quot;: &quot;success&quot;, &quot;mode&quot;: &quot;cycle&quot;,
+ &quot;raised&quot;: [&quot;lux piles up against 100 instead of passing it&quot;],
+ &quot;investigated&quot;: [{&quot;subject&quot;: &quot;light_probe&quot;, &quot;analysis&quot;: &quot;ceiling_saturation&quot;,
+                   &quot;verdict&quot;: &quot;material_unresolved&quot;, &quot;sample_size&quot;: 48,
+                   &quot;open_question&quot;: &quot;whether the channel is clipping at its range&quot;}],
+ &quot;safety&quot;: &quot;Findings are evidence about stored data. No action was taken and no message was sent.&quot;}
+</code></pre>
+<p>Nobody told it to look at <code>lux</code>. It read the journal, noticed that the values
+pile up against 100 instead of passing it, checked whether that pile-up is a
+real wall or just the top of a range, and produced a finding it cannot settle
+alone. <code>temp_c</code> varied normally, so it produced nothing — which is most of the
+job.</p>
+<h2 id="where-it-runs">Where it runs</h2>
+<p>You just ran it on a laptop. Nothing about the engine assumes a board.</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Small board</th>
+<th>Laptop</th>
+<th>Cloud VM</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Task executor</td>
+<td>yes</td>
+<td>yes</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>Research engine and analyses</td>
+<td>yes</td>
+<td>yes</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>Domain packs and adapters</td>
+<td>yes</td>
+<td>yes</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>Camera, NPU, I2C, GPIO, audio</td>
+<td>yes</td>
+<td>no</td>
+<td>no</td>
+</tr>
+<tr>
+<td>Where measurements come from</td>
+<td>attached sensors</td>
+<td>files you provide</td>
+<td>APIs, uploads, a database</td>
+</tr>
+</tbody>
+</table>
+<p>The executor is one static Go binary — <code>GOOS=linux GOARCH=amd64</code> for an
+ordinary cloud VM, <code>arm64</code> for Oracle Ampere or a Raspberry Pi, <code>riscv64</code> for
+the LicheeRV Nano — and the research engine is standard-library Python. Skills
+that need peripherals declare <code>requires_hardware: true</code> and are skipped with a
+stated reason on a host that has none, instead of failing inside a driver.</p>
+<p>The board matters when the experiment is physical: a canopy, a fermenter, a
+machine that vibrates. When measurements arrive over the network, the same
+runtime does the same work on a VM that costs nothing.
+<a href="https://github.com/vbaulin/nora/tree/main/deploy"><code>deploy/</code></a> has the systemd
+unit, the container file, and the Oracle Cloud walkthrough.</p>
+<h2 id="why-it-works-this-way">Why it works this way</h2>
+<p>An unattended board has a great deal of time and very little to say. Two easy
+failure modes follow: it stays silent until someone thinks to ask, or it
+reports every threshold crossing and gets muted. Neither is research.</p>
+<p>Four verdicts decide who hears about a finding:</p>
+<table>
+<thead>
+<tr>
+<th>Verdict</th>
+<th>Meaning</th>
+<th>Reaches a human</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>material_unresolved</code></td>
+<td>Real, decision-relevant, unanswerable from local evidence</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>not_material</code></td>
+<td>Real, but it changed no decision</td>
+<td>No</td>
+</tr>
+<tr>
+<td><code>resolved_local</code></td>
+<td>Already answered by evidence on the board</td>
+<td>No</td>
+</tr>
+<tr>
+<td><code>insufficient_data</code></td>
+<td>The analysis could not run</td>
+<td>No</td>
+</tr>
+</tbody>
+</table>
+<p>The last row is the one that keeps an agent honest. A board that cannot check
+something has not discovered anything, and must not turn its own blind spot
+into a request for attention or hardware.</p>
+<h2 id="core-abstractions">Core abstractions</h2>
+<p>The chapter order follows the dependency structure of the code, not the
+directory tree.</p>
+<table>
+<thead>
+<tr>
+<th>Abstraction</th>
+<th>Question it answers</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Reasoning/execution boundary</td>
+<td>Which decisions belong to an LLM, and which to a deterministic runtime?</td>
+</tr>
+<tr>
+<td>Task contract</td>
+<td>How is an experiment made explicit, repeatable, and time-bounded?</td>
+</tr>
+<tr>
+<td>Skill lifecycle</td>
+<td>How does a new capability become trusted for unattended use?</td>
+</tr>
+<tr>
+<td>Evidence release</td>
+<td>Which results may become current facts, and which stay quarantined?</td>
+</tr>
+<tr>
+<td>Proactive dialogue</td>
+<td>How does new evidence start a precise human interaction without acting?</td>
+</tr>
+<tr>
+<td>Autonomous research</td>
+<td>How does the board use idle time to answer its own questions?</td>
+</tr>
+<tr>
+<td>Experimental operation</td>
+<td>How do you run, inspect, and extend a first experiment?</td>
+</tr>
+<tr>
+<td>Domain packs</td>
+<td>How does a field such as viticulture plug in without defining the runtime?</td>
+</tr>
+</tbody>
+</table>
+<h2 id="learning-path">Learning path</h2>
+<ol>
+<li><a href="01-reasoning-and-execution.html">Separate reasoning from execution</a> — why an
+   LLM must not hold the sampling loop.</li>
+<li><a href="02-task-contract.html">Encode an experiment as a task</a> — YAML steps,
+   repeats, journals.</li>
+<li><a href="03-skill-lifecycle.html">Validate and promote reusable skills</a> — how a new
+   capability earns unattended use.</li>
+<li><a href="04-evidence-release.html">Release evidence without overstating it</a> — the
+   difference between a reading and a fact.</li>
+<li><a href="05-proactive-dialogue.html">Turn a change into one confirmable proposal</a> —
+   asking a human well, and rarely.</li>
+<li><a href="06-research-and-adaptation.html">Research the evidence on idle time</a> — the
+   engine, the analyses, and a worked study.</li>
+<li><a href="07-run-an-experiment.html">Run and extend a first experiment</a> — laptop first,
+   then hardware.</li>
+<li><a href="08-vineyard-guard.html">Adapt it to your own domain</a> — write a pack; read the
+   vineyard one as a complete example.</li>
+</ol>
+<h2 id="what-learning-means">What learning means</h2>
+<p>This codebase uses <em>learning</em> for several distinct processes. They should not
+be collapsed into one claim.</p>
+<table>
+<thead>
+<tr>
+<th>Process</th>
+<th>Durable output</th>
+<th>What it does not prove</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Evidence memory</td>
+<td>Timestamped observations, artifacts, provenance</td>
+<td>Why an observation occurred</td>
+</tr>
+<tr>
+<td>Autonomous research</td>
+<td>A finding with a verdict and its limitations</td>
+<td>That the finding generalizes beyond the window</td>
+</tr>
+<tr>
+<td>Hypothesis formation</td>
+<td>A tested lead-lag relationship between two series</td>
+<td>That the driver causes the response</td>
+</tr>
+<tr>
+<td>Research policy</td>
+<td>Which analyses have been worth running on this board</td>
+<td>That a demoted analysis is worthless elsewhere</td>
+</tr>
+<tr>
+<td>Coverage register</td>
+<td>The measurements this board lacks, ranked</td>
+<td>That adding one would make its answer positive</td>
+</tr>
+<tr>
+<td>Protocol adaptation</td>
+<td>A bounded change to sampling or a next test</td>
+<td>That the revised protocol is universally better</td>
+</tr>
+<tr>
+<td>Skill learning</td>
+<td>A validated and promoted capability</td>
+<td>That every future run will pass</td>
+</tr>
+<tr>
+<td>Model learning</td>
+<td>Versioned fitted parameters and evaluation evidence</td>
+<td>That an LLM explanation is a trained model</td>
+</tr>
+<tr>
+<td>Federated learning</td>
+<td>A shared model plus its measured local calibration</td>
+<td>That it performs the same on a board that did not contribute</td>
+</tr>
+<tr>
+<td>Human correction</td>
+<td>A confirmed label, operation, or outcome</td>
+<td>Causality between an action and a later state</td>
+</tr>
+</tbody>
+</table>
+<p>The rest of the tutorial keeps these meanings explicit.</p>
+<h2 id="method-note">Method note</h2>
+<p>The chapter map uses the abstraction-first, relationship-first structure of
+<a href="https://github.com/The-Pocket/PocketFlow-Tutorial-Codebase-Knowledge">PocketFlow Tutorial Codebase Knowledge</a>.
+The text was not produced by an unattended codebase generator: every runtime
+claim is checked against this repository's task engine, skill contracts,
+research engine, and operator documentation, and every command in the tutorial
+was executed against the current tree.</p>
+      <nav class="chapter-footer" aria-label="Previous and next chapter"><span class="chapter-direction spacer"></span><a class="chapter-direction next" href="01-reasoning-and-execution.html"><span>Next</span><strong>Reasoning and Deterministic Execution</strong></a></nav>
+    </main>
+  </div>
+  <footer class="site-footer">
+    <p>Built from repository-verified contracts and code. Chapter structure adapted from PocketFlow Tutorial Codebase Knowledge.</p>
+  </footer>
+  <script type="module" src="assets/site.js"></script>
+</body>
+</html>

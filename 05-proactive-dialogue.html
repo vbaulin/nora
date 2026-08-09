@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Let a change initiate one precise question while keeping consequential actions under confirmation.">
+  <meta name="theme-color" content="#0b1410">
+  <title>Proactive Dialogue and Confirmation / nora</title>
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body class="">
+  <a class="skip-link" href="#content">Skip to content</a>
+  <div class="reading-progress" aria-hidden="true"><span style="width:67%"></span></div>
+  <header class="topbar">
+    <a class="brand" href="index.html"><span class="brand-mark">N</span><span>nora</span></a>
+    <nav class="top-links" aria-label="Project links">
+      <a href="https://github.com/vbaulin/nora/blob/main/README.md">README</a>
+      <a href="https://github.com/vbaulin/nora">GitHub</a>
+    </nav>
+  </header>
+  
+        <header class="chapter-heading">
+          <p class="eyebrow">Chapter 5</p>
+          <h1>Proactive Dialogue and Confirmation</h1>
+          <p>Let a change initiate one precise question while keeping consequential actions under confirmation.</p>
+          <div class="chapter-meta">Chapter 5 of 8 / 3 min read</div>
+        </header>
+        
+  <details class="mobile-nav">
+    <summary>Browse chapters</summary>
+    <nav class="mobile-chapter-links" aria-label="Tutorial chapters"><a class="" href="index.html">Overview</a><a class="" href="01-reasoning-and-execution.html">1. Reasoning and Deterministic Execution</a><a class="" href="02-task-contract.html">2. Tasks, Steps, and Journals</a><a class="" href="03-skill-lifecycle.html">3. Skills and the Hardware Boundary</a><a class="" href="04-evidence-release.html">4. Evidence Memory and Release Gates</a><a class="active" href="05-proactive-dialogue.html" aria-current="page">5. Proactive Dialogue and Confirmation</a><a class="" href="06-research-and-adaptation.html">6. Research the Evidence on Idle Time</a><a class="" href="07-run-an-experiment.html">7. Run and Extend an Experiment</a><a class="" href="08-vineyard-guard.html">8. Adapt It to Your Own Domain</a></nav>
+  </details>
+  <div class="docs-shell">
+    <aside class="sidebar">
+      <p class="sidebar-label">Tutorial chapters</p>
+      <nav class="chapter-links" aria-label="Tutorial chapters"><a class="" href="index.html">Overview</a><a class="" href="01-reasoning-and-execution.html">1. Reasoning and Deterministic Execution</a><a class="" href="02-task-contract.html">2. Tasks, Steps, and Journals</a><a class="" href="03-skill-lifecycle.html">3. Skills and the Hardware Boundary</a><a class="" href="04-evidence-release.html">4. Evidence Memory and Release Gates</a><a class="active" href="05-proactive-dialogue.html" aria-current="page">5. Proactive Dialogue and Confirmation</a><a class="" href="06-research-and-adaptation.html">6. Research the Evidence on Idle Time</a><a class="" href="07-run-an-experiment.html">7. Run and Extend an Experiment</a><a class="" href="08-vineyard-guard.html">8. Adapt It to Your Own Domain</a></nav>
+      <div class="sidebar-note">
+        <strong>Evidence rule</strong>
+        <span>Observed, confirmed, sourced, and proposed are different states.</span>
+      </div>
+    </aside>
+    <main id="content" class="content">
+      <p>The proactive adapter converts released evidence into an interaction. It does
+not replace the scientific model, task engine, or domain-specific write route.</p>
+<p>The reference implementation is
+<a href="https://github.com/vbaulin/nora/tree/main/skills/proactive_field_agent"><code>proactive-field-agent</code></a>.
+Its loop is deliberately bounded:</p>
+<pre><code class="language-text">observe -&gt; compare -&gt; propose one next step -&gt; wait -&gt; record decision
+</code></pre>
+<h2 id="seven-objects">Seven objects</h2>
+<p>A proactive application should make these objects explicit:</p>
+<ol>
+<li><strong>Subject:</strong> instrument, sample, batch, machine, field, or experimental unit.</li>
+<li><strong>Observation:</strong> current measurement with time, source, and units.</li>
+<li><strong>Memory:</strong> released observations and confirmed facts for that subject.</li>
+<li><strong>Rule:</strong> declared condition that makes a question useful.</li>
+<li><strong>Proposal:</strong> one bounded next action or clarification.</li>
+<li><strong>Decision:</strong> acceptance, rejection, deferral, or correction.</li>
+<li><strong>Outcome:</strong> a later confirmed observation, stored without automatic causal
+   interpretation.</li>
+</ol>
+<p>This model generalizes beyond farming. A microscope can propose a focus check;
+a fermenter can ask whether a sample was taken; a machine monitor can request a
+bearing inspection.</p>
+<h2 id="modes-in-the-reference-adapter">Modes in the reference adapter</h2>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>observe</code></td>
+<td>Ingest current evidence without creating proposals</td>
+</tr>
+<tr>
+<td><code>tick</code></td>
+<td>Observe and create at most one new proposal per subject</td>
+</tr>
+<tr>
+<td><code>status</code></td>
+<td>Return profiles, evidence, pending proposals, and research queue</td>
+</tr>
+<tr>
+<td><code>next_proposal</code></td>
+<td>Select the highest-priority pending proposal</td>
+</tr>
+<tr>
+<td><code>proposal_context</code></td>
+<td>Resolve a reply to one proposal without writing</td>
+</tr>
+<tr>
+<td><code>record_decision</code></td>
+<td>Store an explicit accepted/rejected/deferred/corrected decision</td>
+</tr>
+<tr>
+<td><code>draft_operation</code></td>
+<td>Structure a general operation and identify missing fields</td>
+</tr>
+<tr>
+<td><code>record_operation</code></td>
+<td>Write only a complete, explicitly confirmed operation</td>
+</tr>
+<tr>
+<td><code>notify</code></td>
+<td>Package an existing proposal through the normal notification route</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stable-references">Stable references</h2>
+<p>Farmer-facing proposals include an identifier such as <code>PF-12</code>. A short reply
+can then be resolved to the exact field, disease, or operation follow-up that
+created the question.</p>
+<pre><code class="language-text">Board: PF-12 - Please inspect the north field for compatible symptoms.
+Human: PF-12: no symptoms on inspected leaves.
+</code></pre>
+<p>The first processing step is read-only <code>proposal_context</code>. If it resolves one
+subject and one domain route, the domain capture skill prepares a structured
+draft. Only an explicit second confirmation writes the result.</p>
+<h2 id="ambiguity-is-an-output">Ambiguity is an output</h2>
+<p>When a message could refer to more than one field, sample, or operation, the
+correct result is a clarification question. Guessing creates false evidence.</p>
+<p>For example:</p>
+<pre><code class="language-text">Human: I applied sulfur yesterday.
+Agent: Which field, which product/code, dose per hectare, treated area, and
+       application method should I record?
+</code></pre>
+<p>The system can understand informal language while preserving a deterministic
+write boundary. Language interpretation drafts the structure; confirmation
+authorizes persistence.</p>
+<h2 id="notification-policy">Notification policy</h2>
+<p>Proactivity should not become message flooding. The reference adapter:</p>
+<ul>
+<li>creates no more than one new proposal per field per tick;</li>
+<li>suppresses a proactive message already covered by the daily disease report;</li>
+<li>preserves the proposal in evidence memory even when delivery is suppressed;</li>
+<li>attaches only artifacts belonging to the relevant alert disease;</li>
+<li>never treats an accepted proposal as proof that an operation occurred.</li>
+</ul>
+<h2 id="a-question-is-the-last-step-not-the-first">A question is the last step, not the first</h2>
+<p>Everything above describes how to ask well. The stronger discipline is to ask
+rarely, because the board answered the question itself. A raw threshold
+crossing is not yet a reason to interrupt anyone: the next chapter shows how
+the same evidence is investigated first, and how a conclusion that changes no
+decision stays silent.</p>
+<p>Next: <a href="06-research-and-adaptation.html">research the evidence on idle time</a>.</p>
+      <nav class="chapter-footer" aria-label="Previous and next chapter"><a class="chapter-direction previous" href="04-evidence-release.html"><span>Previous</span><strong>Evidence Memory and Release Gates</strong></a><a class="chapter-direction next" href="06-research-and-adaptation.html"><span>Next</span><strong>Research the Evidence on Idle Time</strong></a></nav>
+    </main>
+  </div>
+  <footer class="site-footer">
+    <p>Built from repository-verified contracts and code. Chapter structure adapted from PocketFlow Tutorial Codebase Knowledge.</p>
+  </footer>
+  <script type="module" src="assets/site.js"></script>
+</body>
+</html>

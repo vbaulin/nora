@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Start on a laptop, move to hardware, turn one reading into a monitor, and let the board research what it recorded.">
+  <meta name="theme-color" content="#0b1410">
+  <title>Run and Extend an Experiment / nora</title>
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body class="">
+  <a class="skip-link" href="#content">Skip to content</a>
+  <div class="reading-progress" aria-hidden="true"><span style="width:89%"></span></div>
+  <header class="topbar">
+    <a class="brand" href="index.html"><span class="brand-mark">N</span><span>nora</span></a>
+    <nav class="top-links" aria-label="Project links">
+      <a href="https://github.com/vbaulin/nora/blob/main/README.md">README</a>
+      <a href="https://github.com/vbaulin/nora">GitHub</a>
+    </nav>
+  </header>
+  
+        <header class="chapter-heading">
+          <p class="eyebrow">Chapter 7</p>
+          <h1>Run and Extend an Experiment</h1>
+          <p>Start on a laptop, move to hardware, turn one reading into a monitor, and let the board research what it recorded.</p>
+          <div class="chapter-meta">Chapter 7 of 8 / 4 min read</div>
+        </header>
+        
+  <details class="mobile-nav">
+    <summary>Browse chapters</summary>
+    <nav class="mobile-chapter-links" aria-label="Tutorial chapters"><a class="" href="index.html">Overview</a><a class="" href="01-reasoning-and-execution.html">1. Reasoning and Deterministic Execution</a><a class="" href="02-task-contract.html">2. Tasks, Steps, and Journals</a><a class="" href="03-skill-lifecycle.html">3. Skills and the Hardware Boundary</a><a class="" href="04-evidence-release.html">4. Evidence Memory and Release Gates</a><a class="" href="05-proactive-dialogue.html">5. Proactive Dialogue and Confirmation</a><a class="" href="06-research-and-adaptation.html">6. Research the Evidence on Idle Time</a><a class="active" href="07-run-an-experiment.html" aria-current="page">7. Run and Extend an Experiment</a><a class="" href="08-vineyard-guard.html">8. Adapt It to Your Own Domain</a></nav>
+  </details>
+  <div class="docs-shell">
+    <aside class="sidebar">
+      <p class="sidebar-label">Tutorial chapters</p>
+      <nav class="chapter-links" aria-label="Tutorial chapters"><a class="" href="index.html">Overview</a><a class="" href="01-reasoning-and-execution.html">1. Reasoning and Deterministic Execution</a><a class="" href="02-task-contract.html">2. Tasks, Steps, and Journals</a><a class="" href="03-skill-lifecycle.html">3. Skills and the Hardware Boundary</a><a class="" href="04-evidence-release.html">4. Evidence Memory and Release Gates</a><a class="" href="05-proactive-dialogue.html">5. Proactive Dialogue and Confirmation</a><a class="" href="06-research-and-adaptation.html">6. Research the Evidence on Idle Time</a><a class="active" href="07-run-an-experiment.html" aria-current="page">7. Run and Extend an Experiment</a><a class="" href="08-vineyard-guard.html">8. Adapt It to Your Own Domain</a></nav>
+      <div class="sidebar-note">
+        <strong>Evidence rule</strong>
+        <span>Observed, confirmed, sourced, and proposed are different states.</span>
+      </div>
+    </aside>
+    <main id="content" class="content">
+      <p>This chapter is the operational path from nothing to a board that studies its
+own measurements. Everything up to hardware runs on a laptop with Python 3
+alone. No board, no install, no keys.</p>
+<h2 id="part-1-on-your-laptop">Part 1 — On your laptop</h2>
+<h3 id="run-one-analysis">Run one analysis</h3>
+<p>From the repository root, ask a question about a file you make yourself:</p>
+<pre><code class="language-bash">mkdir -p /tmp/nora-lab &amp;&amp; python3 - &lt;&lt;'PY'
+import json, datetime as dt
+now = dt.datetime.now(dt.timezone.utc)
+rows = [
+    {
+        &quot;timestamp&quot;: (now - dt.timedelta(hours=(36 - i))).isoformat(),
+        &quot;weight_g&quot;: round(200 + (0 if i &lt; 18 else 14) + (i % 3) * 0.4, 2),
+    }
+    for i in range(36)
+]
+open(&quot;/tmp/nora-lab/scale.jsonl&quot;, &quot;w&quot;).write(&quot;\n&quot;.join(json.dumps(r) for r in rows))
+PY
+printf '%s' '{&quot;mode&quot;:&quot;investigate&quot;,&quot;state_dir&quot;:&quot;/tmp/nora-lab/state&quot;,&quot;analysis&quot;:&quot;level_shift&quot;,&quot;subject&quot;:&quot;scale&quot;,&quot;params&quot;:{&quot;source&quot;:{&quot;kind&quot;:&quot;journal&quot;,&quot;path&quot;:&quot;/tmp/nora-lab/scale.jsonl&quot;},&quot;key&quot;:&quot;weight_g&quot;}}' | ./skills/research_agent/run.sh
+</code></pre>
+<p>The verdict is <code>material_unresolved</code>: the second half of the record sits about
+14 g above the first, far beyond the within-half spread. The finding names its
+own limitation — a level shift is a change in the record, not an explanation
+for it.</p>
+<h3 id="let-it-find-the-question-itself">Let it find the question itself</h3>
+<p>Point a cycle at the directory instead of naming an analysis:</p>
+<pre><code class="language-bash">printf '%s' '{&quot;mode&quot;:&quot;cycle&quot;,&quot;state_dir&quot;:&quot;/tmp/nora-lab/state&quot;,&quot;journal_dirs&quot;:&quot;/tmp/nora-lab&quot;}' | ./skills/research_agent/run.sh
+</code></pre>
+<p><code>raised</code> shows the question the scan wrote for itself. Run the command a second
+time: <code>raised</code> and <code>investigated</code> are both empty. A question it already knows is
+not news, and a question it could not close is re-checked on an interval —
+every six hours by default — rather than re-derived every cycle.</p>
+<h3 id="read-the-state">Read the state</h3>
+<pre><code class="language-bash">printf '%s' '{&quot;mode&quot;:&quot;questions&quot;,&quot;state_dir&quot;:&quot;/tmp/nora-lab/state&quot;}' | ./skills/research_agent/run.sh
+printf '%s' '{&quot;mode&quot;:&quot;reportable&quot;,&quot;state_dir&quot;:&quot;/tmp/nora-lab/state&quot;}' | ./skills/research_agent/run.sh
+</code></pre>
+<p><code>reportable</code> is the list an adapter would deliver to a human. Everything else
+stays on the board.</p>
+<h2 id="part-2-on-the-board">Part 2 — On the board</h2>
+<h3 id="build">Build</h3>
+<p>On a development machine with Go 1.21 or later:</p>
+<pre><code class="language-bash">GOOS=linux GOARCH=riscv64 CGO_ENABLED=0 go build -o nano-os-agent main.go
+</code></pre>
+<p>Copy the binary and repository runtime to the configured LicheeRV Nano using
+<a href="https://github.com/vbaulin/nora/blob/main/INSTALL_BOARD.md">INSTALL_BOARD.md</a>.</p>
+<h3 id="verify-the-services">Verify the services</h3>
+<pre><code class="language-bash">wget -qO- http://127.0.0.1:18790/health
+wget -qO- http://127.0.0.1:18790/ready
+/opt/picoclaw/picoclaw skills list
+</code></pre>
+<p><code>/health</code> shows that the gateway process responds, <code>/ready</code> that the runtime can
+serve requests, and the skills list shows the routes to inspect before
+answering any board question. The same evidence is served at
+<code>http://BOARD_IP:18800/runtime</code> and <code>http://BOARD_IP:18800/nano-os-agent</code>.</p>
+<h3 id="execute-a-read-only-task">Execute a read-only task</h3>
+<p>Save this as <code>/tmp/tutorial_system_snapshot.yaml</code>:</p>
+<pre><code class="language-yaml">- id: tutorial_system_snapshot
+  name: &quot;Tutorial system snapshot&quot;
+  priority: 1
+  status: pending
+  steps:
+    - id: read_system
+      action: call_skill
+      save_as: system
+      parameters:
+        skill_name: system_info
+      expect:
+        ram_total_mb: &quot;&gt;=1&quot;
+      timeout: 15
+      on_fail: block
+</code></pre>
+<p>Run and inspect it:</p>
+<pre><code class="language-bash">/root/nano-os-agent/nano-os-agent --once /tmp/tutorial_system_snapshot.yaml
+tail -1 /root/nano-os-agent/experiments.jsonl 2&gt;/dev/null || tail -1 /tmp/experiments.jsonl
+</code></pre>
+<p>Confirm the task ID, step counts, verdict, duration, and before/after metrics.
+Do not evaluate success from prose alone.</p>
+<h3 id="extend-it-into-a-monitor">Extend it into a monitor</h3>
+<p>Replace the one-shot system skill with a sensor or scene-observation skill and
+add a bounded repeat block:</p>
+<pre><code class="language-yaml">repeat:
+  interval_sec: 600
+  max_iterations: 144
+  journal_path: /tmp/monitors/tutorial_observation.jsonl
+  continue_on_fail: true
+</code></pre>
+<p>Keep the task at <code>status: template</code> in version control. Create a pending copy
+only when the board, sensor, interval, storage budget, and stop condition are
+confirmed.</p>
+<h3 id="let-the-board-research-the-monitor">Let the board research the monitor</h3>
+<p>The journal your monitor writes is already a valid research input. Install the
+cycle task:</p>
+<pre><code class="language-bash">cp tasks/029_autonomous_research_cycle.yaml /root/nano-os-agent/tasks/
+</code></pre>
+<p>It calls <code>research_agent mode=cycle</code> every fifteen minutes against
+<code>/tmp/monitors</code>, bounded to three questions and twenty seconds, and appends
+each finding to the same <code>experiments.jsonl</code> the executor uses. Findings are
+therefore visible through the existing routes:</p>
+<pre><code class="language-bash">printf '%s' '{&quot;mode&quot;:&quot;reportable&quot;}' | /root/nano-os-agent/skills/research_agent/run.sh
+grep autonomous_research /root/nano-os-agent/experiments.jsonl | tail -3
+</code></pre>
+<h3 id="deliver-a-finding-to-a-human">Deliver a finding to a human</h3>
+<p>The engine never sends messages. An adapter reads <code>reportable</code>, phrases the
+finding in the operator's language, and asks. Vineyard Guard does this through
+the Telegram outbox; a bench rig might print to a dashboard or open an issue.
+The rule is the same everywhere: state the numbers, order the options by cost,
+and accept "nothing for now" as an answer.</p>
+<h2 id="cross-domain-examples">Cross-domain examples</h2>
+<ul>
+<li><strong>Microscope:</strong> detect focus drift, then propose a focus check before the
+  next high-value sample interval.</li>
+<li><strong>Fermentation:</strong> detect a level shift in temperature or bubbling, then ask
+  whether a manual operation occurred.</li>
+<li><strong>Machine health:</strong> detect LED or audio drift, then request one bounded
+  physical inspection.</li>
+<li><strong>Environmental sensor:</strong> validate identity and ranges, establish a baseline,
+  and change the sampling interval only after a declared trigger.</li>
+</ul>
+<p>Each of these is the same engine with different parameters. The next chapter
+shows how a domain declares them.</p>
+<p>Next: <a href="08-vineyard-guard.html">adapt it to your own domain</a>.</p>
+      <nav class="chapter-footer" aria-label="Previous and next chapter"><a class="chapter-direction previous" href="06-research-and-adaptation.html"><span>Previous</span><strong>Research the Evidence on Idle Time</strong></a><a class="chapter-direction next" href="08-vineyard-guard.html"><span>Next</span><strong>Adapt It to Your Own Domain</strong></a></nav>
+    </main>
+  </div>
+  <footer class="site-footer">
+    <p>Built from repository-verified contracts and code. Chapter structure adapted from PocketFlow Tutorial Codebase Knowledge.</p>
+  </footer>
+  <script type="module" src="assets/site.js"></script>
+</body>
+</html>

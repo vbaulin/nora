@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="How the board raises its own questions, answers most of them alone, and interrupts a human only for the rest.">
+  <meta name="theme-color" content="#0b1410">
+  <title>Research the Evidence on Idle Time / nora</title>
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body class="">
+  <a class="skip-link" href="#content">Skip to content</a>
+  <div class="reading-progress" aria-hidden="true"><span style="width:78%"></span></div>
+  <header class="topbar">
+    <a class="brand" href="index.html"><span class="brand-mark">N</span><span>nora</span></a>
+    <nav class="top-links" aria-label="Project links">
+      <a href="https://github.com/vbaulin/nora/blob/main/README.md">README</a>
+      <a href="https://github.com/vbaulin/nora">GitHub</a>
+    </nav>
+  </header>
+  
+        <header class="chapter-heading">
+          <p class="eyebrow">Chapter 6</p>
+          <h1>Research the Evidence on Idle Time</h1>
+          <p>How the board raises its own questions, answers most of them alone, and interrupts a human only for the rest.</p>
+          <div class="chapter-meta">Chapter 6 of 8 / 11 min read</div>
+        </header>
+        
+  <details class="mobile-nav">
+    <summary>Browse chapters</summary>
+    <nav class="mobile-chapter-links" aria-label="Tutorial chapters"><a class="" href="index.html">Overview</a><a class="" href="01-reasoning-and-execution.html">1. Reasoning and Deterministic Execution</a><a class="" href="02-task-contract.html">2. Tasks, Steps, and Journals</a><a class="" href="03-skill-lifecycle.html">3. Skills and the Hardware Boundary</a><a class="" href="04-evidence-release.html">4. Evidence Memory and Release Gates</a><a class="" href="05-proactive-dialogue.html">5. Proactive Dialogue and Confirmation</a><a class="active" href="06-research-and-adaptation.html" aria-current="page">6. Research the Evidence on Idle Time</a><a class="" href="07-run-an-experiment.html">7. Run and Extend an Experiment</a><a class="" href="08-vineyard-guard.html">8. Adapt It to Your Own Domain</a></nav>
+  </details>
+  <div class="docs-shell">
+    <aside class="sidebar">
+      <p class="sidebar-label">Tutorial chapters</p>
+      <nav class="chapter-links" aria-label="Tutorial chapters"><a class="" href="index.html">Overview</a><a class="" href="01-reasoning-and-execution.html">1. Reasoning and Deterministic Execution</a><a class="" href="02-task-contract.html">2. Tasks, Steps, and Journals</a><a class="" href="03-skill-lifecycle.html">3. Skills and the Hardware Boundary</a><a class="" href="04-evidence-release.html">4. Evidence Memory and Release Gates</a><a class="" href="05-proactive-dialogue.html">5. Proactive Dialogue and Confirmation</a><a class="active" href="06-research-and-adaptation.html" aria-current="page">6. Research the Evidence on Idle Time</a><a class="" href="07-run-an-experiment.html">7. Run and Extend an Experiment</a><a class="" href="08-vineyard-guard.html">8. Adapt It to Your Own Domain</a></nav>
+      <div class="sidebar-note">
+        <strong>Evidence rule</strong>
+        <span>Observed, confirmed, sourced, and proposed are different states.</span>
+      </div>
+    </aside>
+    <main id="content" class="content">
+      <p>A board that samples once an hour is idle for fifty-nine minutes. Those minutes
+are enough to answer questions about data already on disk. This chapter is the
+engine that spends them: <code>skills/research_agent</code>.</p>
+<p>It is domain-neutral. It knows about questions, analyses, findings, verdicts
+and watches, and nothing about what the numbers mean.</p>
+<h2 id="the-loop">The loop</h2>
+<p><img alt="Signals and feedback become a question, a bounded analysis produces a finding, and the verdict decides who hears about it" src="assets/readme/research-loop.svg"></p>
+<p>Three properties make this research rather than alerting:</p>
+<ul>
+<li>The question exists before the answer, and is stored with its provenance.</li>
+<li>The analysis reports what it <em>cannot</em> establish alongside what it can.</li>
+<li>A conclusion that changes no decision is a result, and stays silent.</li>
+</ul>
+<h2 id="where-questions-come-from">Where questions come from</h2>
+<p><strong>Signals.</strong> A scan reads the tail of each monitor journal and looks for shapes
+worth a closer look: a source that stopped reporting, a level that moved beyond
+its own noise, a channel piling up against a limit. The scan concludes nothing;
+it raises a question and hands it to an analysis.</p>
+<p><strong>Human feedback.</strong> Two refusals on the same subject are not stubbornness. They
+are evidence that the board is asking the wrong question, or asking it too
+often, so the engine opens a question about its own alerting threshold.</p>
+<p><strong>Packs.</strong> A domain declares the questions it always cares about. See
+<a href="08-vineyard-guard.html">chapter 8</a>.</p>
+<h2 id="the-shapes-it-looks-for">The shapes it looks for</h2>
+<p>Every analysis is a shape in the data. These six are the core pictures; learn
+them and you know most of what the board can notice on its own.</p>
+<p><img alt="Six analyses drawn as the data shape each one detects" src="assets/readme/analysis-shapes.svg"></p>
+<table>
+<thead>
+<tr>
+<th>Analysis</th>
+<th>Question it answers</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>level_shift</code></td>
+<td>Did the level move beyond its own noise?</td>
+</tr>
+<tr>
+<td><code>ceiling_saturation</code></td>
+<td>Is a channel piling up against a limit?</td>
+</tr>
+<tr>
+<td><code>data_gap</code></td>
+<td>Did a source go quiet?</td>
+</tr>
+<tr>
+<td><code>threshold_materiality</code></td>
+<td>Did the uncertainty ever change a decision?</td>
+</tr>
+<tr>
+<td><code>source_disagreement</code></td>
+<td>Do two sources that should agree, agree?</td>
+</tr>
+<tr>
+<td><code>outcome_calibration</code></td>
+<td>Are the board's own alerts earning their interruptions?</td>
+</tr>
+<tr>
+<td><code>neighbour_reports</code></td>
+<td>Do nearby reporters see something this board does not?</td>
+</tr>
+<tr>
+<td><code>baseline_deviation</code></td>
+<td>Is the current period unlike the periods before it?</td>
+</tr>
+<tr>
+<td><code>lagged_association</code></td>
+<td>Does one series move before another, by a fixed number of days?</td>
+</tr>
+<tr>
+<td><code>relationship_forecast</code></td>
+<td>A confirmed relationship's driver ran high — what would it imply, and when?</td>
+</tr>
+<tr>
+<td><code>coverage_gaps</code></td>
+<td>Which questions has the board framed that nothing here can measure?</td>
+</tr>
+</tbody>
+</table>
+<p>Three of these are what a networked board with a weather history is for.
+<code>neighbour_reports</code> reads confirmed reports from other boards with their
+distance and asks whether the local indicator agrees — a confirmation two
+kilometres away raises the prior here and earns one cheap local check, nothing
+more. <code>source_disagreement</code> between a weather forecast and what the station
+later measured answers whether the forecast driving a risk projection can still
+be trusted. <code>baseline_deviation</code> asks the question a person actually asks about
+weather: not "is it warm" but "is this season unlike the last several".</p>
+<h2 id="forming-a-hypothesis-nobody-wrote-down">Forming a hypothesis nobody wrote down</h2>
+<p>Everything above answers a question somebody registered. That makes the board a
+scheduler for a research catalogue — useful, but not a scientist. The step
+across is <code>lagged_association</code>: any two daily series can be paired, so the
+board can propose a relationship of its own and test it.</p>
+<p>Given hourly humidity and a disease model, it forms and answers this without a
+rule for it:</p>
+<pre><code class="language-text">night humidity precedes powdery mildew risk at Camp Nord
+  -&gt; material_unresolved, lag 3 days, rho 0.83, n=146
+day humidity precedes powdery mildew risk        -&gt; not_material
+night temperature precedes powdery mildew risk   -&gt; not_material
+night humidity precedes black-rot index          -&gt; not_material
+</code></pre>
+<p>The negatives matter as much as the positive: the pattern is specific to
+<em>night</em> humidity, and a daily mean would have hidden it.</p>
+<h3 id="why-it-does-not-find-patterns-in-noise">Why it does not find patterns in noise</h3>
+<p>A generator that proposes relationships will find them in randomness unless
+every guard pushes toward the negative:</p>
+<ul>
+<li>the test runs on <strong>first differences</strong>, so two series that merely share a
+  seasonal trend cannot produce a result;</li>
+<li>the effect must <strong>persist in both halves</strong> of the record with the same sign;</li>
+<li>significance is <strong>corrected for the number of lags tried</strong>;</li>
+<li>a floor of <strong>30 overlapping days</strong> and a minimum effect size;</li>
+<li>a refuted pair <strong>stays refuted</strong> and is never proposed again.</li>
+</ul>
+<p>Measured: 0 false positives in 200 trials of independent noise, 100% detection
+of a moderate real lead. Pair discovery is budgeted at two new pairs per cycle.</p>
+<p>It reports <strong>precedence, never causation</strong>. The question it asks is whether the
+driver acts on the response, <em>or both follow something else</em>.</p>
+<h3 id="confirming-is-what-starts-a-study">Confirming is what starts a study</h3>
+<p>A pattern found in the record that produced it has been <em>described</em>, not
+confirmed. So the first option on a hypothesis is not "act on it" but "shall I
+test it properly?", and accepting it drafts a prospective study:</p>
+<pre><code class="language-yaml">- id: study_lagged_association_1
+  name: &quot;Prospective check: night humidity precedes powdery mildew risk&quot;
+  status: template          # the executor does not run a template
+  steps:
+    - id: measure
+      action: call_skill
+      parameters:
+        skill_name: research_agent
+        mode: investigate
+        question_id: 1
+      repeat:
+        interval_sec: 604800
+        max_iterations: 8
+        journal_path: /tmp/monitors/study_lagged_association_1.jsonl
+</code></pre>
+<p>Re-running the same question weekly on data collected <em>after</em> the hypothesis
+was formed is the cheapest honest experiment, and it needs no new hardware.</p>
+<p>The draft is written as <code>status: template</code>, which the executor ignores.
+Promoting it to <code>pending</code> is a human act. The board proposes an experiment; it
+does not start one, and the skill name is validated and the repeat bounds
+clamped before anything is written.</p>
+<h3 id="when-it-cannot-test-its-own-hypothesis">When it cannot test its own hypothesis</h3>
+<p>Humid nights plausibly bear on insect pressure, and this board has no insect
+measurement at all. The verdict is <code>insufficient_data</code> naming what is missing:</p>
+<pre><code class="language-text">humid nights precede a change in insect pressure at Camp Nord
+  -&gt; insufficient_data: missing ['insect counts']
+     option: start recording trap counts, the only way I could ever test it
+</code></pre>
+<p>A hypothesis without evidence is stated as a hypothesis. It is not a finding,
+it does not reach the farmer as one, and it does not become a standing nag.</p>
+<h2 id="from-understanding-to-anticipation">From understanding to anticipation</h2>
+<p>A relationship the board found and a person confirmed can be pointed forwards.
+The driver is watched; when it runs unusually high, the board reports the
+observation and what it would imply:</p>
+<pre><code class="language-text">Night humidity crossed its high threshold on 2026-08-08 (93.0). By the
+relationship you confirmed in this field (0.958 over 146 days), that would
+point at powdery mildew risk around 2026-08-11 — a projection of that
+relationship, not a measurement.
+</code></pre>
+<p>The finding is still an observation first. The projection follows only when
+there is a basis for it: below rho 0.5 or 60 observed days the board keeps
+relating the two facts and says nothing about the future. Understanding is a
+legitimate place to stop, and an unfounded prediction is worse than silence.</p>
+<p>Two further guards: the driver must cross the 95th percentile of its own
+history, since a threshold crossed one day in five warns about nothing; and the
+predicted day must still be ahead, because a warning that arrives on the day it
+predicts is news about the past.</p>
+<h2 id="attending-to-what-is-missing">Attending to what is missing</h2>
+<p>Every analysis so far studies evidence that exists. <code>coverage_gaps</code> studies its
+absence: it gathers the questions the board has framed and could not run,
+groups them by the measurement each needs, and reports the register <strong>once</strong>.</p>
+<pre><code class="language-text">3 missing measurements. The most useful would be insect counts:
+it would let me answer 2 questions I cannot answer now.
+</code></pre>
+<p>Once, not per blocked question — a board that repeats "I cannot test this"
+every cycle has turned a gap into nagging. A gap describes the board's
+instruments, not the field, and adding a measurement makes a question testable
+rather than making its answer positive.</p>
+<h2 id="drafting-a-published-model-as-a-skill">Drafting a published model as a skill</h2>
+<p>Research sometimes finds a model in the literature that this board does not
+have. It may be written down as a candidate skill — with sources attached, and
+only after a person agrees. The manifest carries <code>status: draft</code>,
+<code>requires_validation: true</code>, its sources, and the checks it must pass, and it
+lands where nothing discovers it as a capability.</p>
+<p>The route refuses without a published source: a model nobody has written down
+is a hypothesis, and this is for putting literature into testable shape, not
+for inventing agronomy. A disease model is not a sensor driver, because its
+output becomes treatment advice — so validation against confirmed local
+outcomes and promotion stay separate human acts.</p>
+<h2 id="learning-what-to-research">Learning what to research</h2>
+<p>The board keeps a record of what its own research has been worth. An analysis
+with no material finding after six attempts is demoted; one whose findings the
+human keeps declining is demoted too, because that is evidence about the
+question rather than about the human; a productive one gains a little.</p>
+<p>Demoted, never silenced: an analysis that stops running can never earn its
+place back, so the penalty is bounded and the floor is one.</p>
+<p>Two boards do not have the same questions worth asking, and only a board's own
+record can say which it is.</p>
+<h2 id="reusing-a-skill-instead-of-reimplementing-it">Reusing a skill instead of reimplementing it</h2>
+<p>A board that already has a skill for seasonal averages should not have that
+arithmetic written again inside an analysis. A source can name an installed
+skill, or a glob of the artifacts a skill wrote, and any source may carry a
+<code>refresh</code> that runs first:</p>
+<pre><code class="language-json">{&quot;kind&quot;: &quot;glob&quot;, &quot;pattern&quot;: &quot;.../results/season_climate_*_*.json&quot;,
+ &quot;refresh&quot;: {&quot;kind&quot;: &quot;skill&quot;, &quot;name&quot;: &quot;vineyard_season_climate&quot;,
+             &quot;params&quot;: {&quot;mode&quot;: &quot;report&quot;, &quot;write_artifacts&quot;: true}}}
+</code></pre>
+<p>Vineyard Guard uses exactly this: <code>vineyard-season-climate</code> computes each
+season's rainfall and accumulated heat and writes one artifact per year; the
+engine reads those artifacts and compares this season against the median and
+deviation of the previous ones. Five ordinary seasons and one drought produce
+one finding, and five ordinary seasons produce none.</p>
+<p>A skill-backed question sets its own <code>min_interval_seconds</code> — reading a season
+of weather is a weekly job, not an hourly one.</p>
+<p>Each reads a JSONL journal or a local SQLite table, so anything nora already
+records is a valid input. Most domain questions turn out to be one of these six
+wearing different words.</p>
+<h2 id="a-worked-study">A worked study</h2>
+<p>Take the quickstart journal from the <a href="index.html">index</a> and ask one question
+directly instead of waiting for the scan:</p>
+<pre><code class="language-bash">printf '%s' '{&quot;mode&quot;:&quot;investigate&quot;,&quot;state_dir&quot;:&quot;/tmp/nora-demo/state&quot;,&quot;analysis&quot;:&quot;level_shift&quot;,&quot;subject&quot;:&quot;light_probe&quot;,&quot;params&quot;:{&quot;source&quot;:{&quot;kind&quot;:&quot;journal&quot;,&quot;path&quot;:&quot;/tmp/nora-demo/monitors/light_probe.jsonl&quot;},&quot;key&quot;:&quot;temp_c&quot;}}' | ./skills/research_agent/run.sh
+</code></pre>
+<pre><code class="language-json">{&quot;status&quot;: &quot;success&quot;, &quot;mode&quot;: &quot;investigate&quot;,
+ &quot;summary&quot;: [{&quot;subject&quot;: &quot;light_probe&quot;, &quot;analysis&quot;: &quot;level_shift&quot;,
+              &quot;verdict&quot;: &quot;not_material&quot;, &quot;sample_size&quot;: 48}]}
+</code></pre>
+<p><code>not_material</code> is the answer, and nobody is interrupted by it. The stored
+finding still carries the numbers that produced it:</p>
+<pre><code class="language-bash">printf '%s' '{&quot;mode&quot;:&quot;findings&quot;,&quot;state_dir&quot;:&quot;/tmp/nora-demo/state&quot;,&quot;limit&quot;:1}' | ./skills/research_agent/run.sh
+</code></pre>
+<p>The <code>metrics</code> object holds <code>median_before</code>, <code>median_after</code>, <code>shift</code>,
+<code>within_half_deviation</code> and <code>shift_threshold</code>. Anyone can check the reasoning
+without rerunning it.</p>
+<h3 id="why-the-spread-is-measured-within-each-half">Why the spread is measured within each half</h3>
+<p>A shift detector that measures noise across the whole window is defeated by the
+shift itself: the step inflates the very spread it is compared against, and a
+real change scores as ordinary variation. The engine measures the deviation
+inside each half separately, so a step between two stable halves is significant
+no matter how large it is.</p>
+<p>This is the kind of detail that decides whether an autonomous researcher is
+useful or merely busy.</p>
+<h2 id="verdicts-and-silence">Verdicts and silence</h2>
+<table>
+<thead>
+<tr>
+<th>Verdict</th>
+<th>What happens</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>material_unresolved</code></td>
+<td>Handed to an adapter, with options ordered by cost</td>
+</tr>
+<tr>
+<td><code>not_material</code></td>
+<td>Stored; the question is marked answered</td>
+</tr>
+<tr>
+<td><code>resolved_local</code></td>
+<td>Stored; the evidence already answered it</td>
+</tr>
+<tr>
+<td><code>insufficient_data</code></td>
+<td>Stored as an internal gap; never a human message</td>
+</tr>
+</tbody>
+</table>
+<p>An analysis that could not run is not a discovery. A board that lacks the data
+to check something must not convert its blind spot into a request for
+attention, budget, or hardware.</p>
+<h2 id="budget">Budget</h2>
+<p>One cycle is bounded by questions, seconds, files and lines:</p>
+<pre><code class="language-json">{&quot;mode&quot;:&quot;cycle&quot;,&quot;max_questions&quot;:3,&quot;max_seconds&quot;:20,&quot;max_files&quot;:12,&quot;max_lines&quot;:400}
+</code></pre>
+<p><code>tasks/029_autonomous_research_cycle.yaml</code> runs one every fifteen minutes and
+journals the result. The defaults are sized so the research never competes with
+sampling on a 256 MB board.</p>
+<h2 id="asking-and-not-insisting">Asking, and not insisting</h2>
+<p>A finding that reaches a human arrives with its numbers, with options ordered
+by cost, and with "nothing for now" as a legitimate answer. The engine records
+the reply:</p>
+<pre><code class="language-bash">printf '%s' '{&quot;mode&quot;:&quot;record_decision&quot;,&quot;state_dir&quot;:&quot;/tmp/nora-demo/state&quot;,&quot;finding_id&quot;:1,&quot;decision&quot;:&quot;accepted&quot;,&quot;option_id&quot;:&quot;check_source&quot;,&quot;watch&quot;:true,&quot;note&quot;:&quot;probe is capped at 100&quot;}' | ./skills/research_agent/run.sh
+</code></pre>
+<p>An acceptance may arm a <strong>watch</strong>: a future action a human confirmed once. When
+the same pattern returns, the watch fires and disarms. A refusal closes the
+question for the season instead of rescheduling it, because "no" is an answer.</p>
+<p>Hardware is never the first way to close a question, and never the only one. A
+suggestion to buy something belongs at the end of a list whose first entry is
+free, and it is not repeated after a refusal.</p>
+<h2 id="failure-as-diagnostic-evidence">Failure as diagnostic evidence</h2>
+<p>A failed or partial task run is quarantined from advice, but it can open a
+narrow investigation:</p>
+<pre><code class="language-text">Observed failure:
+  sensor skill returned no device identity after two bounded attempts
+
+Research question:
+  which SG2002 I2C bus and voltage constraints apply to this sensor family?
+
+Next experiment:
+  read-only bus discovery followed by identity-register validation
+</code></pre>
+<p>The original failure is preserved, and a web answer never becomes a local
+success.</p>
+<h2 id="when-local-evidence-is-not-enough">When local evidence is not enough</h2>
+<p>An external search is for the question the local analysis could not settle, and
+it asks the scientific question. "Is a 95% humidity threshold a validated
+wetness proxy?" is research. "Which humidity sensors should I buy?" is
+shopping. Source-attributed results become candidate evidence for review, never
+instructions, product selections, or confirmed facts.</p>
+<h2 id="model-learning-remains-separate">Model learning remains separate</h2>
+<p>Application models have their own training data, fitted parameters, evaluation,
+release status, and version. Neither a promoted skill nor an LLM explanation is
+a trained scientific model, and neither is a finding. This distinction matters
+when boards exchange model deltas or when a fallback model is used before
+enough confirmed local labels exist.</p>
+<p>Next: <a href="07-run-an-experiment.html">run and extend a first experiment</a>.</p>
+      <nav class="chapter-footer" aria-label="Previous and next chapter"><a class="chapter-direction previous" href="05-proactive-dialogue.html"><span>Previous</span><strong>Proactive Dialogue and Confirmation</strong></a><a class="chapter-direction next" href="07-run-an-experiment.html"><span>Next</span><strong>Run and Extend an Experiment</strong></a></nav>
+    </main>
+  </div>
+  <footer class="site-footer">
+    <p>Built from repository-verified contracts and code. Chapter structure adapted from PocketFlow Tutorial Codebase Knowledge.</p>
+  </footer>
+  <script type="module" src="assets/site.js"></script>
+</body>
+</html>

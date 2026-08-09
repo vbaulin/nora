@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Put uncertain planning and physical control on opposite sides of an explicit contract.">
+  <meta name="theme-color" content="#0b1410">
+  <title>Reasoning and Deterministic Execution / nora</title>
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body class="">
+  <a class="skip-link" href="#content">Skip to content</a>
+  <div class="reading-progress" aria-hidden="true"><span style="width:22%"></span></div>
+  <header class="topbar">
+    <a class="brand" href="index.html"><span class="brand-mark">N</span><span>nora</span></a>
+    <nav class="top-links" aria-label="Project links">
+      <a href="https://github.com/vbaulin/nora/blob/main/README.md">README</a>
+      <a href="https://github.com/vbaulin/nora">GitHub</a>
+    </nav>
+  </header>
+  
+        <header class="chapter-heading">
+          <p class="eyebrow">Chapter 1</p>
+          <h1>Reasoning and Deterministic Execution</h1>
+          <p>Put uncertain planning and physical control on opposite sides of an explicit contract.</p>
+          <div class="chapter-meta">Chapter 1 of 8 / 2 min read</div>
+        </header>
+        
+  <details class="mobile-nav">
+    <summary>Browse chapters</summary>
+    <nav class="mobile-chapter-links" aria-label="Tutorial chapters"><a class="" href="index.html">Overview</a><a class="active" href="01-reasoning-and-execution.html" aria-current="page">1. Reasoning and Deterministic Execution</a><a class="" href="02-task-contract.html">2. Tasks, Steps, and Journals</a><a class="" href="03-skill-lifecycle.html">3. Skills and the Hardware Boundary</a><a class="" href="04-evidence-release.html">4. Evidence Memory and Release Gates</a><a class="" href="05-proactive-dialogue.html">5. Proactive Dialogue and Confirmation</a><a class="" href="06-research-and-adaptation.html">6. Research the Evidence on Idle Time</a><a class="" href="07-run-an-experiment.html">7. Run and Extend an Experiment</a><a class="" href="08-vineyard-guard.html">8. Adapt It to Your Own Domain</a></nav>
+  </details>
+  <div class="docs-shell">
+    <aside class="sidebar">
+      <p class="sidebar-label">Tutorial chapters</p>
+      <nav class="chapter-links" aria-label="Tutorial chapters"><a class="" href="index.html">Overview</a><a class="active" href="01-reasoning-and-execution.html" aria-current="page">1. Reasoning and Deterministic Execution</a><a class="" href="02-task-contract.html">2. Tasks, Steps, and Journals</a><a class="" href="03-skill-lifecycle.html">3. Skills and the Hardware Boundary</a><a class="" href="04-evidence-release.html">4. Evidence Memory and Release Gates</a><a class="" href="05-proactive-dialogue.html">5. Proactive Dialogue and Confirmation</a><a class="" href="06-research-and-adaptation.html">6. Research the Evidence on Idle Time</a><a class="" href="07-run-an-experiment.html">7. Run and Extend an Experiment</a><a class="" href="08-vineyard-guard.html">8. Adapt It to Your Own Domain</a></nav>
+      <div class="sidebar-note">
+        <strong>Evidence rule</strong>
+        <span>Observed, confirmed, sourced, and proposed are different states.</span>
+      </div>
+    </aside>
+    <main id="content" class="content">
+      <p>An LLM is useful when the next question is uncertain: which measurement would
+discriminate between two hypotheses, which existing capability matches a new
+request, or which failed step deserves investigation. It is a poor process
+supervisor for a camera, sensor, actuator, or week-long monitor.</p>
+<p>nano-os-agent therefore begins with a boundary rather than a prompt.</p>
+<pre><code class="language-text">uncertain intent -&gt; declared task -&gt; deterministic execution -&gt; evidence
+</code></pre>
+<h2 id="three-runtime-roles">Three runtime roles</h2>
+<table>
+<thead>
+<tr>
+<th>Runtime</th>
+<th>Owns</th>
+<th>Does not own</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PicoClaw</td>
+<td>Intent interpretation, capability selection, explanation, and chat/Telegram interaction</td>
+<td>Continuous hardware loops or unverified board facts</td>
+</tr>
+<tr>
+<td>nano-os-agent</td>
+<td>Task execution, retries, timeouts, expectations, metrics, journals, and MCP tools</td>
+<td>Open-ended scientific interpretation</td>
+</tr>
+<tr>
+<td>Research engine</td>
+<td>Bounded analyses over recorded evidence, and the verdict each one supports</td>
+<td>Domain meaning, message delivery, or any action</td>
+</tr>
+<tr>
+<td>Application adapter</td>
+<td>Domain observations, proposal rules, and confirmed domain events</td>
+<td>Universal hardware control or unrestricted action</td>
+</tr>
+</tbody>
+</table>
+<p>Note where the research engine sits. It reasons about data, deterministically
+and within a budget, which is exactly the part of "reasoning" that does not
+need an LLM at all.</p>
+<p>The distinction is implemented in the repository contracts
+(<a href="https://github.com/vbaulin/nora/blob/main/AGENTS.md">AGENTS.md</a> and
+<a href="https://github.com/vbaulin/nora/blob/main/HARDWARE_BOUNDARY.md">HARDWARE_BOUNDARY.md</a>),
+not merely described in this tutorial.</p>
+<h2 id="capability-first-routing">Capability-first routing</h2>
+<p>Before answering a board question, PicoClaw should inspect registered skills,
+current nano-os-agent tasks, and existing artifacts. A current structured
+result outranks chat history. If no capability exists, PicoClaw may design a
+draft skill or task, but the new route still passes through validation.</p>
+<pre><code class="language-mermaid">flowchart TD
+    U[&quot;User or scheduled intent&quot;] --&gt; L[&quot;List skills and current tasks&quot;]
+    L --&gt; F{&quot;Matching capability exists?&quot;}
+    F --&gt;|yes| C[&quot;Call skill, MCP tool, or task&quot;]
+    F --&gt;|no| D[&quot;Create bounded draft&quot;]
+    D --&gt; V[&quot;Validate and experiment&quot;]
+    V --&gt; C
+    C --&gt; E[&quot;Read structured result and artifacts&quot;]
+    E --&gt; A[&quot;Explain only released evidence&quot;]
+</code></pre>
+<h2 id="the-hardware-boundary">The hardware boundary</h2>
+<p>Direct shell access may look expedient, but it bypasses the controls needed on
+a constrained edge board. Camera initialization, NPU memory, I2C writes, and
+repeated monitors require retries, memory limits, evidence capture, and a clear
+owner.</p>
+<p>Use this order:</p>
+<ol>
+<li>An existing MCP tool for an immediate one-shot operation.</li>
+<li>A task YAML for an experiment, repeated measurement, or monitor.</li>
+<li>A registered skill for a reusable board capability.</li>
+<li>A draft skill followed by validation and promotion.</li>
+</ol>
+<p>The boundary is especially important after an error. A low-level failure is
+evidence that a declared capability failed; it is not permission to replace the
+task with unjournaled probing.</p>
+<h2 id="why-this-makes-the-system-proactive">Why this makes the system proactive</h2>
+<p>Autonomy does not require an LLM to remain awake. nano-os-agent can execute and
+journal while PicoClaw is offline. A compact summary or released anomaly can
+later wake the reasoning layer. The system is proactive because evidence can
+initiate the next interaction, not because language controls the device every
+second.</p>
+<p>Next: <a href="02-task-contract.html">encode that deterministic work as a task</a>.</p>
+      <nav class="chapter-footer" aria-label="Previous and next chapter"><a class="chapter-direction previous" href="index.html"><span>Previous</span><strong>Build an Autonomous Research Executor</strong></a><a class="chapter-direction next" href="02-task-contract.html"><span>Next</span><strong>Tasks, Steps, and Journals</strong></a></nav>
+    </main>
+  </div>
+  <footer class="site-footer">
+    <p>Built from repository-verified contracts and code. Chapter structure adapted from PocketFlow Tutorial Codebase Knowledge.</p>
+  </footer>
+  <script type="module" src="assets/site.js"></script>
+</body>
+</html>

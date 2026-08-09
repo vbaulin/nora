@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Package a capability, validate it experimentally, and promote only the evidence-backed version.">
+  <meta name="theme-color" content="#0b1410">
+  <title>Skills and the Hardware Boundary / nora</title>
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body class="">
+  <a class="skip-link" href="#content">Skip to content</a>
+  <div class="reading-progress" aria-hidden="true"><span style="width:44%"></span></div>
+  <header class="topbar">
+    <a class="brand" href="index.html"><span class="brand-mark">N</span><span>nora</span></a>
+    <nav class="top-links" aria-label="Project links">
+      <a href="https://github.com/vbaulin/nora/blob/main/README.md">README</a>
+      <a href="https://github.com/vbaulin/nora">GitHub</a>
+    </nav>
+  </header>
+  
+        <header class="chapter-heading">
+          <p class="eyebrow">Chapter 3</p>
+          <h1>Skills and the Hardware Boundary</h1>
+          <p>Package a capability, validate it experimentally, and promote only the evidence-backed version.</p>
+          <div class="chapter-meta">Chapter 3 of 8 / 2 min read</div>
+        </header>
+        
+  <details class="mobile-nav">
+    <summary>Browse chapters</summary>
+    <nav class="mobile-chapter-links" aria-label="Tutorial chapters"><a class="" href="index.html">Overview</a><a class="" href="01-reasoning-and-execution.html">1. Reasoning and Deterministic Execution</a><a class="" href="02-task-contract.html">2. Tasks, Steps, and Journals</a><a class="active" href="03-skill-lifecycle.html" aria-current="page">3. Skills and the Hardware Boundary</a><a class="" href="04-evidence-release.html">4. Evidence Memory and Release Gates</a><a class="" href="05-proactive-dialogue.html">5. Proactive Dialogue and Confirmation</a><a class="" href="06-research-and-adaptation.html">6. Research the Evidence on Idle Time</a><a class="" href="07-run-an-experiment.html">7. Run and Extend an Experiment</a><a class="" href="08-vineyard-guard.html">8. Adapt It to Your Own Domain</a></nav>
+  </details>
+  <div class="docs-shell">
+    <aside class="sidebar">
+      <p class="sidebar-label">Tutorial chapters</p>
+      <nav class="chapter-links" aria-label="Tutorial chapters"><a class="" href="index.html">Overview</a><a class="" href="01-reasoning-and-execution.html">1. Reasoning and Deterministic Execution</a><a class="" href="02-task-contract.html">2. Tasks, Steps, and Journals</a><a class="active" href="03-skill-lifecycle.html" aria-current="page">3. Skills and the Hardware Boundary</a><a class="" href="04-evidence-release.html">4. Evidence Memory and Release Gates</a><a class="" href="05-proactive-dialogue.html">5. Proactive Dialogue and Confirmation</a><a class="" href="06-research-and-adaptation.html">6. Research the Evidence on Idle Time</a><a class="" href="07-run-an-experiment.html">7. Run and Extend an Experiment</a><a class="" href="08-vineyard-guard.html">8. Adapt It to Your Own Domain</a></nav>
+      <div class="sidebar-note">
+        <strong>Evidence rule</strong>
+        <span>Observed, confirmed, sourced, and proposed are different states.</span>
+      </div>
+    </aside>
+    <main id="content" class="content">
+      <p>A skill is a reusable capability with an explicit execution contract. The
+directory contains <code>SKILL.md</code> plus an implementation such as a thin shell
+wrapper, compiled helper, Python adapter, or native endpoint.</p>
+<pre><code class="language-yaml">---
+name: my-sensor-snapshot
+exec_type: shell
+command: ./run.sh
+input_format: env
+output_format: json
+timeout: 30
+parameters:
+  - name: bus
+    type: integer
+    default: 1
+returns:
+  - status
+  - temperature_c
+  - humidity_percent
+---
+</code></pre>
+<p>The contract lets PicoClaw discover the capability and lets nano-os-agent
+enforce a known execution route.</p>
+<h2 id="draft-to-active">Draft to active</h2>
+<pre><code class="language-mermaid">stateDiagram-v2
+    [*] --&gt; Draft
+    Draft --&gt; Validate
+    Validate --&gt; Draft: schema or safety failure
+    Validate --&gt; Experiment
+    Experiment --&gt; Draft: checks fail
+    Experiment --&gt; Evidence: checks pass
+    Evidence --&gt; Promote
+    Promote --&gt; Active
+    Active --&gt; Revalidate: drift or hardware change
+    Revalidate --&gt; Active: still valid
+    Revalidate --&gt; Draft: revision required
+</code></pre>
+<p>The distinction prevents a plausible script from becoming an unattended board
+capability merely because it ran once.</p>
+<h2 id="runtime-preference">Runtime preference</h2>
+<ol>
+<li>Native Go in <code>main.go</code> for deterministic primitives, MCP, task execution,
+   safety checks, and journaling.</li>
+<li>Vendor C/C++ binaries for camera, NPU, and zero-copy data paths.</li>
+<li>Compiled Go helpers for CPU analysis, summaries, and validation.</li>
+<li>Python for vendor bindings or rapid drafts that will later be validated.</li>
+</ol>
+<p>The preferred path is:</p>
+<pre><code class="language-text">prototype -&gt; validate repeatedly -&gt; compile where useful -&gt; promote
+</code></pre>
+<h2 id="validation-evidence">Validation evidence</h2>
+<p>A useful validation task should test more than process exit status. Depending
+on the skill, it can check:</p>
+<ul>
+<li>output schema and units;</li>
+<li>expected device identity;</li>
+<li>plausible physical range;</li>
+<li>artifact existence and non-zero size;</li>
+<li>repeated-run stability;</li>
+<li>memory and duration limits;</li>
+<li>failure behavior when the sensor is absent;</li>
+<li>comparison with a known reference or control.</li>
+</ul>
+<p>Promotion retains the contract and the evidence that supported it. Later drift
+or a changed device can trigger revalidation without changing the core task
+engine.</p>
+<h2 id="why-skills-precede-shell-commands">Why skills precede shell commands</h2>
+<p>A registered skill provides one location for safety, retries, board-specific
+initialization, parsing, and structured output. A raw shell command spreads
+those responsibilities into every caller and produces evidence that is harder
+to interpret.</p>
+<p>Next: <a href="04-evidence-release.html">decide which task and skill results may become evidence</a>.</p>
+      <nav class="chapter-footer" aria-label="Previous and next chapter"><a class="chapter-direction previous" href="02-task-contract.html"><span>Previous</span><strong>Tasks, Steps, and Journals</strong></a><a class="chapter-direction next" href="04-evidence-release.html"><span>Next</span><strong>Evidence Memory and Release Gates</strong></a></nav>
+    </main>
+  </div>
+  <footer class="site-footer">
+    <p>Built from repository-verified contracts and code. Chapter structure adapted from PocketFlow Tutorial Codebase Knowledge.</p>
+  </footer>
+  <script type="module" src="assets/site.js"></script>
+</body>
+</html>

@@ -51,6 +51,7 @@ The result includes:
 - season and monthly rainfall, rain days, maximum daily rain and dry spells;
 - mean/minimum/maximum, daily range, day/night temperature and heat events;
 - day/night humidity, high-humidity duration and VPD;
+- measured global solar irradiation and explicitly defined high-solar days;
 - Winkler GDD10, Huglin heat accumulation and September cool-night index;
 - the most recent or preharvest 30-day window;
 - per-variable data coverage and a calibration-ready quality feature vector.

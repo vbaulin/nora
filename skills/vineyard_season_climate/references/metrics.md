@@ -20,6 +20,15 @@ season totals.
 - Report daily heat events, tropical nights, frost nights, relative-humidity
   duration and vapour-pressure deficit.
 
+## Solar exposure
+
+- Integrate XEMA global solar irradiance (variable 36, W/m2) to daily global
+  irradiation in MJ/m2.
+- Report a **high-solar day** when measured daily global irradiation divided by
+  FAO-56 extraterrestrial irradiation is at least 0.65.
+- This is an operational clear-sky/high-solar classification, not measured
+  sunshine duration. Do not call it sunshine hours.
+
 ## Bioclimatic indices
 
 - **Winkler growing-degree days:** `sum(max(0, Tmean - 10 C))`.

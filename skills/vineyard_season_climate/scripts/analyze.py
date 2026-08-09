@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 TEMP_CODE = 32
 HUMIDITY_CODE = 33
 RAIN_CODE = 35
+SOLAR_CODE = 36
 DEFAULT_REPO = "/root/.picoclaw/workspace/goidanich"
 MODEL_FEATURES = (
     "gdd_base10_c_days",
@@ -197,10 +198,10 @@ def fetch_observations(conn, station, start, end, local_tz, latitude, longitude)
         """
         SELECT codi_variable, data_lectura, valor_lectura
         FROM meteo_raw
-        WHERE codi_estacio=? AND codi_variable IN (?, ?, ?)
+        WHERE codi_estacio=? AND codi_variable IN (?, ?, ?, ?)
         ORDER BY data_lectura
         """,
-        (station, TEMP_CODE, HUMIDITY_CODE, RAIN_CODE),
+        (station, TEMP_CODE, HUMIDITY_CODE, RAIN_CODE, SOLAR_CODE),
     ).fetchall()
     observations = defaultdict(dict)
     source_rows = defaultdict(int)
@@ -215,6 +216,9 @@ def fetch_observations(conn, station, start, end, local_tz, latitude, longitude)
         source_slots[int(variable)].add(key)
         if int(variable) == RAIN_CODE:
             observations[key]["rain"] = observations[key].get("rain", 0.0) + value
+        elif int(variable) == SOLAR_CODE:
+            observations[key]["solar_sum"] = observations[key].get("solar_sum", 0.0) + value
+            observations[key]["solar_count"] = observations[key].get("solar_count", 0) + 1
         elif int(variable) == TEMP_CODE:
             observations[key]["temp_sum"] = observations[key].get("temp_sum", 0.0) + value
             observations[key]["temp_count"] = observations[key].get("temp_count", 0) + 1
@@ -227,10 +231,28 @@ def fetch_observations(conn, station, start, end, local_tz, latitude, longitude)
             values["temp"] = values["temp_sum"] / values["temp_count"]
         if values.get("humidity_count"):
             values["humidity"] = values["humidity_sum"] / values["humidity_count"]
+        if values.get("solar_count"):
+            values["solar_w_m2"] = values["solar_sum"] / values["solar_count"]
     return observations, {"rows": source_rows, "slots": source_slots}
 
 
-def daily_records(observations, start, end):
+def extraterrestrial_radiation_mj(latitude, day):
+    """FAO-56 daily extraterrestrial radiation on a horizontal surface."""
+    latitude_rad = math.radians(latitude)
+    day_number = day.timetuple().tm_yday
+    inverse_distance = 1.0 + 0.033 * math.cos(2.0 * math.pi * day_number / 365.0)
+    declination = 0.409 * math.sin(2.0 * math.pi * day_number / 365.0 - 1.39)
+    sunset_angle = math.acos(max(-1.0, min(1.0, -math.tan(latitude_rad) * math.tan(declination))))
+    return (
+        24.0 * 60.0 / math.pi * 0.0820 * inverse_distance
+        * (
+            sunset_angle * math.sin(latitude_rad) * math.sin(declination)
+            + math.cos(latitude_rad) * math.cos(declination) * math.sin(sunset_angle)
+        )
+    )
+
+
+def daily_records(observations, start, end, latitude=None):
     grouped = defaultdict(list)
     for timestamp, values in observations.items():
         grouped[timestamp.date()].append((timestamp, values))
@@ -241,6 +263,15 @@ def daily_records(observations, start, end):
         temps = [values.get("temp") for _, values in rows if values.get("temp") is not None]
         humidity = [values.get("humidity") for _, values in rows if values.get("humidity") is not None]
         rain_values = [values.get("rain") for _, values in rows if values.get("rain") is not None]
+        solar_values = [
+            values.get("solar_w_m2") for _, values in rows
+            if values.get("solar_w_m2") is not None
+        ]
+        solar_mj = sum(solar_values) * 3600.0 / 1_000_000.0 if solar_values else None
+        extraterrestrial_mj = (
+            extraterrestrial_radiation_mj(latitude, cursor)
+            if latitude is not None else None
+        )
         records.append({
             "day": cursor,
             "tmean": safe_mean(temps),
@@ -248,9 +279,15 @@ def daily_records(observations, start, end):
             "tmax": max(temps) if temps else None,
             "humidity_mean": safe_mean(humidity),
             "rain": sum(rain_values) if rain_values else None,
+            "solar_mj_m2": solar_mj,
+            "clearness_index": (
+                solar_mj / extraterrestrial_mj
+                if solar_mj is not None and extraterrestrial_mj else None
+            ),
             "temp_samples": len(temps),
             "humidity_samples": len(humidity),
             "rain_samples": len(rain_values),
+            "solar_samples": len(solar_values),
         })
         cursor += timedelta(days=1)
     return records
@@ -276,6 +313,7 @@ def subset_statistics(records):
     temp_records = [record for record in records if record["tmean"] is not None]
     humidity_records = [record for record in records if record["humidity_mean"] is not None]
     max_rain_record = max(rain_records, key=lambda row: row["rain"], default=None)
+    solar_records = [row for row in records if row.get("solar_mj_m2") is not None]
     return {
         "days": len(records),
         "days_with_temperature": len(temp_records),
@@ -301,6 +339,14 @@ def subset_statistics(records):
         "tropical_nights_ge_20c": sum(row["tmin"] is not None and row["tmin"] >= 20.0 for row in records),
         "frost_nights_le_0c": sum(row["tmin"] is not None and row["tmin"] <= 0.0 for row in records),
         "humidity_mean_pct": rounded(safe_mean(row["humidity_mean"] for row in humidity_records)),
+        "days_with_solar_radiation": len(solar_records),
+        "solar_energy_total_mj_m2": rounded(sum(row["solar_mj_m2"] for row in solar_records)),
+        "solar_energy_mean_daily_mj_m2": rounded(safe_mean(row["solar_mj_m2"] for row in solar_records)),
+        "high_solar_days": sum(
+            row.get("clearness_index") is not None and row["clearness_index"] >= 0.65
+            for row in solar_records
+        ),
+        "high_solar_day_definition": "daily global irradiation / extraterrestrial irradiation >= 0.65",
     }
 
 
@@ -369,6 +415,13 @@ def monthly_statistics(records):
     for row in records:
         by_month[row["day"].strftime("%Y-%m")].append(row)
     return {month: subset_statistics(rows) for month, rows in sorted(by_month.items())}
+
+
+def monthly_day_night_statistics(observations):
+    by_month = defaultdict(dict)
+    for timestamp, values in observations.items():
+        by_month[timestamp.strftime("%Y-%m")][timestamp] = values
+    return {month: hourly_statistics(rows) for month, rows in sorted(by_month.items())}
 
 
 def quality_feature_vector(summary, preharvest):
@@ -442,17 +495,21 @@ def coverage(source_counts, start, end):
     temp_slots = len(source_slots.get(TEMP_CODE, set()))
     humidity_slots = len(source_slots.get(HUMIDITY_CODE, set()))
     precipitation_slots = len(source_slots.get(RAIN_CODE, set()))
+    solar_slots = len(source_slots.get(SOLAR_CODE, set()))
     return {
         "expected_hourly_slots": expected,
         "temperature_observation_rows": source_rows.get(TEMP_CODE, 0),
         "humidity_observation_rows": source_rows.get(HUMIDITY_CODE, 0),
         "precipitation_observation_rows": source_rows.get(RAIN_CODE, 0),
+        "solar_observation_rows": source_rows.get(SOLAR_CODE, 0),
         "temperature_hourly_slots": temp_slots,
         "humidity_hourly_slots": humidity_slots,
         "precipitation_hourly_slots": precipitation_slots,
+        "solar_hourly_slots": solar_slots,
         "temperature_pct": rounded(100.0 * temp_slots / expected),
         "humidity_pct": rounded(100.0 * humidity_slots / expected),
         "precipitation_pct": rounded(100.0 * precipitation_slots / expected),
+        "solar_pct": rounded(100.0 * solar_slots / expected),
     }
 
 
@@ -482,14 +539,18 @@ def markdown_report(report):
         f"# Seasonal climate: {report['field_name']}", "",
         f"Period: {report['start']} to {report['end']} ({report['period_status']}).", "",
         report["send_text"], "", "## Monthly statistics", "",
-        "| Month | Rain (mm) | Mean temp (C) | Min (C) | Max (C) | Mean RH (%) | Dry spell (days) |",
-        "|---|---:|---:|---:|---:|---:|---:|",
+        "| Month | Rain (mm) | Day/night temp (C) | Min/max (C) | Day/night RH (%) | RH >=95% (h) | Solar (MJ/m2) | High-solar days | Dry spell (days) |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for month, row in report["monthly"].items():
+        day_night = report["monthly_day_night"][month]
         lines.append(
-            f"| {month} | {row['rain_total_mm']} | {row['temperature_mean_c']} | "
-            f"{row['temperature_min_c']} | {row['temperature_max_c']} | "
-            f"{row['humidity_mean_pct']} | {row['longest_dry_spell_days']} |"
+            f"| {month} | {row['rain_total_mm']} | "
+            f"{day_night['day_temperature_mean_c']} / {day_night['night_temperature_mean_c']} | "
+            f"{row['temperature_min_c']} / {row['temperature_max_c']} | "
+            f"{day_night['day_humidity_mean_pct']} / {day_night['night_humidity_mean_pct']} | "
+            f"{day_night['hours_rh_ge_95pct']} | {row['solar_energy_total_mj_m2']} | "
+            f"{row['high_solar_days']} | {row['longest_dry_spell_days']} |"
         )
     lines.extend([
         "", "## Interpretation boundary", "",
@@ -508,7 +569,7 @@ def analyze_field(conn, field, params, local_tz, today):
     observations, source_counts = fetch_observations(
         conn, station, start, end, local_tz, latitude, longitude
     )
-    records = daily_records(observations, start, end)
+    records = daily_records(observations, start, end, latitude)
     season = subset_statistics(records)
     hourly = hourly_statistics(observations)
     indices = calculate_indices(records, float(params.get("huglin_k") or 1.03))
@@ -538,6 +599,7 @@ def analyze_field(conn, field, params, local_tz, today):
         "indices": indices,
         "preharvest_or_recent_30d": dict(preharvest, start=preharvest_start.isoformat(), end=end.isoformat()),
         "monthly": monthly_statistics(records),
+        "monthly_day_night": monthly_day_night_statistics(observations),
         "quality_context_features": feature_vector,
         "sugar_estimate": sugar_estimate(field_id, feature_vector, configured_model),
         "interpretation": (
@@ -572,6 +634,7 @@ def model_info():
             "temperature": {"code": TEMP_CODE, "unit": "C"},
             "relative_humidity": {"code": HUMIDITY_CODE, "unit": "%"},
             "precipitation": {"code": RAIN_CODE, "unit": "mm per observation interval"},
+            "solar_irradiance": {"code": SOLAR_CODE, "unit": "W/m2"},
         },
         "indices": {
             "gdd_base10": "Sum of max(0, daily mean temperature - 10 C).",

@@ -36,6 +36,22 @@ class ProactiveDeploymentContractTest(unittest.TestCase):
         self.assertIn('"research"', cron)
         self.assertIn("def mode_research", cron)
         self.assertIn('"mode": "cycle"', cron)
+        self.assertIn('payload.get("status") == "skipped"', cron)
+        self.assertIn("evidence has not changed", cron)
+
+    def test_scheduler_recovers_stale_locks_and_cleans_up_failures(self):
+        tick = (ROOT / "scripts" / "vineyard_guard_tick.sh").read_text(encoding="utf-8")
+        self.assertIn("acquire_lock()", tick)
+        self.assertIn("release_lock()", tick)
+        self.assertIn('kill -0 "$owner"', tick)
+        self.assertIn('if "$@"; then', tick)
+
+    def test_supabase_scheduler_checks_the_structured_skill_status(self):
+        cron = (ROOT / "scripts" / "vineyard_guard_cron.py").read_text(encoding="utf-8")
+        wrapper = (ROOT / "skills" / "vineyard_disease_risk" / "run.sh").read_text(encoding="utf-8")
+        self.assertIn('payload.get("status") != "success"', cron)
+        self.assertIn('if status != "success":', wrapper)
+        self.assertIn("sys.exit(1)", wrapper)
 
     def test_a_farmer_decision_reaches_the_research_engine(self):
         adapter = (ROOT / "skills" / "proactive_field_agent" / "run.py").read_text(encoding="utf-8")

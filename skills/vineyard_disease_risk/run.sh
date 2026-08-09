@@ -879,14 +879,17 @@ def main():
         else:
             raise ValueError(f"unknown mode: {mode}")
 
-        print(json.dumps({
+        payload = {
             "status": status,
             "mode": mode,
             "repo_path": repo,
             "disease": disease,
             "field": field or "all",
             "result": result,
-        }))
+        }
+        print(json.dumps(payload))
+        if status != "success":
+            sys.exit(1)
     except Exception as exc:
         print(json.dumps({
             "status": "error",

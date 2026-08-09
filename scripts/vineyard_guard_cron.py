@@ -512,8 +512,9 @@ def mode_supabase(args):
             "SKILL_DISEASE": disease,
             "SKILL_TIMEOUT": "900",
         })
-        if not result["ok"]:
-            failures.append(f"{disease}: {result.get('stderr') or result.get('stdout')}")
+        payload = result.get("stdout") or {}
+        if not result["ok"] or payload.get("status") != "success":
+            failures.append(f"{disease}: {result.get('stderr') or payload}")
     if failures:
         print("Vineyard Guard Supabase sync failed:")
         print("\n".join(failures))
@@ -581,9 +582,21 @@ def mode_research(args):
         "max_seconds": args.research_max_seconds,
     })
     payload = result.get("stdout") or {}
-    if not result.get("ok") or payload.get("status") != "success":
+    if not result.get("ok"):
         print("Research cycle failed.")
         print(result.get("stderr") or json.dumps(payload, ensure_ascii=False)[:1600])
+        return 1
+    if payload.get("status") == "skipped":
+        print("Research cycle skipped: evidence has not changed.")
+        print(json.dumps({
+            "reason": payload.get("reason"),
+            "wrote": bool(payload.get("wrote")),
+            "packs": payload.get("packs") or [],
+        }, ensure_ascii=False))
+        return 0
+    if payload.get("status") != "success":
+        print("Research cycle failed.")
+        print(json.dumps(payload, ensure_ascii=False)[:1600])
         return 1
     summary = {
         "packs": payload.get("packs") or [],

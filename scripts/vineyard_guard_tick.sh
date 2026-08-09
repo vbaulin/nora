@@ -23,6 +23,34 @@ mkdir -p "$STATE_DIR"
 local_date="$(date +%Y-%m-%d)"
 local_hm="$(date +%H%M)"
 
+acquire_lock() {
+    lock="$1"
+    if mkdir "$lock" 2>/dev/null; then
+        echo "$$" > "$lock/pid"
+        return 0
+    fi
+
+    # Recover only locks whose owner no longer exists. This handles a prior
+    # interrupted tick without allowing two live schedulers into one task.
+    owner="$(cat "$lock/pid" 2>/dev/null || true)"
+    case "$owner" in
+        ''|*[!0-9]*) owner=0 ;;
+    esac
+    if [ "$owner" -gt 0 ] && kill -0 "$owner" 2>/dev/null; then
+        return 1
+    fi
+    rm -f "$lock/pid"
+    rmdir "$lock" 2>/dev/null || return 1
+    mkdir "$lock" 2>/dev/null || return 1
+    echo "$$" > "$lock/pid"
+}
+
+release_lock() {
+    lock="$1"
+    rm -f "$lock/pid"
+    rmdir "$lock" 2>/dev/null || true
+}
+
 run_once() {
     task="$1"
     shift
@@ -31,18 +59,21 @@ run_once() {
     if [ -f "$stamp" ]; then
         return 0
     fi
-    if ! mkdir "$lock" 2>/dev/null; then
+    if ! acquire_lock "$lock"; then
         return 0
     fi
     {
         echo "=== $(date -Iseconds) ${task} start ==="
-        "$@"
-        rc=$?
+        if "$@"; then
+            rc=0
+        else
+            rc=$?
+        fi
         echo "=== $(date -Iseconds) ${task} exit=${rc} ==="
         if [ "$rc" -eq 0 ]; then
             date -Iseconds > "$stamp"
         fi
-        rmdir "$lock" 2>/dev/null || true
+        release_lock "$lock"
         exit "$rc"
     } >> "$LOG" 2>&1
 }
@@ -71,18 +102,21 @@ run_interval() {
             return 0
         fi
     fi
-    if ! mkdir "$lock" 2>/dev/null; then
+    if ! acquire_lock "$lock"; then
         return 0
     fi
     {
         echo "=== $(date -Iseconds) ${task} start ==="
-        "$@"
-        rc=$?
+        if "$@"; then
+            rc=0
+        else
+            rc=$?
+        fi
         echo "=== $(date -Iseconds) ${task} exit=${rc} ==="
         if [ "$rc" -eq 0 ]; then
             date +%s > "$marker"
         fi
-        rmdir "$lock" 2>/dev/null || true
+        release_lock "$lock"
         exit "$rc"
     } >> "$LOG" 2>&1
 }

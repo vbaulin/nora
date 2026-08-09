@@ -1274,6 +1274,22 @@ class AutonomousFollowUpTest(ResearchTestCase):
 
 
 class SafetyTest(ResearchTestCase):
+    def test_duplicate_pack_names_are_loaded_once(self):
+        first = self.root / "first" / "vineyard"
+        second = self.root / "second" / "vineyard_alias"
+        first.mkdir(parents=True)
+        second.mkdir(parents=True)
+        declaration = "PACK = {'name': 'vineyard_guard', 'analyses': {}}\n"
+        (first / "pack.py").write_text(declaration, encoding="utf-8")
+        (second / "pack.py").write_text(declaration, encoding="utf-8")
+
+        packs = ENGINE.load_packs([
+            str(self.root / "first"), str(self.root / "second"),
+        ])
+
+        self.assertEqual([pack["name"] for pack in packs], ["vineyard_guard"])
+        self.assertEqual(packs[0]["path"], str(first / "pack.py"))
+
     def test_a_broken_pack_does_not_stop_the_others(self):
         good = self.root / "packs" / "good"
         bad = self.root / "packs" / "bad"

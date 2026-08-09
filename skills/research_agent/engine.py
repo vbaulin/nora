@@ -1136,6 +1136,7 @@ def load_packs(pack_dirs, errors=None):
     not stop the board from researching the others.
     """
     packs = []
+    seen_names = set()
     for index, path in enumerate(discover_pack_paths(pack_dirs)):
         try:
             module = load_module(path, f"nora_research_pack_{index}_{path.parent.name}")
@@ -1144,8 +1145,11 @@ def load_packs(pack_dirs, errors=None):
             if errors is not None:
                 errors.append({"pack": str(path), "error": str(exc)})
             continue
-        if not declaration.get("name"):
+        name = str(declaration.get("name") or "").strip()
+        if not name or name in seen_names:
             continue
+        seen_names.add(name)
+        declaration["name"] = name
         declaration["module"] = module
         declaration["path"] = str(path)
         packs.append(declaration)

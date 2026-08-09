@@ -964,6 +964,16 @@ OPTION_TEXTS = {
         "es": "que prepare un estudio de seguimiento para comprobarlo con datos nuevos durante las próximas semanas (lo dejo escrito y usted lo revisa antes de que arranque)",
         "en": "let me draft a follow-up study that checks this against new data over the coming weeks (I write it down and you review it before anything runs)",
     },
+    "forecast_from_relationship": {
+        "ca": "que us avisi per endavant la propera vegada que això torni a passar, dient-vos el dia previst i per què",
+        "es": "que le avise por adelantado la próxima vez que esto vuelva a ocurrir, diciéndole el día previsto y por qué",
+        "en": "warn me ahead of time the next time this happens, with the expected day and the reason",
+    },
+    "keep_watching": {
+        "ca": "que segueixi vigilant-ho i us avisi si torna a passar",
+        "es": "que siga vigilándolo y le avise si vuelve a ocurrir",
+        "en": "keep watching it and tell me if it happens again",
+    },
     "start_measurement": {
         "ca": "començar a mesurar-ho, si us sembla que val la pena; sense aquesta dada la pregunta es queda oberta",
         "es": "empezar a medirlo, si le parece que vale la pena; sin ese dato la pregunta se queda abierta",
@@ -1249,6 +1259,7 @@ OPEN_QUESTIONS = {
 ANOMALY_TEXTS = {
     "ca": {
         "title": "He detectat una anomalia al registre: {subject}",
+
         "intro": "{name}: revisant el registre del tauler he trobat una cosa a «{subject}».",
         "intro_self": "{name}: revisant el registre del tauler he trobat una cosa.",
         "sample": "He analitzat {samples} mostres.",
@@ -1261,6 +1272,7 @@ ANOMALY_TEXTS = {
         "ceiling_criterion": "El canal no ha arribat mai al llindar de {criterion} tot i acostar-s'hi {approached} vegades.",
         "source_disagreement": "Dues fonts que haurien de coincidir difereixen en {periods} períodes.",
         "outcome_calibration": "Dels {alerts} avisos que he enviat, {negative} no van trobar res.",
+        "relationship_forecast": "{driver} va superar el seu llindar alt el {crossed} ({value}). Per la relació que vau confirmar en aquest camp ({rho} sobre {samples} dies), això apuntaria a {response} cap al {predicted}; és una projecció d'aquesta relació, no una mesura.",
         "lagged_association": "{driver} va precedir {response} {lag} dies abans, de manera consistent al llarg de {samples} dies (correlació {rho}).",
         "baseline_deviation": "Aquesta temporada {metric} és {current}, davant una mediana de {baseline} en les {periods} temporades anteriors.",
         "coverage_gaps": "Hi ha {missing} mesures que em falten per respondre preguntes que ja m'he plantejat. La més útil seria {best}: em permetria respondre {unlocked} pregunta/es que ara no puc.",
@@ -1274,6 +1286,7 @@ ANOMALY_TEXTS = {
     },
     "es": {
         "title": "He detectado una anomalía en el registro: {subject}",
+
         "intro": "{name}: revisando el registro del tablero he encontrado algo en «{subject}».",
         "intro_self": "{name}: revisando el registro del tablero he encontrado algo.",
         "sample": "He analizado {samples} muestras.",
@@ -1286,6 +1299,7 @@ ANOMALY_TEXTS = {
         "ceiling_criterion": "El canal nunca alcanzó el umbral de {criterion} pese a acercarse {approached} veces.",
         "source_disagreement": "Dos fuentes que deberían coincidir difieren en {periods} períodos.",
         "outcome_calibration": "De los {alerts} avisos que he enviado, {negative} no encontraron nada.",
+        "relationship_forecast": "{driver} superó su umbral alto el {crossed} ({value}). Por la relación que confirmó en este campo ({rho} sobre {samples} días), esto apuntaría a {response} hacia el {predicted}; es una proyección de esa relación, no una medida.",
         "lagged_association": "{driver} precedió a {response} {lag} días antes, de forma consistente a lo largo de {samples} días (correlación {rho}).",
         "baseline_deviation": "Esta temporada {metric} es {current}, frente a una mediana de {baseline} en las {periods} temporadas anteriores.",
         "coverage_gaps": "Hay {missing} medidas que me faltan para responder preguntas que ya me he planteado. La más útil sería {best}: me permitiría responder {unlocked} pregunta(s) que ahora no puedo.",
@@ -1299,6 +1313,7 @@ ANOMALY_TEXTS = {
     },
     "en": {
         "title": "I found an anomaly in the record: {subject}",
+
         "intro": "{name}: going through the board's own record I found something in \"{subject}\".",
         "intro_self": "{name}: going through the board's own record I found something.",
         "sample": "I analysed {samples} samples.",
@@ -1311,6 +1326,7 @@ ANOMALY_TEXTS = {
         "ceiling_criterion": "The channel never reached the {criterion} threshold despite approaching it {approached} times.",
         "source_disagreement": "Two sources that should agree differ across {periods} periods.",
         "outcome_calibration": "Of the {alerts} alerts I sent, {negative} found nothing.",
+        "relationship_forecast": "{driver} crossed its high threshold on {crossed} ({value}). By the relationship you confirmed in this field ({rho} over {samples} days), that would point at {response} around {predicted}; it is a projection of that relationship, not a measurement.",
         "lagged_association": "{driver} preceded {response} by {lag} days, consistently across {samples} days (correlation {rho}).",
         "baseline_deviation": "This season {metric} is {current}, against a median of {baseline} across the {periods} previous seasons.",
         "coverage_gaps": "There are {missing} measurements I lack for questions I have already framed. The most useful would be {best}: it would let me answer {unlocked} question(s) I cannot answer now.",
@@ -1393,6 +1409,16 @@ def anomaly_summary(language, finding):
     metrics = finding.get("metrics") or {}
     analysis = finding.get("analysis")
     try:
+        if analysis == "relationship_forecast":
+            return texts["relationship_forecast"].format(
+                driver=localized_series(language, metrics.get("driver", "?")),
+                response=localized_series(language, metrics.get("response") or "?"),
+                crossed=metrics.get("crossed_on", "?"),
+                value=metrics.get("driver_value", "?"),
+                predicted=metrics.get("predicted_day", "?"),
+                rho=metrics.get("relationship_rho", "?"),
+                samples=metrics.get("relationship_samples", "?"),
+            )
         if analysis == "lagged_association":
             return texts["lagged_association"].format(
                 driver=localized_series(language, metrics.get("driver", "?")),
@@ -1462,7 +1488,7 @@ def render_anomaly(language, field_name, finding):
         parts.append(f"{texts['options_intro']} {options}.")
     parts.append(texts["closing"])
     return {
-        "title": texts["title"].format(subject=display_subject(subject, field_name)),
+        "title": texts["title"].format(subject=shown),
         "message": " ".join(parts),
     }
 

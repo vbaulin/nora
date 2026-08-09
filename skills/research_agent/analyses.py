@@ -1038,6 +1038,9 @@ MIN_ASSOCIATION_PAIRS = 30
 DEFAULT_LAGS = (0, 1, 2, 3, 5, 7)
 ASSOCIATION_ALPHA = 0.01
 MIN_ABS_RHO = 0.35
+# Projecting forward asks more of a relationship than describing it does.
+MIN_FORECAST_RHO = 0.5
+MIN_FORECAST_SAMPLES = 60
 
 
 def rank(values):
@@ -1296,8 +1299,159 @@ def lagged_association(ctx):
             # not confirmed. The cheapest honest next step is to say so and
             # offer to test it prospectively.
             {"id": "run_measurement_task", "cost": "none", "params": {}},
+            # And once it holds, it can be pointed forwards.
+            {"id": "forecast_from_relationship", "cost": "none", "params": {}},
             {"id": "deeper_analysis", "cost": "none", "params": {}},
-            {"id": "confirm_context_change", "cost": "none", "params": {}},
+        ],
+    })
+    return finding
+
+
+def percentile(values, fraction):
+    ordered = sorted(values)
+    if not ordered:
+        return None
+    position = max(0, min(len(ordered) - 1, int(round(fraction * (len(ordered) - 1)))))
+    return ordered[position]
+
+
+def relationship_forecast(ctx):
+    """Say what is likely next, and why, from a relationship confirmed here.
+
+    This is the step from understanding to anticipation. It never predicts from
+    a bare correlation: the question carries the evidence of the relationship a
+    person already confirmed — its lag, its strength, its sample — and the
+    forecast repeats that evidence as its own reason.
+
+    What it emits is a projection of one series from another, on this board's
+    own record. It is not a measurement of the thing being predicted, and it is
+    never a treatment instruction.
+    """
+    params = ctx.get("params") or {}
+    driver_spec = params.get("driver") or {}
+    lag = int(params.get("lag_days") or 0)
+    evidence = params.get("relationship") or {}
+    # A driver crosses its own 80th percentile on one day in five, so at that
+    # level a warning fires most weeks and means nothing. Unusually high for
+    # this site is what justifies interrupting somebody.
+    high_fraction = float(params.get("high_percentile") or 0.95)
+    lookback = int(params.get("lookback_days") or 3)
+    # A warning that arrives on the day it predicts is not a warning.
+    min_lead_days = int(params.get("min_lead_days") or 1)
+    now = ctx.get("now") or engine.utcnow()
+    today = now.date()
+
+    daily = load_daily(ctx, driver_spec)
+    days = sorted(daily)
+    limitations = [
+        "A projection from a relationship observed here, not a measurement of what is predicted.",
+        "The relationship is precedence, not causation: both series may follow something else.",
+        "It holds only while the conditions that produced the relationship still hold.",
+    ]
+    finding = base_finding(
+        ctx, "relationship_forecast",
+        ctx.get("claim") or "a confirmed relationship points at what comes next",
+        f"Checked the last {lookback} days of {series_label(driver_spec)} against its own "
+        f"{int(high_fraction * 100)}th percentile, and projected {lag} days forward using the "
+        "relationship confirmed for this subject.",
+        len(days), driver_spec.get("source") or {}, limitations,
+        (days[0], days[-1]) if days else (None, None),
+    )
+    if len(days) < MIN_ASSOCIATION_PAIRS:
+        finding.update({
+            "verdict": engine.VERDICT_INSUFFICIENT, "confidence": 0.2,
+            "metrics": {"days": len(days), "minimum": MIN_ASSOCIATION_PAIRS},
+            "headline": {"days": len(days)},
+        })
+        return finding
+
+    # Whether there is a basis to project from at all. A weak or thin
+    # relationship is still worth understanding, and understanding is a
+    # legitimate place to stop: the board keeps relating the two facts and
+    # says nothing about the future.
+    strength = abs(engine.as_float(evidence.get("rho"), 0.0) or 0.0)
+    samples = int(evidence.get("samples") or 0)
+    min_strength = float(params.get("min_forecast_rho") or MIN_FORECAST_RHO)
+    min_samples = int(params.get("min_forecast_samples") or MIN_FORECAST_SAMPLES)
+    if strength < min_strength or samples < min_samples:
+        finding.update({
+            "verdict": engine.VERDICT_NOT_MATERIAL,
+            "confidence": 0.5,
+            "metrics": {
+                "relationship_rho": evidence.get("rho"),
+                "relationship_samples": samples,
+                "minimum_rho": min_strength,
+                "minimum_samples": min_samples,
+                "reason": (
+                    "the relationship is not strong enough or not observed on enough "
+                    "days to project from; it stays an association, not a forecast"
+                ),
+            },
+            "headline": {"unfounded": True},
+        })
+        return finding
+
+    threshold = percentile(list(daily.values()), high_fraction)
+    recent = [
+        day for day in days
+        if (today - dt.date.fromisoformat(day)).days <= lookback
+        and (today - dt.date.fromisoformat(day)).days >= 0
+    ]
+    crossings = [day for day in recent if daily[day] >= threshold]
+    finding["metrics"] = {
+        "driver": series_label(driver_spec),
+        "response": evidence.get("response"),
+        "lag_days": lag,
+        "high_threshold": round(threshold, 3) if threshold is not None else None,
+        "high_percentile": high_fraction,
+        "recent_days_checked": len(recent),
+        "recent_crossings": crossings,
+        "relationship_rho": evidence.get("rho"),
+        "relationship_samples": evidence.get("samples"),
+        "confirmed_by_finding": evidence.get("finding_id"),
+    }
+    if not crossings:
+        finding.update({
+            "verdict": engine.VERDICT_NOT_MATERIAL, "confidence": 0.7,
+            "headline": {"crossing": None},
+        })
+        return finding
+
+    crossed_on = max(crossings)
+    predicted_day = (dt.date.fromisoformat(crossed_on) + dt.timedelta(days=lag)).isoformat()
+    days_ahead = (dt.date.fromisoformat(predicted_day) - today).days
+    if days_ahead < min_lead_days:
+        # The crossing is real, but the day it points at has arrived or passed.
+        # Reporting it now would be news about the past dressed as a warning.
+        finding["metrics"].update({
+            "crossed_on": crossed_on,
+            "predicted_day": predicted_day,
+            "days_ahead": days_ahead,
+            "minimum_lead_days": min_lead_days,
+        })
+        finding.update({
+            "verdict": engine.VERDICT_NOT_MATERIAL, "confidence": 0.6,
+            "headline": {"predicted_day": predicted_day, "too_late": True},
+        })
+        return finding
+    finding["metrics"].update({
+        "crossed_on": crossed_on,
+        "driver_value": round(daily[crossed_on], 3),
+        "predicted_day": predicted_day,
+        "days_ahead": days_ahead,
+    })
+    finding.update({
+        "verdict": engine.VERDICT_MATERIAL,
+        "confidence": min(0.75, abs(float(evidence.get("rho") or 0.5))),
+        # One message per predicted day: the same crossing never re-reports.
+        "headline": {"predicted_day": predicted_day},
+        "open_question": params.get("open_question") or (
+            f"whether {evidence.get('response') or 'the response'} actually rises around "
+            f"{predicted_day}, which only a look at the field can settle"
+        ),
+        "options": params.get("options") or [
+            {"id": "observe_at_next_event", "cost": "none", "params": {}},
+            {"id": "keep_watching", "cost": "none", "params": {}},
         ],
     })
     return finding
@@ -1498,6 +1652,7 @@ BUILTIN_ANALYSES = {
     "neighbour_reports": neighbour_reports,
     "baseline_deviation": baseline_deviation,
     "lagged_association": lagged_association,
+    "relationship_forecast": relationship_forecast,
     "ceiling_saturation": ceiling_saturation,
     "source_disagreement": source_disagreement,
     "outcome_calibration": outcome_calibration,

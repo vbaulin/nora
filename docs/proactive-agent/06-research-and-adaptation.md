@@ -38,10 +38,10 @@ often, so the engine opens a question about its own alerting threshold.
 **Packs.** A domain declares the questions it always cares about. See
 [chapter 8](08-vineyard-guard.md).
 
-## The six shapes it looks for
+## The shapes it looks for
 
-Every analysis is a shape in the data. Learn the six pictures and you know what
-the board can notice.
+Every analysis is a shape in the data. These six are the core pictures; learn
+them and you know most of what the board can notice on its own.
 
 ![Six analyses drawn as the data shape each one detects](../../assets/readme/analysis-shapes.svg)
 
@@ -54,8 +54,10 @@ the board can notice.
 | `source_disagreement` | Do two sources that should agree, agree? |
 | `outcome_calibration` | Are the board's own alerts earning their interruptions? |
 | `neighbour_reports` | Do nearby reporters see something this board does not? |
-
 | `baseline_deviation` | Is the current period unlike the periods before it? |
+| `lagged_association` | Does one series move before another, by a fixed number of days? |
+| `relationship_forecast` | A confirmed relationship's driver ran high — what would it imply, and when? |
+| `coverage_gaps` | Which questions has the board framed that nothing here can measure? |
 
 Three of these are what a networked board with a weather history is for.
 `neighbour_reports` reads confirmed reports from other boards with their
@@ -149,6 +151,29 @@ humid nights precede a change in insect pressure at Camp Nord
 
 A hypothesis without evidence is stated as a hypothesis. It is not a finding,
 it does not reach the farmer as one, and it does not become a standing nag.
+
+## From understanding to anticipation
+
+A relationship the board found and a person confirmed can be pointed forwards.
+The driver is watched; when it runs unusually high, the board reports the
+observation and what it would imply:
+
+```text
+Night humidity crossed its high threshold on 2026-08-08 (93.0). By the
+relationship you confirmed in this field (0.958 over 146 days), that would
+point at powdery mildew risk around 2026-08-11 — a projection of that
+relationship, not a measurement.
+```
+
+The finding is still an observation first. The projection follows only when
+there is a basis for it: below rho 0.5 or 60 observed days the board keeps
+relating the two facts and says nothing about the future. Understanding is a
+legitimate place to stop, and an unfounded prediction is worse than silence.
+
+Two further guards: the driver must cross the 95th percentile of its own
+history, since a threshold crossed one day in five warns about nothing; and the
+predicted day must still be ahead, because a warning that arrives on the day it
+predicts is news about the past.
 
 ## Attending to what is missing
 

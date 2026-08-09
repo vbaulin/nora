@@ -911,6 +911,163 @@ class SkillCandidateTest(ResearchTestCase):
         self.assertFalse(drafts.exists())
 
 
+class ForwardWarningTest(ResearchTestCase):
+    """A confirmed relationship becomes a warning that carries its own reason."""
+
+    def relationship(self, connection, high_recently=True):
+        random.seed(5)
+        today = dt.date.today()
+        count = 150
+        driver = [random.gauss(70, 6) for _ in range(count)]
+        if high_recently:
+            driver[-2] = 130.0
+        else:
+            # Deterministically ordinary in the days a warning would look at.
+            for index in range(1, 5):
+                driver[-index] = 60.0
+        response = [
+            (driver[index - 3] - 70) * 2.0 + random.gauss(0, 4) + 30 if index >= 3 else 30.0
+            for index in range(count)
+        ]
+        series = lambda values, key: [
+            {"timestamp": (today - dt.timedelta(days=count - 1 - index)).isoformat(), key: value}
+            for index, value in enumerate(values)
+        ]
+        question = ENGINE.open_question(
+            connection, "vineyard:field_1",
+            "night humidity precedes powdery mildew risk", "lagged_association",
+            {
+                "driver": {"source": {"kind": "inline", "records": series(driver, "x")},
+                           "key": "x", "label": "night humidity"},
+                "response": {"source": {"kind": "inline", "records": series(response, "y")},
+                             "key": "y", "label": "powdery mildew risk"},
+            },
+        )
+        return ENGINE.run_question(
+            connection, question, ANALYSES.BUILTIN_ANALYSES, self.context(),
+        )
+
+    def forecast_question(self, connection):
+        return [
+            item for item in ENGINE.list_questions(connection, status=ENGINE.QUESTION_OPEN)
+            if item["analysis"] == "relationship_forecast"
+        ]
+
+    def test_a_confirmed_relationship_may_be_pointed_forwards(self):
+        connection = self.connection()
+        finding = self.relationship(connection)
+        self.assertIn(
+            ENGINE.FORECAST_OPTION, [option["id"] for option in finding["options"]],
+        )
+        stored = ENGINE.record_decision(
+            connection, finding["id"], "accepted", option_id=ENGINE.FORECAST_OPTION,
+        )
+        self.assertEqual(stored["follow_up_question"]["analysis"], "relationship_forecast")
+        self.assertEqual(len(self.forecast_question(connection)), 1)
+
+    def test_the_warning_states_the_day_and_the_reason(self):
+        connection = self.connection()
+        finding = self.relationship(connection)
+        ENGINE.record_decision(
+            connection, finding["id"], "accepted", option_id=ENGINE.FORECAST_OPTION,
+        )
+        forecast = ENGINE.run_question(
+            connection, self.forecast_question(connection)[0],
+            ANALYSES.BUILTIN_ANALYSES, self.context(),
+        )
+        self.assertEqual(forecast["verdict"], ENGINE.VERDICT_MATERIAL)
+        metrics = forecast["metrics"]
+        self.assertEqual(metrics["lag_days"], 3)
+        self.assertIsNotNone(metrics["predicted_day"])
+        self.assertGreater(metrics["driver_value"], metrics["high_threshold"])
+        # The reason travels with the warning.
+        self.assertIsNotNone(metrics["relationship_rho"])
+        self.assertEqual(metrics["confirmed_by_finding"], finding["id"])
+
+    def test_a_quiet_driver_produces_no_warning(self):
+        connection = self.connection()
+        finding = self.relationship(connection, high_recently=False)
+        ENGINE.record_decision(
+            connection, finding["id"], "accepted", option_id=ENGINE.FORECAST_OPTION,
+        )
+        forecast = ENGINE.run_question(
+            connection, self.forecast_question(connection)[0],
+            ANALYSES.BUILTIN_ANALYSES, self.context(),
+        )
+        self.assertEqual(forecast["verdict"], ENGINE.VERDICT_NOT_MATERIAL)
+
+    def test_the_same_crossing_is_not_warned_about_twice(self):
+        connection = self.connection()
+        finding = self.relationship(connection)
+        ENGINE.record_decision(
+            connection, finding["id"], "accepted", option_id=ENGINE.FORECAST_OPTION,
+        )
+        question = self.forecast_question(connection)[0]
+        first = ENGINE.run_question(
+            connection, question, ANALYSES.BUILTIN_ANALYSES, self.context(),
+        )
+        again = ENGINE.run_question(
+            connection, question, ANALYSES.BUILTIN_ANALYSES, self.context(),
+        )
+        self.assertEqual(first["id"], again["id"])
+        self.assertFalse(again["changed"])
+
+    def test_a_weak_relationship_stays_an_association(self):
+        """Understanding is a legitimate place to stop."""
+        connection = self.connection()
+        question = ENGINE.open_question(
+            connection, "vineyard:field_1", "weak lead", "relationship_forecast",
+            {
+                "driver": {"source": {"kind": "inline", "records": [
+                    {"timestamp": (dt.date.today() - dt.timedelta(days=index)).isoformat(),
+                     "x": 90.0 if index == 1 else 50.0}
+                    for index in range(60)
+                ]}, "key": "x", "label": "night humidity"},
+                "lag_days": 3,
+                "relationship": {"response": "powdery risk", "rho": 0.2, "samples": 140},
+            },
+        )
+        finding = ENGINE.run_question(
+            connection, question, ANALYSES.BUILTIN_ANALYSES, self.context(),
+        )
+        self.assertEqual(finding["verdict"], ENGINE.VERDICT_NOT_MATERIAL)
+        self.assertIn("not strong enough", finding["metrics"]["reason"])
+
+    def test_a_relationship_seen_on_too_few_days_does_not_forecast(self):
+        connection = self.connection()
+        question = ENGINE.open_question(
+            connection, "vineyard:field_1", "thin lead", "relationship_forecast",
+            {
+                "driver": {"source": {"kind": "inline", "records": [
+                    {"timestamp": (dt.date.today() - dt.timedelta(days=index)).isoformat(),
+                     "x": 90.0 if index == 1 else 50.0}
+                    for index in range(60)
+                ]}, "key": "x", "label": "night humidity"},
+                "lag_days": 3,
+                "relationship": {"response": "powdery risk", "rho": 0.9, "samples": 20},
+            },
+        )
+        finding = ENGINE.run_question(
+            connection, question, ANALYSES.BUILTIN_ANALYSES, self.context(),
+        )
+        self.assertEqual(finding["verdict"], ENGINE.VERDICT_NOT_MATERIAL)
+
+    def test_a_forecast_never_claims_to_have_measured_the_thing(self):
+        connection = self.connection()
+        finding = self.relationship(connection)
+        ENGINE.record_decision(
+            connection, finding["id"], "accepted", option_id=ENGINE.FORECAST_OPTION,
+        )
+        forecast = ENGINE.run_question(
+            connection, self.forecast_question(connection)[0],
+            ANALYSES.BUILTIN_ANALYSES, self.context(),
+        )
+        text = " ".join(forecast["limitations"]).lower()
+        self.assertIn("not a measurement", text)
+        self.assertIn("not causation", text)
+        self.assertIn("only a look at the field", forecast["open_question"])
+
+
 class PolicyTest(ResearchTestCase):
     """The board reallocates its own idle time toward what has paid off here."""
 

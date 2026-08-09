@@ -147,6 +147,27 @@ separately, so a pattern that only appears at one scale stays visible as such.
 An adapter that delivers findings should present this option in the reader's
 language and pass `option_id` back with the decision.
 
+## From understanding to anticipation
+
+A confirmed relationship can be pointed forwards. Accepting
+`forecast_from_relationship` on a `lagged_association` finding opens a
+`relationship_forecast` question that watches the driver and, when it crosses
+the 95th percentile of its own history, reports what that would point at and
+when — carrying the relationship's lag, strength and sample as its reason.
+
+Three guards keep it from becoming fortune-telling:
+
+- **Founded only.** Below rho 0.5 or 60 observed days it stays an association
+  and says so. Understanding is a legitimate place to stop.
+- **Unusual only.** The 95th percentile of the driver's own history, because a
+  threshold crossed one day in five produces a warning that means nothing.
+- **In time only.** A projection whose day has already arrived is news about
+  the past; it is not reported as a warning.
+
+It is written as a projection of a relationship, never as a measurement of the
+thing predicted, and the open question it asks is whether the response actually
+rises — which only a look at the field can settle.
+
 ## Attending to what is missing
 
 Every other analysis studies evidence that exists. `coverage_gaps` studies its
@@ -205,6 +226,7 @@ from such a skill alone.
 | `baseline_deviation` | Is the current period unlike the periods before it? |
 | `lagged_association` | Does one series move before another, by a fixed number of days? |
 | `coverage_gaps` | Which questions has the board framed that nothing here can measure? |
+| `relationship_forecast` | A confirmed relationship's driver ran high — what does it point at, and when? |
 
 All of them read either a JSONL journal or a local SQLite table, so any
 experiment nora runs is already in a supported format.

@@ -709,6 +709,51 @@ def default_measurement_spec(finding, question):
     }
 
 
+FORECAST_OPTION = "forecast_from_relationship"
+
+
+def forecast_from_relationship(connection, finding, question):
+    """Point a confirmed relationship forwards.
+
+    Understanding becomes anticipation here, and only here: the forecast
+    question carries the evidence of the relationship a person accepted — its
+    lag, its strength, its sample — so every warning it later produces states
+    the reason it exists.
+    """
+    if not question or question.get("analysis") != "lagged_association":
+        return None
+    params = question.get("params") or {}
+    metrics = finding.get("metrics") or {}
+    lag = metrics.get("strongest_lag_days")
+    if lag is None:
+        return None
+    driver = params.get("driver") or {}
+    response = metrics.get("response") or (params.get("response") or {}).get("label")
+    return open_question(
+        connection,
+        question["subject"],
+        f"{metrics.get('driver') or 'the driver'} ran high, so "
+        f"{response or 'the response'} is expected {lag} days later",
+        "relationship_forecast",
+        {
+            "driver": driver,
+            "lag_days": int(lag),
+            "relationship": {
+                "response": response,
+                "rho": metrics.get("strongest_rho"),
+                "samples": finding.get("sample_size"),
+                "finding_id": finding.get("id"),
+            },
+            # Frequent enough to catch a crossing while the warning still has
+            # lead time, cheap enough that it never competes with sampling.
+            "min_interval_seconds": 6 * 3600,
+        },
+        source=SOURCE_OPERATOR,
+        origin=f"forecast:{finding.get('id')}",
+        priority=70,
+    )
+
+
 SKILL_CANDIDATE_OPTION = "draft_model_skill"
 MIN_CANDIDATE_SOURCES = 1
 
@@ -953,12 +998,17 @@ def record_decision(connection, finding_id, decision, option_id=None, note=None,
             (QUESTION_ANSWERED if decision == "accepted" else QUESTION_CLOSED,
              now, finding["question_id"]),
         )
-        if decision == "accepted" and option_id == DEEPER_ANALYSIS_OPTION:
+        if decision == "accepted" and option_id in {DEEPER_ANALYSIS_OPTION, FORECAST_OPTION}:
             row = connection.execute(
                 "SELECT * FROM questions WHERE id=?", (finding["question_id"],)
             ).fetchone()
             if row:
-                follow_up = widen_question(connection, question_dict(row))
+                source_question = question_dict(row)
+                follow_up = (
+                    widen_question(connection, source_question)
+                    if option_id == DEEPER_ANALYSIS_OPTION
+                    else forecast_from_relationship(connection, finding, source_question)
+                )
     connection.commit()
     record = finding_by_id(connection, finding["id"])
     if record is not None and follow_up:

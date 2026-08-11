@@ -187,6 +187,12 @@ returning after a short cooldown.
 
 An external search is queued only for the question a local investigation could
 not settle, and it asks the scientific question, not a product question.
+Search results are internal evidence: store their URLs and a bounded synthesis,
+compare them against the field record automatically, and do not create a
+farmer-facing `research_review` proposal. Never send snippets or ask the farmer
+for permission to read, compare, or interpret papers. Contact the farmer only
+when the completed comparison leaves one decision-relevant fact that only a
+field observation can supply.
 
 ## Telegram Conversation
 
@@ -206,6 +212,17 @@ A reply to an `investigation:<topic>` proposal resolves through
 `proposal_context` to `next_mode=record_decision` and carries the finding's
 options; map the answer to one option and record it. Nothing is written before
 that decision, and a refusal is recorded as a decision, not as a delay.
+
+For `leaf_wetness_proxy`, a direct answer such as `sí, les fulles són
+mullades`, `están secas`, or `yes, wet` is itself the requested observation.
+Record it immediately with `option_id=same_day_canopy_check`, a timestamp and
+the farmer's exact note. Persist it to `leaf_wetness_observations`, rerun the
+black-rot model and local investigation, close the answered proposal and any
+superseded wetness source search, then return the localized conclusion in the
+same Telegram turn and mark the question complete. Do not leave a separate
+closure message for the next scheduled cycle. Do not ask for a
+second confirmation, a paper review, or a sensor purchase. One observation is
+one measured hour/event; it must not be expanded into an unobserved whole night.
 
 For a farmer reply such as `PF-12: cap símptoma`, first call:
 
@@ -236,11 +253,11 @@ alert disease(s). If today's daily disease briefing already covers the same
 field and signal, notification is marked `skipped_covered`; the proposal stays
 in evidence memory without generating a duplicate Telegram message.
 
-Bounded internet research creates source-attributed review proposals at the
-normal proactive notification threshold. These messages identify candidate
-solutions and ask whether the farmer wants a field-specific comparison. Search
-snippets never become treatment instructions, product selections, or confirmed
-field facts by themselves.
+Bounded internet research stores source-attributed internal syntheses. The
+board performs the field-specific comparison automatically; source lists and
+snippets never become proactive Telegram proposals. Search evidence does not
+become a treatment instruction, product selection, threshold change, hardware
+suggestion, or confirmed field fact by itself.
 
 Search credentials are read from the process environment, the explicit
 `search_env`, `/root/.picoclaw/search.env`, or the application `.env`, in that
@@ -249,14 +266,15 @@ secret is loaded into proactive memory, traces, or farmer messages. A paid or
 keyed provider is preferred because the keyless DuckDuckGo HTML endpoint may
 return a challenge page or rate-limit embedded clients. The runtime retries
 the same bounded query against DuckDuckGo Lite when the HTML response contains
-no parseable results; it does not broaden the query or turn search snippets
-into operational instructions.
+no parseable results; it does not broaden the query, expose snippets to the
+farmer, or turn them into operational instructions.
 
 This also closes the nano-os-agent evaluation loop. A passing field experiment
 is stored as `observed_success` with the narrow interpretation that one run
 passed its declared checks. A failed or partial run creates
-`experiment_investigation`, remains internal, and is replaced by a
-source-attributed `research_review` only when the bounded search succeeds.
+`experiment_investigation` and remains internal. A successful bounded search
+adds a source-attributed synthesis to evidence memory and closes the internal
+investigation; it does not delegate troubleshooting to the farmer.
 
 Always reply in the farmer's configured/question language. Preserve field
 names and model values exactly; never expose raw JSON, database rows, or local

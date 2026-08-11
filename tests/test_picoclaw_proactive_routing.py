@@ -45,6 +45,33 @@ class PicoclawProactiveRoutingTest(unittest.TestCase):
         self.assertEqual(params["mode"], "proposal_context")
         self.assertEqual(params["raw_text"], "Si. Están mojados")
 
+    def test_wet_leaf_answer_is_persisted_without_an_llm_round_trip(self):
+        with mock.patch.object(MODULE, "_run_skill", side_effect=[
+            {"stdout": {"proposal": {"id": 25, "kind": "investigation:leaf_wetness_proxy"}}},
+            {
+                "status": "success", "mode": "proposal_context", "proposal_id": 25,
+                "investigation": {
+                    "topic": "leaf_wetness_proxy",
+                    "options": ["same_day_canopy_check", "leaf_wetness_sensor"],
+                },
+            },
+            {
+                "status": "success", "mode": "record_decision", "proposal_id": 25,
+                "field_evidence": {"wet": True},
+                "autonomous_follow_up": {"verdict": "resolved_local"},
+            },
+        ]) as run_skill:
+            result = MODULE._proactive_preflight("Si. Están mojados")
+
+        self.assertEqual(result["route"], "record_investigation_observation")
+        self.assertEqual(run_skill.call_count, 3)
+        recorded = run_skill.call_args_list[2].args[1]
+        self.assertEqual(recorded["mode"], "record_decision")
+        self.assertEqual(recorded["proposal_id"], 25)
+        self.assertEqual(recorded["option_id"], "same_day_canopy_check")
+        self.assertTrue(recorded["leaf_wet"])
+        self.assertEqual(recorded["note"], "Si. Están mojados")
+
     def test_a_bare_answer_with_nothing_pending_is_left_alone(self):
         with mock.patch.object(MODULE, "_run_skill", return_value={"stdout": {"proposal": None}}):
             self.assertIsNone(MODULE._proactive_preflight("Si. Están mojados"))

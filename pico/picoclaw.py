@@ -970,15 +970,48 @@ def _looks_like_answer_text(content: str) -> bool:
     return any(phrase in flattened for phrase in _ANSWER_PHRASES)
 
 
+def _leaf_wetness_answer(content: str) -> bool | None:
+    """Interpret a direct answer to the board's wet-leaf question."""
+    lower = _normalize_intent_text(content)
+    flattened = " ".join(re.sub(r"[^a-z0-9]+", " ", lower).split())
+    words = set(flattened.split())
+    dry = {
+        "dry", "sec", "secs", "seca", "seques", "seco", "secos", "secas",
+    }
+    wet = {
+        "wet", "mullat", "mullats", "mullada", "mullades",
+        "mojado", "mojados", "mojada", "mojadas", "humides", "humedas",
+    }
+    if words & dry:
+        return False
+    if re.search(
+        r"\b(no|not)\b.{0,24}\b(wet|mullat|mullats|mullada|mullades|mojado|mojados|mojada|mojadas)\b",
+        flattened,
+    ):
+        return False
+    if words & wet:
+        return True
+    if flattened in {"si", "yes", "correcte", "correcto", "correct"}:
+        return True
+    if flattened in {"no", "nope"}:
+        return False
+    return None
+
+
+def _skill_payload(result: dict | None) -> dict:
+    if not isinstance(result, dict):
+        return {}
+    stdout = result.get("stdout")
+    return stdout if isinstance(stdout, dict) else result
+
+
 def _pending_proposal_awaiting_answer() -> dict | None:
     """The proposal the board most recently put to the farmer, if any."""
     result = _run_skill("proactive-field-agent", {
         "repo_path": str(GOIDANICH_REPO_PATH),
         "mode": "next_proposal",
     })
-    payload = result.get("stdout") if isinstance(result, dict) else None
-    if not isinstance(payload, dict):
-        return None
+    payload = _skill_payload(result)
     proposal = payload.get("proposal")
     return proposal if isinstance(proposal, dict) and proposal.get("id") else None
 
@@ -1033,7 +1066,29 @@ def _proactive_preflight(question: str) -> dict | None:
             args=json.dumps(params, ensure_ascii=False),
         )
         calls.append(tool_call)
-        results.append(_run_skill("proactive-field-agent", params))
+        result = _run_skill("proactive-field-agent", params)
+        results.append(result)
+        return _skill_payload(result)
+
+    def record_wetness_if_answered(context):
+        investigation = context.get("investigation") or {}
+        if investigation.get("topic") != "leaf_wetness_proxy":
+            return False
+        options = set(investigation.get("options") or [])
+        wet = _leaf_wetness_answer(question)
+        if wet is None or "same_day_canopy_check" not in options:
+            return False
+        call({
+            **base,
+            "mode": "record_decision",
+            "proposal_id": context.get("proposal_id"),
+            "decision": "accepted",
+            "option_id": "same_day_canopy_check",
+            "leaf_wet": wet,
+            "note": question,
+            "source": "farmer",
+        })
+        return True
 
     base = {"repo_path": str(GOIDANICH_REPO_PATH), "notify": False}
     if decision:
@@ -1041,8 +1096,11 @@ def _proactive_preflight(question: str) -> dict | None:
             call({**base, "mode": "record_decision", **decision})
             route = "record_decision"
         else:
-            call({**base, "mode": "proposal_context", "raw_text": question})
-            route = "proposal_context"
+            context = call({**base, "mode": "proposal_context", "raw_text": question})
+            route = (
+                "record_investigation_observation"
+                if record_wetness_if_answered(context) else "proposal_context"
+            )
     elif _general_field_operation_intent_text(question):
         call({**base, "mode": "draft_operation", "raw_text": question, "confirmed": False})
         route = "draft_operation"
@@ -1053,13 +1111,19 @@ def _proactive_preflight(question: str) -> dict | None:
         call({**base, "mode": "tick"})
         call({**base, "mode": "status"})
         route = "status"
-    elif _looks_like_answer_text(question) and _pending_proposal_awaiting_answer():
+    elif _looks_like_answer_text(question) and (pending := _pending_proposal_awaiting_answer()):
         # The board asked something and this reads as the answer, even without a
         # PF reference. proposal_context never writes: it resolves the pending
         # subject or returns one clarification question, which is a far better
         # outcome than letting a model invent a tool call and exhaust its budget.
-        call({**base, "mode": "proposal_context", "raw_text": question})
-        route = "proposal_context"
+        context = call({
+            **base, "mode": "proposal_context", "proposal_id": pending.get("id"),
+            "raw_text": question,
+        })
+        route = (
+            "record_investigation_observation"
+            if record_wetness_if_answered(context) else "proposal_context"
+        )
     else:
         return None
     return {"route": route, "tool_calls": calls, "results": results}
@@ -1374,7 +1438,12 @@ class PicoclawAgent:
                 "state whether it was recorded and never claim an automatic field action. "
                 "For proposal_context, obey next_route: use farmer-feedback-capture for a "
                 "disease/treatment outcome or draft_operation for a general-operation outcome; "
-                "nothing is written before the farmer confirms the resulting draft.\n"
+                "nothing is written before the farmer confirms the resulting draft. For "
+                "record_investigation_observation, the farmer's wet/dry field evidence has already "
+                "been stored and the local investigation rerun. Send its localized send_text "
+                "exactly when present; otherwise report field_evidence and autonomous_follow_up "
+                "concisely. Do not ask for confirmation again, expose raw sources, suggest buying "
+                "a sensor, or leave another follow-up for tomorrow.\n"
                 "```json\n"
                 f"{evidence}\n"
                 "```"

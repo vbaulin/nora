@@ -338,6 +338,28 @@ def wetness_rows(field_db, field_id, window_days=DEFAULT_WINDOW_DAYS):
     return [dict(row) for row in rows]
 
 
+def farmer_wetness_observations(field_db, field_id, window_start=None):
+    """Direct canopy observations confirmed by the farmer."""
+    columns = set(table_columns(field_db, "leaf_wetness_observations"))
+    if not {"field_id", "observed_at", "wet", "source"}.issubset(columns):
+        return []
+    clauses = ["field_id=?", "source='farmer_confirmed'"]
+    values = [field_id]
+    if window_start:
+        clauses.append("substr(observed_at,1,10)>=?")
+        values.append(window_start)
+    try:
+        rows = field_db.execute(
+            "SELECT observed_at, wet, source, source_ref, note "
+            "FROM leaf_wetness_observations WHERE " + " AND ".join(clauses) +
+            " ORDER BY observed_at",
+            values,
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    return [dict(row) for row in rows]
+
+
 def investigate_leaf_wetness(ctx):
     """Does the unmeasured-wetness assumption change any decision in this field?
 
@@ -393,6 +415,28 @@ def investigate_leaf_wetness(ctx):
     days = len(rows)
     window_start = rows[0]["day"]
     window_end = rows[-1]["day"]
+    direct_observations = farmer_wetness_observations(
+        ctx.get("field_db"), field_id, window_start,
+    )
+    rows_by_day = {str(row.get("day")): row for row in rows}
+    observation_comparisons = []
+    for observation in direct_observations:
+        day = str(observation.get("observed_at") or "")[:10]
+        model_row = rows_by_day.get(day) or {}
+        observation_comparisons.append({
+            "observed_at": observation.get("observed_at"),
+            "wet": bool(observation.get("wet")),
+            "model_row_available": bool(model_row),
+            "infection_index": round(as_float(model_row.get("infection_index")), 1),
+            "potential_infection_index": round(
+                as_float(model_row.get("potential_infection_index")), 1,
+            ),
+            "near_saturation_hours": as_int(model_row.get("near_saturation_hours")),
+            "max_humidity": (
+                round(as_float(model_row.get("max_humi")), 1)
+                if model_row.get("max_humi") is not None else None
+            ),
+        })
     measured_days = sum(1 for row in rows if as_int(row.get("measured_wet_hours")) > 0)
     near_saturation_hours = sum(as_int(row.get("near_saturation_hours")) for row in rows)
     rh95_hours = sum(as_int(row.get("humidity_wet_hours")) for row in rows)
@@ -439,6 +483,14 @@ def investigate_leaf_wetness(ctx):
         "hours_rh_between_90_and_95": near_saturation_hours,
         "rain_wet_hours": rain_wet_hours,
         "station_never_reaches_wetness_threshold": systematic,
+        "farmer_wetness_observations": len(direct_observations),
+        "farmer_wet_confirmations": sum(
+            1 for item in direct_observations if bool(item.get("wet"))
+        ),
+        "farmer_dry_confirmations": sum(
+            1 for item in direct_observations if not bool(item.get("wet"))
+        ),
+        "farmer_observation_comparisons": observation_comparisons[-10:],
     }
     method = (
         f"Compared the confirmed VitiMeteo infection index against the upper-bound index "
@@ -453,6 +505,20 @@ def investigate_leaf_wetness(ctx):
         "sample_size": days,
         "findings": findings,
     })
+
+    if direct_observations:
+        latest_direct = observation_comparisons[-1]
+        return dict(common, **{
+            "verdict": VERDICT_RESOLVED_LOCAL,
+            "confidence": min(1.0, round(0.65 + 0.1 * len(direct_observations), 2)),
+            "headline": {
+                "farmer_confirmed": True,
+                "wet": latest_direct["wet"],
+                "observed_at": latest_direct["observed_at"],
+            },
+            "options": [],
+            "internal_actions": [],
+        })
 
     if measured_days:
         return dict(common, **{
@@ -1044,10 +1110,19 @@ TEXTS = {
             "{name}: aquest camp ja té hores d'humectació mesurades ({measured} dies), "
             "de manera que el model utilitza la mesura i no el proxy d'humitat. Tanco la qüestió."
         ),
+        "wetness_farmer_title": "Humectació confirmada a {name}",
+        "wetness_farmer": (
+            "{name}: he incorporat la vostra observació directa del {observed}: fulles {state}. "
+            "Per a aquest episodi, la confirmació de camp té més pes que el proxy de l'estació. "
+            "He repetit la comparació local: índex principal {primary} graus-hora, límit de "
+            "sensibilitat {potential} i humitat màxima {humidity}. Tanco aquesta pregunta i "
+            "no us demanaré que reviseu bibliografia. Una observació confirma l'estat d'aquest "
+            "episodi; no fixa per si sola un llindar permanent ni ordena cap tractament."
+        ),
         "wetness_systematic": (
             "A més, en {days} dies l'estació no ha registrat ni una hora amb humitat ≥95% tot i "
             "{near_hours} hores entre 90% i 95%: això apunta al llindar del model en aquesta estació, "
-            "no a un fet puntual, i ja he obert una consulta de fonts sobre aquest llindar. "
+            "no a un fet puntual; revisaré aquest llindar internament amb les observacions del camp. "
         ),
         "peer_material_title": "Senyal de taulers veïns a prop de {name}",
         "peer_material": (
@@ -1101,10 +1176,19 @@ TEXTS = {
             "{name}: este campo ya tiene horas de humectación medidas ({measured} días), "
             "así que el modelo usa la medida y no el proxy de humedad. Cierro la cuestión."
         ),
+        "wetness_farmer_title": "Humectación confirmada en {name}",
+        "wetness_farmer": (
+            "{name}: he incorporado su observación directa del {observed}: hojas {state}. "
+            "Para este episodio, la confirmación de campo pesa más que el proxy de la estación. "
+            "He repetido la comparación local: índice principal {primary} grados-hora, límite "
+            "de sensibilidad {potential} y humedad máxima {humidity}. Cierro esta pregunta y "
+            "no le pediré que revise bibliografía. Una observación confirma este episodio; no fija "
+            "por sí sola un umbral permanente ni ordena ningún tratamiento."
+        ),
         "wetness_systematic": (
             "Además, en {days} días la estación no ha registrado ni una hora con humedad ≥95% pese a "
             "{near_hours} horas entre 90% y 95%: eso apunta al umbral del modelo en esta estación, "
-            "no a un hecho puntual, y ya he abierto una consulta de fuentes sobre ese umbral. "
+            "no a un hecho puntual; revisaré ese umbral internamente con las observaciones de campo. "
         ),
         "peer_material_title": "Señal de tableros vecinos cerca de {name}",
         "peer_material": (
@@ -1158,10 +1242,19 @@ TEXTS = {
             "{name}: this field already records measured wetness hours ({measured} days), so the model uses "
             "the measurement rather than the humidity proxy. I am closing the question."
         ),
+        "wetness_farmer_title": "Confirmed canopy wetness at {name}",
+        "wetness_farmer": (
+            "{name}: I incorporated your direct observation from {observed}: leaves were {state}. "
+            "For this event, field confirmation carries more weight than the station proxy. I reran "
+            "the local comparison: primary index {primary} degree-hours, sensitivity bound "
+            "{potential}, and maximum humidity {humidity}. I am closing this question and will "
+            "not ask you to review papers. One observation confirms this event; it does not by itself "
+            "set a permanent threshold or order a treatment."
+        ),
         "wetness_systematic": (
             "In addition, across {days} days the station never recorded a single hour at or above 95% humidity "
             "despite {near_hours} hours between 90% and 95%: that points at the model threshold for this "
-            "station rather than an isolated event, and I have opened a source query about that threshold. "
+            "station rather than an isolated event; I will review that threshold internally against field observations. "
         ),
         "peer_material_title": "Neighbouring board signal near {name}",
         "peer_material": (
@@ -1513,7 +1606,43 @@ def render_report(language, field_name, record):
     options = record.get("options") or []
     body = None
     title = None
-    if topic == TOPIC_WETNESS and verdict == VERDICT_RESOLVED_LOCAL:
+    if (
+        topic == TOPIC_WETNESS
+        and verdict == VERDICT_RESOLVED_LOCAL
+        and findings.get("farmer_wetness_observations")
+    ):
+        comparison = (findings.get("farmer_observation_comparisons") or [{}])[-1]
+        wet = bool(comparison.get("wet"))
+        state = {
+            "ca": "mullades" if wet else "seques",
+            "es": "mojadas" if wet else "secas",
+            "en": "wet" if wet else "dry",
+        }[key]
+        unavailable = {"ca": "no disponible", "es": "no disponible", "en": "unavailable"}[key]
+        humidity = (
+            f"{as_float(comparison.get('max_humidity')):.1f}%"
+            if comparison.get("max_humidity") is not None else
+            unavailable
+        )
+        model_row_available = bool(comparison.get("model_row_available"))
+        primary = (
+            f"{as_float(comparison.get('infection_index')):.1f}"
+            if model_row_available else unavailable
+        )
+        potential = (
+            f"{as_float(comparison.get('potential_infection_index')):.1f}"
+            if model_row_available else unavailable
+        )
+        title = texts["wetness_farmer_title"].format(name=field_name)
+        body = texts["wetness_farmer"].format(
+            name=field_name,
+            observed=str(comparison.get("observed_at") or "")[:16],
+            state=state,
+            primary=primary,
+            potential=potential,
+            humidity=humidity,
+        )
+    elif topic == TOPIC_WETNESS and verdict == VERDICT_RESOLVED_LOCAL:
         title = texts["wetness_measured_title"].format(name=field_name)
         body = texts["wetness_measured"].format(
             name=field_name, measured=findings.get("measured_wetness_days", 0),

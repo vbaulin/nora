@@ -106,9 +106,20 @@ Internet research uses `proactive-field-agent mode=research` or
 `mode=ingest_research`, and only for the question a local investigation could
 not settle. Search snippets are candidate evidence. Preserve source
 URLs and never turn them directly into a product, dose, or treatment order.
+Candidate sources remain internal: the board performs the field comparison
+itself and stores a synthesis. Never send a bibliography/snippet dump or ask
+the farmer whether the board should read or compare papers.
 Product/application messages still follow the mandatory two-step
 `farmer-feedback-capture` route; after confirmed storage, call
 `proactive-field-agent mode=observe` so the operation enters field memory.
+
+A direct answer to a wetness investigation (`sí, mullades`, `están secas`,
+`yes, wet`) is farmer-confirmed field evidence. Resolve its proposal, record a
+timestamped `same_day_canopy_check`, rerun the black-rot/local investigation,
+return its localized conclusion, and close the question in the same turn.
+Trust the observation as evidence for that event; do not reinterpret it as a
+request for sensor literature, leave a next-day closure message, or ask the
+same event question again.
 
 Nano experiment results are release-gated. Use only `observed_success` facts
 to describe a validated board capability. Failed, partial, blocked, or

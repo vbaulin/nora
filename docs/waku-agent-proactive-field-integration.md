@@ -155,8 +155,9 @@ Field-related nano-os-agent experiments use the same discipline as Waku's
 release gate. A passing run becomes an `observed_success` fact scoped to that
 single experiment. A failed or partial run creates an internal
 `experiment_investigation`; the raw measurement is withheld, and the morning
-research cycle searches for official or vendor troubleshooting evidence. Only
-a source-attributed `research_review` can then reach Telegram.
+research cycle searches for official or vendor troubleshooting evidence. The
+result remains an internal source-attributed synthesis; the board performs the
+comparison and does not send the farmer a paper-review task.
 
 Product, dose and treatment capture remains separate. Natural-language farmer
 input first passes through `farmer-feedback-capture confirmed=false`, is shown
@@ -170,10 +171,11 @@ field-check proposal is active. If several fields or disease models are
 possible, the board asks one localized clarification question. It never
 defaults an ambiguous observation to downy mildew.
 
-Source-attributed research reviews have priority 70, equal to the default
-proactive notification threshold. Thus a bounded search can produce a cautious
-farmer-facing candidate solution; snippets remain review material and cannot
-select a product, dose, treatment, or hardware action automatically.
+Source-attributed research remains internal evidence. A bounded search stores
+its URLs and synthesis, then the board compares them with local observations;
+it does not create a farmer-facing bibliography or ask permission to continue
+the analysis. Snippets cannot select a product, dose, treatment, threshold, or
+hardware action.
 
 For grapevine black rot, a weather-model threshold is communicated even when
 local inoculum remains `unknown`. The message preserves the infection index in

@@ -746,6 +746,208 @@ def upsert_fact(connection, field_id, subject, predicate, value, source_type, so
     connection.commit()
 
 
+def leaf_wetness_reply(value):
+    """Interpret an explicit wet/dry field answer in the board languages."""
+    text = normalized_lookup(value)
+    if not text:
+        return None
+    wet_words = {
+        "wet", "mullat", "mullats", "mullada", "mullades",
+        "mojado", "mojados", "mojada", "mojadas", "humides", "humedas",
+    }
+    dry_words = {
+        "dry", "sec", "secs", "seca", "seques", "seco", "secos", "secas",
+    }
+    words = set(text.split())
+    if words & dry_words:
+        return False
+    if re.search(r"\b(no|not)\b.{0,24}\b(wet|mullat|mullats|mullada|mullades|mojado|mojados|mojada|mojadas)\b", text):
+        return False
+    if words & wet_words:
+        return True
+    if text in {"si", "yes", "correcte", "correcto", "correct"}:
+        return True
+    if text in {"no", "nope"}:
+        return False
+    return None
+
+
+def ensure_leaf_wetness_observations(connection):
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS leaf_wetness_observations (
+            field_id TEXT NOT NULL,
+            observed_at TEXT NOT NULL,
+            wet INTEGER NOT NULL CHECK (wet IN (0, 1)),
+            source TEXT NOT NULL,
+            source_ref TEXT NOT NULL,
+            note TEXT,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (field_id, observed_at, source_ref)
+        )
+        """
+    )
+
+
+def record_leaf_wetness_observation(connection, proposal, wet, note, params):
+    """Persist direct farmer evidence locally and in the model database."""
+    field_id = str(proposal.get("field_id") or "")
+    observed_at = str(params.get("observed_at") or dt.datetime.now().astimezone().isoformat())
+    source_ref = f"proposal:{proposal['id']}:leaf_wetness:{observed_at[:13]}"
+    value = {
+        "wet": bool(wet),
+        "observed_at": observed_at,
+        "note": note,
+        "proposal_id": proposal["id"],
+        "causal_claim": False,
+    }
+    upsert_fact(
+        connection, field_id, "canopy", "leaf_wetness_observation", value,
+        "farmer_confirmed", source_ref, confidence=1.0, status="confirmed",
+    )
+
+    repo_path = str(params.get("repo_path") or DEFAULT_REPO)
+    database = os.path.join(repo_path, "goidanich.db")
+    written_to_model_db = False
+    if os.path.exists(database):
+        with sqlite3.connect(database, timeout=15) as field_db:
+            ensure_leaf_wetness_observations(field_db)
+            field_db.execute(
+                """
+                INSERT INTO leaf_wetness_observations(
+                    field_id, observed_at, wet, source, source_ref, note, created_at
+                ) VALUES(?,?,?,?,?,?,?)
+                ON CONFLICT(field_id, observed_at, source_ref) DO UPDATE SET
+                    wet=excluded.wet, note=excluded.note
+                """,
+                (
+                    field_id, observed_at, int(bool(wet)), "farmer_confirmed",
+                    source_ref, note, iso_now(),
+                ),
+            )
+            field_db.commit()
+        written_to_model_db = True
+    return {
+        **value,
+        "field_id": field_id,
+        "source_ref": source_ref,
+        "model_database": database,
+        "written_to_model_database": written_to_model_db,
+    }
+
+
+def close_wetness_research(connection, field_id):
+    """Retire source-review prompts superseded by direct field evidence."""
+    rows = connection.execute(
+        """
+        SELECT id FROM research_requests
+        WHERE field_id=? AND (
+            reason LIKE 'The station never reached%'
+            OR reason LIKE 'Repeated canopy-wetness uncertainty%'
+            OR query LIKE '%leaf wetness%'
+        )
+        """,
+        (field_id,),
+    ).fetchall()
+    request_ids = {int(row["id"]) for row in rows}
+    if request_ids:
+        now = iso_now()
+        placeholders = ",".join("?" for _ in request_ids)
+        connection.execute(
+            f"UPDATE research_requests SET status='resolved_by_field_evidence', updated_at=? "
+            f"WHERE id IN ({placeholders})",
+            [now] + sorted(request_ids),
+        )
+        proposals = connection.execute(
+            "SELECT * FROM proposals WHERE field_id=? AND kind='research_review' "
+            "AND status IN ('pending','notified','deferred')",
+            (field_id,),
+        ).fetchall()
+        for row in proposals:
+            proposal = proposal_dict(row)
+            linked = {
+                int(item["request_id"])
+                for item in proposal.get("evidence") or []
+                if isinstance(item, dict) and item.get("request_id")
+            }
+            if linked & request_ids:
+                connection.execute(
+                    "UPDATE proposals SET status='completed', updated_at=? WHERE id=?",
+                    (now, proposal["id"]),
+                )
+        connection.commit()
+    return sorted(request_ids)
+
+
+def backfill_leaf_wetness_decisions(connection, repo_path):
+    """Recover explicit wet/dry replies recorded before evidence persistence."""
+    rows = connection.execute(
+        """
+        SELECT d.*, p.id AS linked_proposal_id
+        FROM decisions d JOIN proposals p ON p.id=d.proposal_id
+        WHERE p.kind='investigation:leaf_wetness_proxy'
+          AND d.decision='accepted' AND length(trim(COALESCE(d.note,'')))>0
+        ORDER BY d.created_at
+        """
+    ).fetchall()
+    recovered = []
+    for row in rows:
+        wet = leaf_wetness_reply(row["note"])
+        if wet is None:
+            continue
+        proposal = proposal_by_id(connection, int(row["linked_proposal_id"]))
+        if not proposal:
+            continue
+        prefix = f"proposal:{proposal['id']}:leaf_wetness:"
+        exists = connection.execute(
+            "SELECT 1 FROM facts WHERE field_id=? AND predicate='leaf_wetness_observation' "
+            "AND source_ref LIKE ? LIMIT 1",
+            (proposal.get("field_id"), prefix + "%"),
+        ).fetchone()
+        if exists:
+            continue
+        evidence = record_leaf_wetness_observation(
+            connection, proposal, wet, str(row["note"]),
+            {
+                "repo_path": repo_path,
+                "observed_at": row["created_at"],
+            },
+        )
+        close_wetness_research(connection, proposal.get("field_id"))
+        refresh_black_rot_from_observation(
+            repo_path, proposal.get("field_id"), evidence["observed_at"],
+        )
+        recovered.append(evidence)
+    return recovered
+
+
+def refresh_black_rot_from_observation(repo_path, field_id, observed_at):
+    script = os.path.join(repo_path, "black_rot.py")
+    if not os.path.exists(script):
+        return {"ok": False, "reason": "black_rot.py is unavailable"}
+    command = [
+        sys.executable, script, "--db", os.path.join(repo_path, "goidanich.db"),
+        "--field", field_id, "--end", str(observed_at)[:10],
+    ]
+    try:
+        proc = subprocess.run(
+            command, cwd=repo_path, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            timeout=180, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"ok": False, "reason": str(exc), "command": command}
+    try:
+        payload = json.loads(proc.stdout.decode("utf-8", "replace") or "{}")
+    except ValueError:
+        payload = {}
+    return {
+        "ok": proc.returncode == 0 and bool(payload.get("ok")),
+        "returncode": proc.returncode,
+        "result": payload,
+        "stderr": proc.stderr.decode("utf-8", "replace")[-1000:],
+    }
+
+
 def profile_facts(connection, profiles):
     for profile in profiles:
         source = "agent_config.yaml"
@@ -910,12 +1112,6 @@ def phrase(language, key, **values):
             "profile": "Per personalitzar les comparacions de {name}, confirmeu {missing}. No modificaré el perfil fins que ho confirmeu.",
             "model_title": "Cal una observació de camp per a {name}",
             "model": "El model après de {name} encara no té prou evidència local. Quan inspeccioneu, confirmeu si el dosser és net o si hi ha símptomes; aquesta dada alimentarà el model després de la vostra confirmació.",
-            "research_title": "Fonts trobades per revisar: {name}",
-            "research": "He trobat fonts candidates sobre {query}. Són referències per revisar, no una ordre de tractament. {sources} Voleu que en prepari una comparació amb les condicions del camp?",
-            "research_nano_topic": "la validació d'un experiment de camp o sensor que no ha superat totes les comprovacions",
-            "research_wetness_topic": "la mesura directa de la humectació foliar per reduir la incertesa del model",
-            "research_wetness_threshold_topic": "el llindar d'humitat que el model fa servir com a proxy d'humectació foliar",
-            "source_excerpt": "extracte original de la font: {snippet}",
             "operation_title": "Comprovació després d'una operació a {name}",
             "operation_follow_up": "{name}: consta {operation} el {day}, però encara no hi ha cap resultat posterior confirmat. Per aprendre què funciona en aquest camp sense confondre seqüència amb causa, indiqueu què heu observat i la data de l'observació.",
             "question": "Responeu amb el resultat: cap símptoma, símptomes compatibles, fals avís, o l'última aplicació (producte, dosi per ha, data i objectiu).",
@@ -927,12 +1123,6 @@ def phrase(language, key, **values):
             "profile": "Para personalizar las comparaciones de {name}, confirme {missing}. No modificaré el perfil hasta que lo confirme.",
             "model_title": "Hace falta una observación de campo para {name}",
             "model": "El modelo aprendido de {name} aún no tiene suficiente evidencia local. Tras la inspección, confirme si el dosel está limpio o si hay síntomas; el dato alimentará el modelo solo después de su confirmación.",
-            "research_title": "Fuentes encontradas para revisar: {name}",
-            "research": "He encontrado fuentes candidatas sobre {query}. Son referencias para revisar, no una orden de tratamiento. {sources} ¿Quiere una comparación con las condiciones del campo?",
-            "research_nano_topic": "la validación de un experimento de campo o sensor que no superó todas las comprobaciones",
-            "research_wetness_topic": "la medición directa de la humedad foliar para reducir la incertidumbre del modelo",
-            "research_wetness_threshold_topic": "el umbral de humedad que el modelo usa como proxy de humectación foliar",
-            "source_excerpt": "extracto original de la fuente: {snippet}",
             "operation_title": "Comprobación después de una operación en {name}",
             "operation_follow_up": "{name}: consta {operation} el {day}, pero aún no hay un resultado posterior confirmado. Para aprender qué funciona en este campo sin confundir secuencia con causa, indique qué observó y la fecha de la observación.",
             "question": "Responda con el resultado: sin síntomas, síntomas compatibles, falsa alarma, o la última aplicación (producto, dosis por ha, fecha y objetivo).",
@@ -944,12 +1134,6 @@ def phrase(language, key, **values):
             "profile": "To personalize comparisons for {name}, confirm {missing}. I will not change the profile until you confirm it.",
             "model_title": "A field observation is needed for {name}",
             "model": "The learned model for {name} still lacks local evidence. After scouting, confirm whether the canopy is clean or symptoms are present; the observation will train the model only after confirmation.",
-            "research_title": "Sources found for review: {name}",
-            "research": "I found candidate sources about {query}. They are references for review, not a treatment order. {sources} Should I compare them with field conditions?",
-            "research_nano_topic": "validation of a field or sensor experiment that did not pass every declared check",
-            "research_wetness_topic": "direct leaf-wetness measurement to reduce model uncertainty",
-            "research_wetness_threshold_topic": "the humidity threshold the model uses as a leaf-wetness proxy",
-            "source_excerpt": "original source excerpt: {snippet}",
             "operation_title": "Post-operation check for {name}",
             "operation_follow_up": "{name}: {operation} was recorded on {day}, but no later outcome has been confirmed. To learn what works in this field without confusing sequence with causation, report what you observed and the observation date.",
             "question": "Reply with the result: no symptoms, compatible symptoms, false alarm, or the latest application (product, dose per ha, date and target).",
@@ -1945,49 +2129,75 @@ def store_research(connection, request_row, sources):
     return inserted
 
 
-def localized_research_topic(language, request_row):
-    reason = str(request_row.get("reason") or "")
-    if reason.startswith("A field-related nano-os-agent experiment"):
-        return phrase(language, "research_nano_topic")
-    if reason.startswith("The station never reached"):
-        return phrase(language, "research_wetness_threshold_topic")
-    if reason.startswith("Repeated canopy-wetness uncertainty"):
-        return phrase(language, "research_wetness_topic")
-    return str(request_row.get("query") or "the requested field question")
+def store_research_synthesis(connection, request_row, sources):
+    """Keep public sources as internal evidence and compare them locally.
 
-
-def create_research_proposal(connection, request_row, sources):
+    A bibliography is not a farmer task. Candidate sources can support a board
+    method review, but they never become an unsolicited request to read papers,
+    buy hardware, or authorize analysis the board can perform itself.
+    """
     profile = connection.execute(
         "SELECT * FROM field_profiles WHERE field_id=?", (request_row.get("field_id"),)
     ).fetchone()
     if not profile or not sources:
         return None
     profile = dict(profile)
-    language = profile.get("language") or "en"
-    source_parts = []
-    for index, item in enumerate(sources[:3]):
-        snippet = strip_tags(str(item.get("snippet") or ""))[:240].strip()
-        excerpt = f" — {phrase(language, 'source_excerpt', snippet=snippet)}" if snippet else ""
-        source_parts.append(
-            f"[{index + 1}] {item['title']}{excerpt} ({item['url']})"
-        )
-    source_text = " ".join(source_parts)
-    candidate = {
-        "field_id": profile["field_id"], "kind": "research_review", "target": "farmer",
-        "priority": 70, "title": phrase(language, "research_title", name=profile["name"]),
-        "message": phrase(
-            language,
-            "research",
-            name=profile["name"],
-            query=localized_research_topic(language, request_row),
-            sources=source_text,
+    wetness_facts = connection.execute(
+        """
+        SELECT value_json, source_ref, updated_at FROM facts
+        WHERE field_id=? AND predicate='leaf_wetness_observation'
+          AND source_type='farmer_confirmed' AND status='confirmed'
+        ORDER BY updated_at DESC
+        """,
+        (profile["field_id"],),
+    ).fetchall()
+    direct_observations = []
+    for row in wetness_facts:
+        try:
+            value = json.loads(row["value_json"])
+        except (TypeError, ValueError):
+            continue
+        direct_observations.append({
+            "wet": bool(value.get("wet")),
+            "observed_at": value.get("observed_at"),
+            "source_ref": row["source_ref"],
+        })
+    is_wetness = (
+        "leaf wetness" in str(request_row.get("query") or "").lower()
+        or "wetness" in str(request_row.get("reason") or "").lower()
+    )
+    synthesis = {
+        "request_id": request_row["id"],
+        "field_id": profile["field_id"],
+        "query": request_row.get("query"),
+        "source_count": len(sources),
+        "sources": [
+            {
+                "title": item.get("title"),
+                "url": item.get("url"),
+                "provider": item.get("provider"),
+            }
+            for item in sources
+        ],
+        "direct_field_observations": direct_observations if is_wetness else [],
+        "conclusion": (
+            "Direct farmer-confirmed canopy wetness is available and takes precedence over "
+            "candidate sensor literature for this event. The board will compare the observation "
+            "with its weather and disease series; no farmer literature review is required."
+            if is_wetness and direct_observations else
+            "Candidate sources were retained for internal method comparison. They do not by "
+            "themselves validate a field claim or change an operational threshold."
         ),
-        "rationale": "Web search produced source-attributed candidate evidence; expert/farmer review is required before operational use.",
-        "evidence": [{"request_id": request_row["id"], "url": item["url"], "provider": item["provider"]} for item in sources],
-        "confidence": 0.5, "requires_confirmation": True, "cooldown_days": 30,
+        "operational_change": False,
+        "farmer_action_required": False,
+        "causal_claim": False,
     }
-    proposal = create_proposal(connection, candidate)
-    if proposal and str(request_row.get("reason") or "").startswith(
+    upsert_fact(
+        connection, profile["field_id"], "research", "external_source_synthesis",
+        synthesis, "public_sources", f"research_request:{request_row['id']}",
+        confidence=0.5, status="candidate_evidence",
+    )
+    if str(request_row.get("reason") or "").startswith(
         "A field-related nano-os-agent experiment"
     ):
         now = iso_now()
@@ -2000,7 +2210,21 @@ def create_research_proposal(connection, request_row, sources):
             (now, profile["field_id"]),
         )
         connection.commit()
-    return proposal
+    return synthesis
+
+
+def retire_legacy_research_review_proposals(connection):
+    """Close source-dump prompts created by older autonomous cycles."""
+    now = iso_now()
+    cursor = connection.execute(
+        """
+        UPDATE proposals SET status='completed', updated_at=?
+        WHERE kind='research_review' AND status IN ('pending','notified','deferred')
+        """,
+        (now,),
+    )
+    connection.commit()
+    return int(cursor.rowcount or 0)
 
 
 def proposal_alert_diseases(proposal):
@@ -2339,8 +2563,10 @@ def mode_observe(connection, params, create=False):
         profiles = [profile for profile in profiles if profile["field_id"] == selected_field]
     if not profiles:
         return {"status": "error", "error": "no configured fields found", "repo_path": repo_path}
+    retired_source_reviews = retire_legacy_research_review_proposals(connection)
     changed_profiles = save_profiles(connection, profiles)
     profile_facts(connection, profiles)
+    recovered_farmer_evidence = backfill_leaf_wetness_decisions(connection, repo_path)
     observations = discover_states(repo_path, profiles, selected_field)
     nano_observations = discover_nano_experiments(
         params.get("nano_root") or "/root/nano-os-agent", profiles, selected_field,
@@ -2363,6 +2589,8 @@ def mode_observe(connection, params, create=False):
         "status": "success", "mode": "tick" if create else "observe",
         "repo_path": repo_path, "fields": [profile["field_id"] for profile in profiles],
         "profiles_changed": changed_profiles,
+        "retired_source_review_proposals": retired_source_reviews,
+        "recovered_farmer_evidence": recovered_farmer_evidence,
         "observations": {
             "seen": len(observations), "inserted": inserted_observations,
             "disease_states": len(observations) - len(nano_observations),
@@ -2449,12 +2677,15 @@ def mode_research(connection, params):
         request["query"], int(params.get("limit") or 5), credentials,
     )
     inserted = store_research(connection, request, sources)
-    proposal = create_research_proposal(connection, request, sources)
+    synthesis = store_research_synthesis(connection, request, sources)
     return {
         "status": "success" if sources else "error", "mode": "research",
         "request": request, "sources": sources, "inserted": inserted,
-        "proposal": proposal, "errors": errors,
-        "safety": "Candidate sources require review; no treatment action was created.",
+        "proposal": None, "synthesis": synthesis, "errors": errors,
+        "safety": (
+            "Candidate sources were stored for autonomous method comparison. No farmer "
+            "review request, treatment action, threshold change, or hardware action was created."
+        ),
     }
 
 
@@ -2473,8 +2704,11 @@ def mode_ingest_research(connection, params):
     if not sources:
         return {"status": "error", "error": "no valid public source URLs supplied"}
     inserted = store_research(connection, request, sources)
-    proposal = create_research_proposal(connection, request, sources)
-    return {"status": "success", "request_id": request["id"], "inserted": inserted, "sources": sources, "proposal": proposal}
+    synthesis = store_research_synthesis(connection, request, sources)
+    return {
+        "status": "success", "request_id": request["id"], "inserted": inserted,
+        "sources": sources, "proposal": None, "synthesis": synthesis,
+    }
 
 
 def mode_decision(connection, params):
@@ -2486,6 +2720,35 @@ def mode_decision(connection, params):
     if not proposal:
         return {"status": "error", "error": "no matching pending proposal"}
     note = str(params.get("note") or "").strip()
+    option_id = str(params.get("option_id") or "").strip()
+    wetness_reply = None
+    wetness_observation_route = (
+        decision == "accepted"
+        and proposal_analysis(proposal) == investigations.TOPIC_WETNESS
+        and option_id == "same_day_canopy_check"
+    )
+    if wetness_observation_route:
+        explicit_wetness = params.get("leaf_wet")
+        wetness_reply = (
+            bool(explicit_wetness)
+            if isinstance(explicit_wetness, bool)
+            else leaf_wetness_reply(note)
+        )
+        if wetness_reply is None:
+            return {
+                "status": "confirmation_required",
+                "mode": "record_decision",
+                "proposal_id": proposal["id"],
+                "written": False,
+                "missing": ["leaf_wetness_observation"],
+                "confirmation_question": (
+                    "Confirmeu si les fulles eren mullades o seques."
+                    if str(params.get("language") or "").lower().startswith("ca") else
+                    "Confirme si las hojas estaban mojadas o secas."
+                    if str(params.get("language") or "").lower().startswith("es") else
+                    "Confirm whether the leaves were wet or dry."
+                ),
+            }
     now = iso_now()
     connection.execute(
         "INSERT INTO decisions(proposal_id, decision, note, source, created_at) VALUES(?,?,?,?,?)",
@@ -2515,13 +2778,77 @@ def mode_decision(connection, params):
             proposal["kind"], note, "farmer_confirmed", f"proposal:{proposal['id']}",
             confidence=1.0, status="confirmed",
         )
+    field_evidence = None
+    retired_research_requests = []
+    model_refresh = None
+    autonomous_follow_up = None
+    send_text = None
+    if wetness_observation_route:
+        field_evidence = record_leaf_wetness_observation(
+            connection, proposal, wetness_reply, note, params,
+        )
+        retired_research_requests = close_wetness_research(
+            connection, proposal.get("field_id"),
+        )
+        repo_path = str(params.get("repo_path") or DEFAULT_REPO)
+        model_refresh = refresh_black_rot_from_observation(
+            repo_path, proposal.get("field_id"), field_evidence["observed_at"],
+        )
+        profiles = [
+            profile for profile in field_profiles(repo_path)
+            if profile["field_id"] == proposal.get("field_id")
+        ]
+        if profiles:
+            records = run_field_investigations(connection, profiles[0], repo_path)
+            follow_up_record = next(
+                (
+                    record
+                    for record in records
+                    if record.get("topic") == investigations.TOPIC_WETNESS
+                ),
+                None,
+            )
+            if follow_up_record:
+                autonomous_follow_up = {
+                    "topic": follow_up_record.get("topic"),
+                    "verdict": follow_up_record.get("verdict"),
+                    "method": follow_up_record.get("method"),
+                    "sample_size": follow_up_record.get("sample_size"),
+                    "findings": follow_up_record.get("findings"),
+                    "limitations": follow_up_record.get("limitations"),
+                }
+                rendered = investigations.render_report(
+                    profiles[0].get("language"), profiles[0].get("name"),
+                    follow_up_record,
+                )
+                if rendered:
+                    send_text = f"{rendered['title']}\n{rendered['message']}"
+        # The field answer and its analysis complete this question now. Keeping
+        # the proposal as merely accepted would create a redundant closure
+        # notification during tomorrow's proactive cycle.
+        connection.execute(
+            "UPDATE proposals SET status='completed', updated_at=? WHERE id=?",
+            (iso_now(), proposal["id"]),
+        )
     connection.commit()
     return {
         "status": "success", "proposal_id": proposal["id"], "decision": decision,
+        "option_id": option_id or None,
         "note": note, "executed_action": False,
         "reopens_after": cooldown if decision == "rejected" else None,
         "research_feedback": mirror_decision_to_research(proposal, decision, note, params),
-        "message": "Decision recorded. No treatment or hardware action was executed automatically.",
+        "field_evidence": field_evidence,
+        "retired_research_requests": retired_research_requests,
+        "model_refresh": model_refresh,
+        "autonomous_follow_up": autonomous_follow_up,
+        "send_text": send_text,
+        "must_send_exactly": bool(send_text),
+        "message": (
+            "Farmer-confirmed leaf wetness was stored and the local black-rot investigation was rerun. "
+            "The answered question is closed; no treatment or hardware action was executed."
+            if wetness_observation_route else
+            "Decision recorded. No treatment or hardware action was executed automatically."
+        ),
     }
 
 

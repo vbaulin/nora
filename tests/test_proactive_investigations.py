@@ -397,6 +397,86 @@ class LeafWetnessInvestigationTest(InvestigationTestCase):
             later["investigation"]["options"], context["investigation"]["options"],
         )
 
+    def test_wet_leaf_confirmation_becomes_evidence_and_closes_source_review(self):
+        self.write_series(rh95_hours=0, overrides={
+            self.day(30): self.ambiguous(potential=118.0, primary=44.0),
+            self.day(12): self.ambiguous(potential=96.0, primary=31.0),
+        })
+        connection = self.connection()
+        first = self.tick(connection)
+        proposal = first["proposals"][0]
+        MODULE.mark_proposal_notified(connection, proposal["id"])
+        request = first["research_request"]
+        self.assertIsNotNone(request)
+
+        result = MODULE.mode_decision(connection, {
+            **self.params(),
+            "proposal_id": proposal["id"],
+            "decision": "accepted",
+            "option_id": "same_day_canopy_check",
+            "leaf_wet": True,
+            "note": "Sí. Les fulles són mullades.",
+            "observed_at": f"{self.day(12)}T05:30:00+00:00",
+        })
+
+        self.assertEqual(result["status"], "success")
+        self.assertTrue(result["field_evidence"]["wet"])
+        self.assertTrue(result["field_evidence"]["written_to_model_database"])
+        self.assertEqual(result["autonomous_follow_up"]["verdict"], "resolved_local")
+        self.assertTrue(result["must_send_exactly"])
+        self.assertIn("Humectació confirmada", result["send_text"])
+        self.assertIn("Tanco aquesta pregunta", result["send_text"])
+        findings = result["autonomous_follow_up"]["findings"]
+        self.assertEqual(findings["farmer_wet_confirmations"], 1)
+        self.assertEqual(findings["farmer_observation_comparisons"][0]["max_humidity"], 93.0)
+        self.assertIn(request["id"], result["retired_research_requests"])
+        status = connection.execute(
+            "SELECT status FROM research_requests WHERE id=?", (request["id"],)
+        ).fetchone()[0]
+        self.assertEqual(status, "resolved_by_field_evidence")
+        stored = sqlite3.connect(self.repo / "goidanich.db").execute(
+            "SELECT wet, source FROM leaf_wetness_observations WHERE field_id='field_1'"
+        ).fetchone()
+        self.assertEqual(stored, (1, "farmer_confirmed"))
+
+        self.assertEqual(
+            connection.execute(
+                "SELECT status FROM proposals WHERE id=?", (proposal["id"],)
+            ).fetchone()[0],
+            "completed",
+        )
+        self.assertEqual(self.tick(connection)["proposals"], [])
+
+    def test_tick_recovers_a_pre_fix_farmer_wetness_decision(self):
+        self.write_series(overrides={
+            self.day(12): self.ambiguous(potential=96.0, primary=31.0),
+        })
+        connection = self.connection()
+        proposal = self.tick(connection)["proposals"][0]
+        MODULE.mark_proposal_notified(connection, proposal["id"])
+        connection.execute(
+            "INSERT INTO decisions(proposal_id,decision,note,source,created_at) "
+            "VALUES(?,?,?,?,?)",
+            (
+                proposal["id"], "accepted", "Sí, les fulles són mullades",
+                "farmer", f"{self.day(12)}T05:30:00+00:00",
+            ),
+        )
+        connection.execute(
+            "UPDATE proposals SET status='accepted' WHERE id=?", (proposal["id"],)
+        )
+        connection.commit()
+
+        tick = self.tick(connection)
+        self.assertEqual(len(tick["recovered_farmer_evidence"]), 1)
+        self.assertTrue(tick["recovered_farmer_evidence"][0]["wet"])
+        stored = sqlite3.connect(self.repo / "goidanich.db").execute(
+            "SELECT wet FROM leaf_wetness_observations WHERE field_id='field_1'"
+        ).fetchone()
+        self.assertEqual(stored, (1,))
+        second = self.tick(connection)
+        self.assertEqual(second["recovered_farmer_evidence"], [])
+
 
 class PeerAndCalibrationInvestigationTest(InvestigationTestCase):
     def add_peer_signal(self, days_ago=2, latitude=41.315, longitude=1.705,

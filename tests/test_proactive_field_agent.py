@@ -258,7 +258,7 @@ class ProactiveFieldAgentTest(unittest.TestCase):
         self.assertEqual(explicit["status"], "success")
         self.assertEqual(explicit["disease"], "black_rot")
 
-    def test_external_research_requires_public_attributed_sources(self):
+    def test_external_research_is_internal_evidence_not_farmer_homework(self):
         self.write_complete_states(wetness=True, powdery_risk=20.0, powdery_due=False)
         connection = self.connection()
         MODULE.mode_observe(connection, self.params(), create=True)
@@ -279,19 +279,16 @@ class ProactiveFieldAgentTest(unittest.TestCase):
         })
         self.assertEqual(result["status"], "success")
         self.assertEqual(len(result["sources"]), 1)
-        self.assertEqual(result["proposal"]["kind"], "research_review")
-        self.assertEqual(result["proposal"]["priority"], 70)
-        self.assertIn("no una ordre de tractament", result["proposal"]["message"])
-        outbox = self.root / "research-outbox"
-        with mock.patch.dict(os.environ, {"PICOCLAW_OUTBOX": str(outbox)}):
-            notified = MODULE.notify_proposal(
-                connection, result["proposal"], str(self.state), threshold=70,
-            )
-        self.assertEqual(notified["status"], "success")
-        package = json.loads(next(outbox.glob("*.json")).read_text(encoding="utf-8"))
-        self.assertIn("https://extension.psu.edu/grape-disease", package["message"])
-        self.assertIn("Candidate sensor guidance", package["message"])
-        self.assertEqual(package["media"], [])
+        self.assertIsNone(result["proposal"])
+        self.assertFalse(result["synthesis"]["farmer_action_required"])
+        self.assertFalse(result["synthesis"]["operational_change"])
+        self.assertEqual(result["synthesis"]["source_count"], 1)
+        self.assertEqual(MODULE.next_proposal(connection), None)
+        fact = connection.execute(
+            "SELECT value_json FROM facts WHERE predicate='external_source_synthesis'"
+        ).fetchone()
+        self.assertIsNotNone(fact)
+        self.assertIn("https://extension.psu.edu/grape-disease", fact["value_json"])
 
     def test_search_credentials_are_whitelisted_and_provider_order_is_bounded(self):
         (self.repo / ".env").write_text(
@@ -632,7 +629,7 @@ class ProactiveFieldAgentTest(unittest.TestCase):
         self.assertEqual(fact["status"], "observed_success")
         self.assertFalse(json.loads(fact["value_json"])["causal_claim"])
 
-    def test_failed_nano_experiment_is_quarantined_researched_and_notified_with_sources(self):
+    def test_failed_nano_experiment_is_quarantined_and_researched_internally(self):
         self.write_complete_states(powdery_risk=20.0, powdery_due=False)
         nano_root = self.root / "nano-os-agent"
         nano_root.mkdir()
@@ -672,26 +669,13 @@ class ProactiveFieldAgentTest(unittest.TestCase):
         with mock.patch.object(MODULE, "perform_search", return_value=(sources, [])):
             research = MODULE.mode_research(connection, {})
         self.assertEqual(research["status"], "success")
-        self.assertEqual(research["proposal"]["kind"], "research_review")
+        self.assertIsNone(research["proposal"])
+        self.assertFalse(research["synthesis"]["farmer_action_required"])
         self.assertEqual(
             MODULE.proposal_by_id(connection, internal["id"])["status"],
             "completed",
         )
-
-        outbox = self.root / "nano-research-outbox"
-        with mock.patch.dict(os.environ, {"PICOCLAW_OUTBOX": str(outbox)}):
-            notified = MODULE.notify_proposal(
-                connection, research["proposal"], str(self.state), threshold=70,
-            )
-        self.assertEqual(notified["status"], "success")
-        package = json.loads(next(outbox.glob("*.json")).read_text(encoding="utf-8"))
-        self.assertIn("https://example.org/leaf-wetness-integration", package["message"])
-        self.assertIn("Verify pull-up voltage", package["message"])
-        self.assertIn("la validació d'un experiment de camp o sensor", package["message"])
-        self.assertIn("extracte original de la font", package["message"])
-        self.assertNotIn("troubleshooting official documentation", package["message"])
-        self.assertNotIn("I2C read failed", package["message"])
-        self.assertEqual(package["media"], [])
+        self.assertEqual(MODULE.next_proposal(connection), None)
 
     def test_general_operation_requires_confirmation_then_enters_memory(self):
         connection = self.connection()

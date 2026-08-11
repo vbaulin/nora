@@ -406,6 +406,20 @@ class LeafWetnessInvestigationTest(InvestigationTestCase):
         first = self.tick(connection)
         proposal = first["proposals"][0]
         MODULE.mark_proposal_notified(connection, proposal["id"])
+        legacy = MODULE.create_proposal(connection, {
+            "field_id": "field_1",
+            "kind": "leaf_wetness_research",
+            "target": "farmer",
+            "priority": 72,
+            "title": "legacy wetness question",
+            "message": "legacy wetness question",
+            "rationale": "pre-investigation alias",
+            "evidence": [],
+            "confidence": 0.5,
+            "requires_confirmation": True,
+            "cooldown_days": 21,
+        })
+        MODULE.mark_proposal_notified(connection, legacy["id"])
         request = first["research_request"]
         self.assertIsNotNone(request)
 
@@ -442,6 +456,12 @@ class LeafWetnessInvestigationTest(InvestigationTestCase):
         self.assertEqual(
             connection.execute(
                 "SELECT status FROM proposals WHERE id=?", (proposal["id"],)
+            ).fetchone()[0],
+            "completed",
+        )
+        self.assertEqual(
+            connection.execute(
+                "SELECT status FROM proposals WHERE id=?", (legacy["id"],)
             ).fetchone()[0],
             "completed",
         )

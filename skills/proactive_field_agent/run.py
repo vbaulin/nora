@@ -838,6 +838,7 @@ def record_leaf_wetness_observation(connection, proposal, wet, note, params):
 
 def close_wetness_research(connection, field_id):
     """Retire source-review prompts superseded by direct field evidence."""
+    now = iso_now()
     rows = connection.execute(
         """
         SELECT id FROM research_requests
@@ -851,7 +852,6 @@ def close_wetness_research(connection, field_id):
     ).fetchall()
     request_ids = {int(row["id"]) for row in rows}
     if request_ids:
-        now = iso_now()
         placeholders = ",".join("?" for _ in request_ids)
         connection.execute(
             f"UPDATE research_requests SET status='resolved_by_field_evidence', updated_at=? "
@@ -875,7 +875,19 @@ def close_wetness_research(connection, field_id):
                     "UPDATE proposals SET status='completed', updated_at=? WHERE id=?",
                     (now, proposal["id"]),
                 )
-        connection.commit()
+    # Releases before the investigation engine used a farmer-facing alias for
+    # this same question. Close both generations so a recovered observation
+    # cannot produce a redundant next-day closure.
+    connection.execute(
+        """
+        UPDATE proposals SET status='completed', updated_at=?
+        WHERE field_id=?
+          AND kind IN ('leaf_wetness_research', 'investigation:leaf_wetness_proxy')
+          AND status IN ('pending','notified','deferred','accepted')
+        """,
+        (now, field_id),
+    )
+    connection.commit()
     return sorted(request_ids)
 
 

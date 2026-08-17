@@ -57,9 +57,9 @@ The result includes:
 - the most recent or preharvest 30-day window;
 - per-variable data coverage and a calibration-ready quality feature vector;
 - `harvest_readiness`, which states whether local evidence can support a date;
-- compact observed day-level weather history plus the current cumulative
-  seasonal snapshot in `season_climate_metrics`, discoverable by the
-  domain-neutral autonomous research engine.
+- compact observed day-level weather history in `season_climate_metrics`,
+  discoverable by the domain-neutral autonomous research engine; cumulative
+  seasonal summaries remain in the JSON and Markdown artifacts.
 
 Use `mode=model_info` to return definitions without reading the database. Read
 [references/metrics.md](references/metrics.md) before interpreting indices or

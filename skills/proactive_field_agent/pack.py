@@ -339,7 +339,9 @@ def catalog_sources(context):
         "sample_rows": 200,
         "read_limit": 5000,
         "max_tables": 40,
-        "max_series": 160,
+        "max_series": 240,
+        "max_categories": 32,
+        "max_partitions_per_table": 128,
     }]
 
 

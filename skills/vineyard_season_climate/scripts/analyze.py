@@ -33,16 +33,6 @@ MODEL_FEATURES = (
     "heat_days_ge_35c",
     "longest_dry_spell_days",
 )
-RESEARCH_METRIC_SECTIONS = (
-    "coverage",
-    "season",
-    "hourly",
-    "indices",
-    "preharvest_or_recent_30d",
-    "preharvest_or_recent_30d_hourly",
-)
-
-
 def env_name(name: str) -> str:
     return "SKILL_" + name.upper().replace("-", "_")
 
@@ -540,16 +530,6 @@ def harvest_readiness(variety, sugar):
     }
 
 
-def flatten_numeric_metrics(value, prefix=""):
-    """Yield stable metric paths without treating booleans as measurements."""
-    if isinstance(value, dict):
-        for key, item in sorted(value.items()):
-            path = f"{prefix}.{key}" if prefix else str(key)
-            yield from flatten_numeric_metrics(item, path)
-    elif isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
-        yield prefix, float(value)
-
-
 def daily_research_snapshots(records, observations):
     """Build compact observed drivers for generic lag and association tests."""
     observations_by_day = defaultdict(dict)
@@ -628,39 +608,6 @@ def metric_unit(metric):
     return "count_or_dimensionless"
 
 
-def metric_has_coverage(report, metric):
-    """Do not turn a missing weather channel into a measured zero."""
-    if report.get("status") != "success":
-        return False
-    section, _, name = metric.partition(".")
-    values = report.get(section) or {}
-    if section in {"season", "preharvest_or_recent_30d"}:
-        if "solar" in name:
-            return int(values.get("days_with_solar_radiation", 1) or 0) > 0
-        if "rain" in name or "dry_spell" in name:
-            return int(values.get("days_with_precipitation", 1) or 0) > 0
-        if "humidity" in name:
-            return int(values.get("days_with_humidity", 1) or 0) > 0
-        if any(token in name for token in (
-            "temperature", "heat_days", "tropical_nights", "frost_nights", "diurnal",
-        )):
-            return int(values.get("days_with_temperature", 1) or 0) > 0
-    coverage = report.get("coverage") or {}
-    if section in {"hourly", "preharvest_or_recent_30d_hourly"}:
-        if "humidity" in name or "rh_" in name:
-            return int(coverage.get("humidity_hourly_slots", 1) or 0) > 0
-        if "temperature" in name or "temp_" in name:
-            return int(coverage.get("temperature_hourly_slots", 1) or 0) > 0
-        if "vpd" in name:
-            return (
-                int(coverage.get("temperature_hourly_slots", 1) or 0) > 0
-                and int(coverage.get("humidity_hourly_slots", 1) or 0) > 0
-            )
-    if section == "indices":
-        return int(coverage.get("temperature_hourly_slots", 1) or 0) > 0
-    return True
-
-
 def persist_research_metrics(connection, reports, generated_at=None):
     """Expose climate outputs to the generic autonomous research catalogue."""
     generated_at = generated_at or datetime.now(timezone.utc).isoformat()
@@ -679,6 +626,12 @@ def persist_research_metrics(connection, reports, generated_at=None):
         )
         """
     )
+    # Schema versions before 2026-08-17 also stored cumulative metrics here.
+    # Those values have unlike units and windows, so keep this relation purely
+    # day-level and leave cumulative summaries in the report artifacts.
+    connection.execute(
+        "DELETE FROM season_climate_metrics WHERE metric NOT LIKE 'weather.%'"
+    )
     written = 0
     for report in reports:
         for snapshot in report.get("_research_daily") or []:
@@ -696,29 +649,6 @@ def persist_research_metrics(connection, reports, generated_at=None):
                     """,
                     (
                         report["field_id"], snapshot["day"], snapshot["day"], snapshot["day"],
-                        path, value, metric_unit(path), generated_at,
-                    ),
-                )
-                written += 1
-        for section in RESEARCH_METRIC_SECTIONS:
-            for path, value in flatten_numeric_metrics(report.get(section) or {}, section):
-                if not metric_has_coverage(report, path):
-                    continue
-                connection.execute(
-                    """
-                    INSERT INTO season_climate_metrics(
-                        field_id, observed_at, period_start, period_end,
-                        metric, value, unit, generated_at
-                    ) VALUES(?,?,?,?,?,?,?,?)
-                    ON CONFLICT(field_id, observed_at, metric) DO UPDATE SET
-                        period_start=excluded.period_start,
-                        period_end=excluded.period_end,
-                        value=excluded.value,
-                        unit=excluded.unit,
-                        generated_at=excluded.generated_at
-                    """,
-                    (
-                        report["field_id"], report["end"], report["start"], report["end"],
                         path, value, metric_unit(path), generated_at,
                     ),
                 )

@@ -141,32 +141,48 @@ def test_climate_metrics_are_persisted_as_research_series():
         "indices": {"gdd_base10_c_days": 1010.0},
         "preharvest_or_recent_30d": {"rain_total_mm": 8.0},
         "preharvest_or_recent_30d_hourly": {"night_humidity_mean_pct": 79.0},
+        "_research_daily": [{
+            "day": "2026-08-17",
+            "metrics": {
+                "weather.rain_mm": 2.5,
+                "weather.vpd_mean_kpa": 0.9,
+            },
+        }],
     }]
     written = MODULE.persist_research_metrics(
         connection, reports, generated_at="2026-08-17T08:00:00+00:00"
     )
-    assert written == 7
+    assert written == 2
     row = connection.execute(
         "SELECT value, unit FROM season_climate_metrics "
         "WHERE field_id=? AND metric=?",
-        ("field-1", "season.rain_total_mm"),
+        ("field-1", "weather.rain_mm"),
     ).fetchone()
-    assert row == (122.5, "mm")
+    assert row == (2.5, "mm")
+    assert connection.execute(
+        "SELECT 1 FROM season_climate_metrics WHERE metric='season.rain_total_mm'"
+    ).fetchone() is None
 
 
 def test_missing_solar_channel_is_not_persisted_as_zero_exposure():
     connection = sqlite3.connect(":memory:")
+    day = date(2026, 8, 17)
+    snapshots = MODULE.daily_research_snapshots([{
+        "day": day,
+        "rain": 0.0,
+        "tmean": 25.0,
+        "tmin": 20.0,
+        "tmax": 30.0,
+        "humidity_mean": 70.0,
+        "solar_mj_m2": None,
+        "clearness_index": None,
+    }], {})
     report = {
         "status": "success",
         "field_id": "field-1",
-        "start": "2026-04-01",
-        "end": "2026-08-17",
-        "coverage": {"solar_hourly_slots": 0},
-        "season": {
-            "days_with_solar_radiation": 0,
-            "solar_energy_total_mj_m2": 0.0,
-            "high_solar_days": 0,
-        },
+        "start": day.isoformat(),
+        "end": day.isoformat(),
+        "_research_daily": snapshots,
     }
     MODULE.persist_research_metrics(connection, [report])
     metrics = {
@@ -174,8 +190,9 @@ def test_missing_solar_channel_is_not_persisted_as_zero_exposure():
             "SELECT metric FROM season_climate_metrics"
         ).fetchall()
     }
-    assert "season.solar_energy_total_mj_m2" not in metrics
-    assert "season.days_with_solar_radiation" not in metrics
+    assert "weather.solar_energy_mj_m2" not in metrics
+    assert "weather.clearness_index" not in metrics
+    assert "weather.rain_mm" in metrics
 
 
 def test_daily_weather_history_is_backfilled_for_immediate_pattern_discovery():

@@ -37,7 +37,12 @@ import investigations  # noqa: E402  (requires the sys.path bootstrap above)
 
 DEFAULT_REPO = "/root/.picoclaw/workspace/goidanich"
 DEFAULT_STATE_DIR = "/root/.picoclaw/workspace/proactive_field"
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
+DEFAULT_NOTIFICATION_THRESHOLD = 70
+# A material research finding is already filtered by the research engine and
+# the adapter. Once it becomes a farmer-facing proposal, placing it below the
+# delivery threshold makes the entire research loop observationally silent.
+RESEARCH_NOTIFICATION_PRIORITY = DEFAULT_NOTIFICATION_THRESHOLD
 ALLOWED_DECISIONS = {"accepted", "rejected", "deferred", "corrected"}
 INVESTIGATION_KIND_PREFIX = "investigation:"
 # A rejected proposal is a decision, not a delay. The topic stays closed for a
@@ -292,6 +297,19 @@ def connect_db(state_dir):
         """
     )
     investigations.ensure_tables(connection)
+    # Schema v4 repairs proposals created by the earlier priority mismatch.
+    # The update is idempotent and deliberately limited to unsent research
+    # findings; declined, completed, or already-delivered records are untouched.
+    connection.execute(
+        "UPDATE proposals SET priority=?, updated_at=? "
+        "WHERE kind LIKE 'research:%' AND status='pending' "
+        "AND notified_at IS NULL AND priority<?",
+        (
+            RESEARCH_NOTIFICATION_PRIORITY,
+            iso_now(),
+            RESEARCH_NOTIFICATION_PRIORITY,
+        ),
+    )
     connection.execute(
         "INSERT INTO meta(key, value) VALUES('schema_version', ?) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -1682,7 +1700,7 @@ def research_candidates(connection, profile, params):
             "field_id": profile["field_id"],
             "kind": f"{RESEARCH_KIND_PREFIX}{finding.get('analysis')}",
             "target": "farmer",
-            "priority": 68,
+            "priority": RESEARCH_NOTIFICATION_PRIORITY,
             "title": rendered["title"],
             "message": rendered["message"],
             "rationale": (
@@ -2432,7 +2450,10 @@ def mark_proposal_notified(connection, proposal_id):
     connection.commit()
 
 
-def notify_proposal(connection, proposal, state_dir, threshold=70):
+def notify_proposal(
+    connection, proposal, state_dir,
+    threshold=DEFAULT_NOTIFICATION_THRESHOLD,
+):
     if not proposal:
         return {"status": "skipped", "reason": "no pending proposal"}
     if proposal["target"] != "farmer":
@@ -3549,7 +3570,10 @@ def main():
                 proposal = next_proposal(connection, params.get("field"), only_unnotified=True)
                 result["notification"] = notify_proposal(
                     connection, proposal, state_dir,
-                    threshold=int(params.get("notify_threshold") or 70),
+                    threshold=int(
+                        params.get("notify_threshold")
+                        or DEFAULT_NOTIFICATION_THRESHOLD
+                    ),
                 )
         elif mode == "investigate":
             result = mode_investigate(connection, params)
@@ -3591,7 +3615,15 @@ def main():
             result = mode_self_test(connection, params)
         elif mode == "notify":
             proposal = proposal_by_id(connection, int(params["proposal_id"])) if params.get("proposal_id") else next_proposal(connection, params.get("field"), only_unnotified=True)
-            result = notify_proposal(connection, proposal, state_dir, int(params.get("notify_threshold") or 70))
+            result = notify_proposal(
+                connection,
+                proposal,
+                state_dir,
+                int(
+                    params.get("notify_threshold")
+                    or DEFAULT_NOTIFICATION_THRESHOLD
+                ),
+            )
         else:
             result = {"status": "error", "error": f"unsupported mode: {mode}"}
         trace(state_dir, "mode_complete", {"mode": mode, "status": result.get("status")})

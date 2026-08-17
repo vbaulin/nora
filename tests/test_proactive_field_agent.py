@@ -677,6 +677,59 @@ class ProactiveFieldAgentTest(unittest.TestCase):
         )
         self.assertEqual(MODULE.next_proposal(connection), None)
 
+    def test_material_research_finding_is_eligible_for_notification(self):
+        connection = self.connection()
+        profile = MODULE.field_profiles(str(self.repo))[0]
+        finding = {
+            "id": 17,
+            "subject": "vineyard:field_1",
+            "analysis": "source_disagreement",
+            "verdict": "material_unresolved",
+            "method": "Compared two current measurement sources.",
+            "sample_size": 48,
+            "confidence": 0.8,
+            "limitations": ["The comparison does not identify ground truth."],
+            "options": [{"id": "deeper_analysis", "cost": "none"}],
+        }
+        rendered = {
+            "title": "Anomalia detectada al Camp Nord",
+            "message": "Dues fonts actuals divergeixen de manera material.",
+        }
+        with mock.patch.object(MODULE, "research_findings", return_value=[finding]), \
+                mock.patch.object(
+                    MODULE.investigations, "render_anomaly", return_value=rendered,
+                ):
+            candidates = MODULE.research_candidates(connection, profile, self.params())
+        self.assertEqual(len(candidates), 1)
+        self.assertGreaterEqual(
+            candidates[0]["priority"], MODULE.DEFAULT_NOTIFICATION_THRESHOLD,
+        )
+
+    def test_schema_upgrade_repairs_pending_silent_research_proposals(self):
+        connection = self.connection()
+        MODULE.save_profiles(connection, MODULE.field_profiles(str(self.repo)))
+        proposal = MODULE.create_proposal(connection, {
+            "field_id": "field_1",
+            "kind": "research:source_disagreement",
+            "target": "farmer",
+            "priority": 68,
+            "title": "Research finding",
+            "message": "Two sources disagree.",
+            "rationale": "Material local evidence.",
+            "evidence": [{"research_finding_id": 17}],
+            "confidence": 0.8,
+            "requires_confirmation": True,
+            "cooldown_days": 14,
+        })
+        self.assertEqual(proposal["priority"], 68)
+        connection.close()
+
+        upgraded = self.connection()
+        repaired = MODULE.proposal_by_id(upgraded, proposal["id"])
+        self.assertEqual(
+            repaired["priority"], MODULE.RESEARCH_NOTIFICATION_PRIORITY,
+        )
+
     def test_general_operation_requires_confirmation_then_enters_memory(self):
         connection = self.connection()
         profiles = MODULE.field_profiles(str(self.repo))

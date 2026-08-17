@@ -550,6 +550,59 @@ def flatten_numeric_metrics(value, prefix=""):
         yield prefix, float(value)
 
 
+def daily_research_snapshots(records, observations):
+    """Build compact observed drivers for generic lag and association tests."""
+    observations_by_day = defaultdict(dict)
+    for timestamp, values in observations.items():
+        observations_by_day[timestamp.date()][timestamp] = values
+    snapshots = []
+    for record in records:
+        day_observations = observations_by_day.get(record["day"], {})
+        hourly = hourly_statistics(day_observations)
+        has_temperature = any(
+            values.get("temp") is not None for values in day_observations.values()
+        )
+        has_humidity = any(
+            values.get("humidity") is not None for values in day_observations.values()
+        )
+        metrics = {}
+        for name, value in (
+            ("weather.rain_mm", record.get("rain")),
+            ("weather.temperature_mean_c", record.get("tmean")),
+            ("weather.temperature_min_c", record.get("tmin")),
+            ("weather.temperature_max_c", record.get("tmax")),
+            ("weather.humidity_mean_pct", record.get("humidity_mean")),
+            ("weather.solar_energy_mj_m2", record.get("solar_mj_m2")),
+            ("weather.clearness_index", record.get("clearness_index")),
+        ):
+            if value is not None:
+                metrics[name] = float(value)
+        if has_temperature:
+            for name in (
+                "day_temperature_mean_c", "night_temperature_mean_c",
+                "night_temperature_min_c", "hours_temp_ge_30c", "hours_temp_ge_35c",
+            ):
+                value = hourly.get(name)
+                if value is not None:
+                    metrics[f"weather.{name}"] = float(value)
+        if has_humidity:
+            for name in (
+                "day_humidity_mean_pct", "night_humidity_mean_pct",
+                "hours_rh_ge_90pct", "hours_rh_ge_95pct",
+            ):
+                value = hourly.get(name)
+                if value is not None:
+                    metrics[f"weather.{name}"] = float(value)
+        if has_temperature and has_humidity:
+            for name in ("vpd_mean_kpa", "vpd_max_kpa"):
+                value = hourly.get(name)
+                if value is not None:
+                    metrics[f"weather.{name}"] = float(value)
+        if metrics:
+            snapshots.append({"day": record["day"].isoformat(), "metrics": metrics})
+    return snapshots
+
+
 def metric_unit(metric):
     name = metric.rsplit(".", 1)[-1]
     if "gdd" in name:
@@ -628,6 +681,25 @@ def persist_research_metrics(connection, reports, generated_at=None):
     )
     written = 0
     for report in reports:
+        for snapshot in report.get("_research_daily") or []:
+            for path, value in sorted((snapshot.get("metrics") or {}).items()):
+                connection.execute(
+                    """
+                    INSERT INTO season_climate_metrics(
+                        field_id, observed_at, period_start, period_end,
+                        metric, value, unit, generated_at
+                    ) VALUES(?,?,?,?,?,?,?,?)
+                    ON CONFLICT(field_id, observed_at, metric) DO UPDATE SET
+                        value=excluded.value,
+                        unit=excluded.unit,
+                        generated_at=excluded.generated_at
+                    """,
+                    (
+                        report["field_id"], snapshot["day"], snapshot["day"], snapshot["day"],
+                        path, value, metric_unit(path), generated_at,
+                    ),
+                )
+                written += 1
         for section in RESEARCH_METRIC_SECTIONS:
             for path, value in flatten_numeric_metrics(report.get(section) or {}, section):
                 if not metric_has_coverage(report, path):
@@ -787,6 +859,7 @@ def analyze_field(conn, field, params, local_tz, today):
             "acid retention, ripening rate and disease microclimate. They are not a direct measurement "
             "of grape composition or final wine quality."
         ),
+        "_research_daily": daily_research_snapshots(records, observations),
     }
     report["harvest_readiness"] = harvest_readiness(
         report["variety"], report["sugar_estimate"]
@@ -874,6 +947,8 @@ def main():
     with sqlite3.connect(db_path) as conn:
         reports = [analyze_field(conn, field, params, local_tz, today) for field in fields]
         research_metrics_written = persist_research_metrics(conn, reports)
+    for report in reports:
+        report.pop("_research_daily", None)
     year = int(params.get("season_year") or reports[0]["end"][:4])
     artifacts = write_artifacts(repo_path, reports, year) if as_bool(params.get("write_artifacts"), True) else []
     output = {

@@ -59,10 +59,12 @@ set `sugar_estimate.available=false`.
 
 ## Autonomous research series
 
-Each report writes one cumulative seasonal snapshot per field and date to
-`season_climate_metrics`. Metric names preserve their source section, for
-example `season.solar_energy_total_mj_m2`, `hourly.vpd_mean_kpa`,
-`preharvest_or_recent_30d.rain_total_mm`, and
+Each report backfills compact observed daily drivers and writes one cumulative
+seasonal snapshot per field and date to `season_climate_metrics`. Daily names
+include `weather.rain_mm`, `weather.solar_energy_mj_m2`, day/night temperature
+and humidity, high-RH duration, and VPD. Cumulative names preserve their source
+section, for example `season.solar_energy_total_mj_m2`,
+`hourly.vpd_mean_kpa`, `preharvest_or_recent_30d.rain_total_mm`, and
 `indices.gdd_base10_c_days`.
 
 The research engine discovers these channels and tests candidate associations

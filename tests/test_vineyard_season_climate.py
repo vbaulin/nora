@@ -178,6 +178,49 @@ def test_missing_solar_channel_is_not_persisted_as_zero_exposure():
     assert "season.days_with_solar_radiation" not in metrics
 
 
+def test_daily_weather_history_is_backfilled_for_immediate_pattern_discovery():
+    local_tz = ZoneInfo("Europe/Madrid")
+    day = date(2026, 8, 16)
+    timestamp = datetime(2026, 8, 16, 23, tzinfo=local_tz)
+    records = [{
+        "day": day,
+        "rain": 3.2,
+        "tmean": 25.0,
+        "tmin": 20.0,
+        "tmax": 31.0,
+        "humidity_mean": 84.0,
+        "solar_mj_m2": 21.5,
+        "clearness_index": 0.7,
+    }]
+    snapshots = MODULE.daily_research_snapshots(records, {
+        timestamp: {
+            "temp": 23.0,
+            "humidity": 96.0,
+            "is_day": False,
+        },
+    })
+    metrics = snapshots[0]["metrics"]
+    assert metrics["weather.rain_mm"] == 3.2
+    assert metrics["weather.solar_energy_mj_m2"] == 21.5
+    assert metrics["weather.night_humidity_mean_pct"] == 96.0
+    assert metrics["weather.hours_rh_ge_95pct"] == 1.0
+
+    connection = sqlite3.connect(":memory:")
+    report = {
+        "status": "success",
+        "field_id": "field-1",
+        "start": day.isoformat(),
+        "end": day.isoformat(),
+        "_research_daily": snapshots,
+    }
+    MODULE.persist_research_metrics(connection, [report])
+    stored = connection.execute(
+        "SELECT value FROM season_climate_metrics WHERE metric=?",
+        ("weather.night_humidity_mean_pct",),
+    ).fetchone()
+    assert stored == (96.0,)
+
+
 def test_harvest_date_is_not_inferred_from_weather_or_literature_alone():
     result = MODULE.harvest_readiness("Chardonnay", {"available": False})
     assert result["available"] is False

@@ -705,6 +705,52 @@ class ProactiveFieldAgentTest(unittest.TestCase):
             candidates[0]["priority"], MODULE.DEFAULT_NOTIFICATION_THRESHOLD,
         )
 
+    def test_field_research_finding_is_not_attributed_to_the_first_field(self):
+        connection = self.connection()
+        profile = MODULE.field_profiles(str(self.repo))[0]
+        findings = [{
+            "id": 18,
+            "subject": "vineyard:field_2",
+            "analysis": "source_disagreement",
+            "verdict": "material_unresolved",
+            "sample_size": 30,
+            "confidence": 0.7,
+            "options": [{"id": "deeper_analysis", "cost": "none"}],
+        }]
+        with mock.patch.object(MODULE, "research_findings", return_value=findings), \
+                mock.patch.object(MODULE.investigations, "render_anomaly") as render:
+            candidates = MODULE.research_candidates(
+                connection, profile, self.params(), include_board_wide=True,
+            )
+        self.assertEqual(candidates, [])
+        render.assert_not_called()
+
+    def test_board_research_finding_is_attached_only_when_requested(self):
+        connection = self.connection()
+        profile = MODULE.field_profiles(str(self.repo))[0]
+        finding = {
+            "id": 19,
+            "subject": "board",
+            "analysis": "data_gap",
+            "verdict": "material_unresolved",
+            "sample_size": 12,
+            "confidence": 0.8,
+            "options": [{"id": "deeper_analysis", "cost": "none"}],
+        }
+        rendered = {"title": "Board finding", "message": "A source stopped."}
+        with mock.patch.object(MODULE, "research_findings", return_value=[finding]), \
+                mock.patch.object(
+                    MODULE.investigations, "render_anomaly", return_value=rendered,
+                ):
+            excluded = MODULE.research_candidates(
+                connection, profile, self.params(), include_board_wide=False,
+            )
+            included = MODULE.research_candidates(
+                connection, profile, self.params(), include_board_wide=True,
+            )
+        self.assertEqual(excluded, [])
+        self.assertEqual(len(included), 1)
+
     def test_schema_upgrade_repairs_pending_silent_research_proposals(self):
         connection = self.connection()
         MODULE.save_profiles(connection, MODULE.field_profiles(str(self.repo)))

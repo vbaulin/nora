@@ -1686,12 +1686,19 @@ def research_findings(params, limit=5):
     return findings[:limit]
 
 
-def research_candidates(connection, profile, params):
+def research_candidates(connection, profile, params, include_board_wide=False):
     """Turn engine findings into one confirmable message each."""
     language = profile["language"]
     name = profile["name"]
+    field_subject = research_subject(profile["field_id"])
     candidates = []
     for finding in research_findings(params):
+        subject = str(finding.get("subject") or "")
+        if subject.startswith("vineyard:"):
+            if subject != field_subject:
+                continue
+        elif not include_board_wide:
+            continue
         rendered = investigations.render_anomaly(language, name, finding)
         if not rendered:
             continue
@@ -1870,11 +1877,14 @@ def generate_proposals(connection, profiles, investigation_records=None, params=
         records = investigation_records.get(field_id) or []
         apply_investigation_actions(connection, field_id, records)
         candidates.extend(investigation_candidates(connection, profile, records))
-        if profile is profiles[0]:
-            # Board-wide findings belong to the board, not to a field. Attach
-            # them once, to the first configured field, so a two-field board
-            # does not report the same stopped camera twice.
-            candidates.extend(research_candidates(connection, profile, params))
+        # Field findings stay with their field. Domain-neutral board findings
+        # have no field route, so attach those once to the first profile.
+        candidates.extend(research_candidates(
+            connection,
+            profile,
+            params,
+            include_board_wide=profile is profiles[0],
+        ))
         candidates.sort(key=lambda item: item["priority"], reverse=True)
         for candidate in candidates:
             proposal = create_proposal(connection, candidate)

@@ -360,6 +360,15 @@ class ProactiveFieldAgentTest(unittest.TestCase):
         self.assertEqual([row["field_id"] for row in rows], ["field_1", "field_2"])
         self.assertIsNone(MODULE.next_proposal(connection))
 
+        supplemental = MODULE.ensure_variety_research_requests(connection, profiles)
+        self.assertEqual(supplemental, [{
+            "variety": "Chardonnay",
+            "fields": ["field_1", "field_2"],
+        }])
+        follow_up = MODULE.pending_research(connection)
+        self.assertEqual(follow_up["evidence"][0]["research_pass"], "supplemental")
+        self.assertEqual(follow_up["evidence"][0]["existing_source_count"], 1)
+
     def test_search_credentials_are_whitelisted_and_provider_order_is_bounded(self):
         (self.repo / ".env").write_text(
             "SUPABASE_PUBLISHABLE_KEY=must-not-load\n"

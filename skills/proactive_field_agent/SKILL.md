@@ -161,6 +161,11 @@ research engine separately discovers relationships among the daily climate,
 disease, operation, and future fruit-quality series; these relationships are
 not hardcoded in this skill.
 
+If the first cultivar search yields fewer than three distinct candidate
+sources, the board performs one supplemental query with a different evidence
+angle. This is bounded at two passes per cultivar and remains silent; low
+source count never becomes a farmer question.
+
 Registered topics:
 
 - `leaf_wetness_proxy`: compares the confirmed VitiMeteo infection index with

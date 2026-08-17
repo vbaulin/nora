@@ -1134,7 +1134,7 @@ def queue_research(connection, field_id, query, reason, evidence):
 
 
 def ensure_variety_research_requests(connection, profiles):
-    """Queue one internal evidence search per cultivar, not one per parcel."""
+    """Queue bounded internal evidence searches per cultivar, not per parcel."""
     by_variety = {}
     for profile in profiles:
         variety = str(profile.get("variety") or "").strip()
@@ -1145,11 +1145,44 @@ def ensure_variety_research_requests(connection, profiles):
     queued = []
     for item in by_variety.values():
         variety = item["variety"]
-        query = (
+        fields = sorted(item["fields"])
+        primary_query = (
             f'peer-reviewed Vitis vinifera cultivar "{variety}" phenology thermal '
             "requirements flowering veraison harvest maturity berry sugar titratable "
             "acidity pH solar radiation water status Mediterranean"
         )
+        profile_rows = connection.execute(
+            "SELECT value_json FROM facts WHERE field_id=? "
+            "AND predicate='variety_evidence_profile'",
+            (fields[0],),
+        ).fetchall()
+        source_urls = set()
+        for row in profile_rows:
+            try:
+                value = json.loads(row["value_json"])
+            except (TypeError, ValueError):
+                continue
+            if str(value.get("variety") or "").casefold() != variety.casefold():
+                continue
+            source_urls.update(
+                str(source.get("url")) for source in (value.get("sources") or [])
+                if isinstance(source, dict) and source.get("url")
+            )
+        primary_request = connection.execute(
+            "SELECT status FROM research_requests WHERE query=? LIMIT 1", (primary_query,)
+        ).fetchone()
+        if not primary_request:
+            query = primary_query
+            research_pass = "primary"
+        elif primary_request["status"] in {"complete", "failed"} and len(source_urls) < 3:
+            query = (
+                f'additional independent peer-reviewed cultivar trial "{variety}" '
+                "grapevine growing degree days budbreak flowering veraison harvest "
+                "Brix titratable acidity pH berry weight water status wine style DOI"
+            )
+            research_pass = "supplemental"
+        else:
+            continue
         existing = connection.execute(
             "SELECT 1 FROM research_requests WHERE query=? LIMIT 1", (query,)
         ).fetchone()
@@ -1157,7 +1190,9 @@ def ensure_variety_research_requests(connection, profiles):
             continue
         evidence = [{
             "variety": variety,
-            "field_ids": sorted(item["fields"]),
+            "field_ids": fields,
+            "research_pass": research_pass,
+            "existing_source_count": len(source_urls),
             "requested_claims": [
                 "phenological timing and thermal requirements",
                 "veraison-to-harvest interval",
@@ -1169,12 +1204,12 @@ def ensure_variety_research_requests(connection, profiles):
         }]
         if queue_research(
             connection,
-            sorted(item["fields"])[0],
+            fields[0],
             query,
             f"Variety evidence profile: {variety}",
             evidence,
         ):
-            queued.append({"variety": variety, "fields": sorted(item["fields"])})
+            queued.append({"variety": variety, "fields": fields})
     return queued
 
 

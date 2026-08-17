@@ -91,7 +91,8 @@ An open question is answered by investigation, never by proposing hardware.
 2. Fresh dashboard JSON and PNG artifacts for each independent disease.
 3. Confirmed farmer feedback and treatment/operation records.
 4. nano-os-agent task evidence and experiment journal entries.
-5. Source-attributed public research, explicitly marked for review.
+5. Source-attributed public research, retained as candidate evidence for local
+   comparison.
 
 A nano-os-agent result enters field memory only after its declared experiment
 checks pass. A failed, partial, blocked, or internally inconsistent experiment
@@ -115,8 +116,9 @@ If required disease state is absent or stale, create an internal
 - `status`: return field profiles, current evidence, investigations, pending
   proposals and queued research.
 - `research`: run one bounded web search (Tavily, then Brave when configured,
-  otherwise DuckDuckGo HTML with a DuckDuckGo Lite fallback), retain source URLs/snippets, and create a review
-  proposal.
+  otherwise DuckDuckGo HTML with a DuckDuckGo Lite fallback), retain source
+  URLs/snippets, and synthesize internal candidate evidence. It does not ask the
+  farmer to read or compare papers.
 - `next_research`: return the oldest queued research request.
 - `ingest_research`: store externally collected, source-attributed results.
 - `next_proposal`: return the highest-priority pending proposal.
@@ -149,6 +151,15 @@ delivers them, and records decisions. The domain-neutral engine lives in
 `research-agent`, and `pack.py` here declares the vineyard's standing questions
 as parameters for that engine's generic analyses. The topics below are the
 farmer-facing side of the same questions.
+
+The scheduled research route also groups fields by cultivar and queues one
+source search per distinct variety. Candidate phenology, thermal requirement,
+solar/water response, and maturity literature is attached to every field of
+that variety as `variety_evidence_profile`. It remains a prior until the board
+has local dated phenology and berry-composition measurements. The generic
+research engine separately discovers relationships among the daily climate,
+disease, operation, and future fruit-quality series; these relationships are
+not hardcoded in this skill.
 
 Registered topics:
 

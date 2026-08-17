@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Vineyard Guard research pack for the nora research agent.
+"""Vineyard research pack for the nora research agent.
 
 This file contains no analysis code. Every vineyard question is expressed as
-parameters for the engine's domain-neutral analyses, which is the point: the
-canopy-wetness question, the station-criterion question and the alert-quality
-question are ordinary shapes that happen to be wearing agronomy this time.
+parameters for the engine's domain-neutral analyses. Disease response, climate
+exposure, fruit-composition observations and field operations are ordinary
+numeric or event series; the engine discovers candidate relationships rather
+than receiving a fixed list of agronomic correlations.
 
 Domain-specific *language* stays in `proactive_field_agent`, which remains the
 adapter that talks to the farmer. The pack only makes the questions visible to
@@ -48,7 +49,11 @@ def configured_fields(repo):
         parsed = json.loads(text)
         fields = parsed.get("fields") or []
         return [
-            {"id": str(item["id"]), "name": str(item.get("name") or item["id"])}
+            {
+                "id": str(item["id"]),
+                "name": str(item.get("name") or item["id"]),
+                "variety": str(item.get("variety") or (item.get("metadata") or {}).get("variety") or ""),
+            }
             for item in fields if isinstance(item, dict) and item.get("id")
         ]
     except ValueError:
@@ -58,7 +63,11 @@ def configured_fields(repo):
         parsed = yaml.safe_load(text) or {}
         fields = parsed.get("fields") or []
         return [
-            {"id": str(item["id"]), "name": str(item.get("name") or item["id"])}
+            {
+                "id": str(item["id"]),
+                "name": str(item.get("name") or item["id"]),
+                "variety": str(item.get("variety") or (item.get("metadata") or {}).get("variety") or ""),
+            }
             for item in fields if isinstance(item, dict) and item.get("id")
         ]
     except Exception:
@@ -154,7 +163,7 @@ def declare_questions(context):
         # Weekly: refreshing a season of weather is not an hourly job.
         for metric, label in (
             ("season.rain_total_mm", "rainfall"),
-            ("indices.gdd_base10", "accumulated heat"),
+            ("indices.gdd_base10_c_days", "accumulated heat"),
         ):
             questions.append({
                 "subject": f"vineyard:{field_id}",
@@ -319,7 +328,7 @@ def calibration_sources(context):
 
 
 def catalog_sources(context):
-    """Expose evidence storage without naming a variable or relationship."""
+    """Expose all local evidence, including season_climate_metrics, generically."""
     repo = repo_path(context)
     database = Path(repo) / "goidanich.db"
     if not database.exists():
@@ -350,8 +359,8 @@ def evidence_paths(context):
 PACK = {
     "name": "vineyard_guard",
     "description": (
-        "Grapevine disease boards: canopy-wetness uncertainty, station criteria, "
-        "and the quality of the board's own alerts."
+        "Grapevine field evidence: disease-model response, climate and solar exposure, "
+        "fruit-quality observations, operations, phenology, and alert performance."
     ),
     "questions": declare_questions,
     "catalog_sources": catalog_sources,

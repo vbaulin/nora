@@ -33,6 +33,14 @@ MODEL_FEATURES = (
     "heat_days_ge_35c",
     "longest_dry_spell_days",
 )
+RESEARCH_METRIC_SECTIONS = (
+    "coverage",
+    "season",
+    "hourly",
+    "indices",
+    "preharvest_or_recent_30d",
+    "preharvest_or_recent_30d_hourly",
+)
 
 
 def env_name(name: str) -> str:
@@ -424,7 +432,7 @@ def monthly_day_night_statistics(observations):
     return {month: hourly_statistics(rows) for month, rows in sorted(by_month.items())}
 
 
-def quality_feature_vector(summary, preharvest):
+def quality_feature_vector(summary, preharvest, preharvest_hourly):
     hourly = summary["hourly"]
     indices = summary["indices"]
     season = summary["season"]
@@ -440,6 +448,17 @@ def quality_feature_vector(summary, preharvest):
         "night_humidity_mean_pct": hourly["night_humidity_mean_pct"],
         "heat_days_ge_35c": season["heat_days_ge_35c"],
         "longest_dry_spell_days": season["longest_dry_spell_days"],
+        "solar_energy_total_mj_m2": season["solar_energy_total_mj_m2"],
+        "solar_energy_mean_daily_mj_m2": season["solar_energy_mean_daily_mj_m2"],
+        "high_solar_days": season["high_solar_days"],
+        "hours_rh_ge_90pct": hourly["hours_rh_ge_90pct"],
+        "hours_rh_ge_95pct": hourly["hours_rh_ge_95pct"],
+        "vpd_mean_kpa": hourly["vpd_mean_kpa"],
+        "vpd_max_kpa": hourly["vpd_max_kpa"],
+        "preharvest_30d_temperature_mean_c": preharvest["temperature_mean_c"],
+        "preharvest_30d_night_humidity_mean_pct": preharvest_hourly["night_humidity_mean_pct"],
+        "preharvest_30d_solar_energy_total_mj_m2": preharvest["solar_energy_total_mj_m2"],
+        "preharvest_30d_heat_days_ge_35c": preharvest["heat_days_ge_35c"],
     }
 
 
@@ -470,9 +489,14 @@ def sugar_estimate(field_id, feature_vector, model_path):
         default["reason"] = "Brix model field identity does not match the requested field."
         return default
     coefficients = model.get("coefficients") or {}
-    missing = [name for name in MODEL_FEATURES if name not in coefficients or feature_vector.get(name) is None]
+    missing = [
+        name for name in MODEL_FEATURES
+        if name not in coefficients or feature_vector.get(name) is None
+    ]
     if missing:
-        default["reason"] = "Validated Brix model is missing coefficients or inputs: " + ", ".join(missing)
+        default["reason"] = (
+            "Validated Brix model is missing coefficients or inputs: " + ", ".join(missing)
+        )
         return default
     estimate = float(model.get("intercept", 0.0))
     for name in MODEL_FEATURES:
@@ -486,6 +510,149 @@ def sugar_estimate(field_id, feature_vector, model_path):
         "training_observations": model.get("training_observations"),
         "reason": "Estimate produced by an explicitly validated field model.",
     }
+
+
+def harvest_readiness(variety, sugar):
+    """Describe whether an evidence-based harvest-date estimate is possible."""
+    missing = [
+        "dated phenological stage observations",
+        "repeated berry sugar measurements",
+        "titratable acidity and pH",
+        "berry weight or yield/load context",
+        "the intended wine style",
+    ]
+    if not sugar.get("available"):
+        missing.insert(1, "a locally validated berry-sugar model")
+    return {
+        "available": False,
+        "recommended_harvest_date": None,
+        "status": "requires_local_maturity_observations",
+        "variety": variety or None,
+        "missing_evidence": missing,
+        "literature_role": (
+            "Variety literature may define candidate phenology and maturity priors, but it "
+            "cannot replace local measurements or validate a harvest date for this field."
+        ),
+        "reason": (
+            "Weather exposure constrains ripening, but technological and phenolic maturity "
+            "also depend on crop load, canopy, water status, berry composition and wine style."
+        ),
+    }
+
+
+def flatten_numeric_metrics(value, prefix=""):
+    """Yield stable metric paths without treating booleans as measurements."""
+    if isinstance(value, dict):
+        for key, item in sorted(value.items()):
+            path = f"{prefix}.{key}" if prefix else str(key)
+            yield from flatten_numeric_metrics(item, path)
+    elif isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+        yield prefix, float(value)
+
+
+def metric_unit(metric):
+    name = metric.rsplit(".", 1)[-1]
+    if "gdd" in name:
+        return "degC_days"
+    if name.endswith("_mm"):
+        return "mm"
+    if name.endswith("_c"):
+        return "degC"
+    if name.endswith("_pct") or name.endswith("pct"):
+        return "percent"
+    if name.endswith("_kpa"):
+        return "kPa"
+    if name.endswith("_mj_m2"):
+        return "MJ/m2"
+    if "hour" in name or name.endswith("_slots"):
+        return "hours_or_slots"
+    if "day" in name:
+        return "days"
+    if name.endswith("_rows") or name == "days":
+        return "count"
+    if "index" in name:
+        return "index"
+    return "count_or_dimensionless"
+
+
+def metric_has_coverage(report, metric):
+    """Do not turn a missing weather channel into a measured zero."""
+    if report.get("status") != "success":
+        return False
+    section, _, name = metric.partition(".")
+    values = report.get(section) or {}
+    if section in {"season", "preharvest_or_recent_30d"}:
+        if "solar" in name:
+            return int(values.get("days_with_solar_radiation", 1) or 0) > 0
+        if "rain" in name or "dry_spell" in name:
+            return int(values.get("days_with_precipitation", 1) or 0) > 0
+        if "humidity" in name:
+            return int(values.get("days_with_humidity", 1) or 0) > 0
+        if any(token in name for token in (
+            "temperature", "heat_days", "tropical_nights", "frost_nights", "diurnal",
+        )):
+            return int(values.get("days_with_temperature", 1) or 0) > 0
+    coverage = report.get("coverage") or {}
+    if section in {"hourly", "preharvest_or_recent_30d_hourly"}:
+        if "humidity" in name or "rh_" in name:
+            return int(coverage.get("humidity_hourly_slots", 1) or 0) > 0
+        if "temperature" in name or "temp_" in name:
+            return int(coverage.get("temperature_hourly_slots", 1) or 0) > 0
+        if "vpd" in name:
+            return (
+                int(coverage.get("temperature_hourly_slots", 1) or 0) > 0
+                and int(coverage.get("humidity_hourly_slots", 1) or 0) > 0
+            )
+    if section == "indices":
+        return int(coverage.get("temperature_hourly_slots", 1) or 0) > 0
+    return True
+
+
+def persist_research_metrics(connection, reports, generated_at=None):
+    """Expose climate outputs to the generic autonomous research catalogue."""
+    generated_at = generated_at or datetime.now(timezone.utc).isoformat()
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS season_climate_metrics (
+            field_id TEXT NOT NULL,
+            observed_at TEXT NOT NULL,
+            period_start TEXT NOT NULL,
+            period_end TEXT NOT NULL,
+            metric TEXT NOT NULL,
+            value REAL NOT NULL,
+            unit TEXT NOT NULL,
+            generated_at TEXT NOT NULL,
+            PRIMARY KEY(field_id, observed_at, metric)
+        )
+        """
+    )
+    written = 0
+    for report in reports:
+        for section in RESEARCH_METRIC_SECTIONS:
+            for path, value in flatten_numeric_metrics(report.get(section) or {}, section):
+                if not metric_has_coverage(report, path):
+                    continue
+                connection.execute(
+                    """
+                    INSERT INTO season_climate_metrics(
+                        field_id, observed_at, period_start, period_end,
+                        metric, value, unit, generated_at
+                    ) VALUES(?,?,?,?,?,?,?,?)
+                    ON CONFLICT(field_id, observed_at, metric) DO UPDATE SET
+                        period_start=excluded.period_start,
+                        period_end=excluded.period_end,
+                        value=excluded.value,
+                        unit=excluded.unit,
+                        generated_at=excluded.generated_at
+                    """,
+                    (
+                        report["field_id"], report["end"], report["start"], report["end"],
+                        path, value, metric_unit(path), generated_at,
+                    ),
+                )
+                written += 1
+    connection.commit()
+    return written
 
 
 def coverage(source_counts, start, end):
@@ -522,6 +689,11 @@ def human_summary(report):
         f"Estimated sugar: {sugar['estimate_brix']} Brix ({sugar.get('method')})."
         if sugar["available"] else "Sugar estimate: unavailable until a field-calibrated Brix model is validated."
     )
+    harvest_text = (
+        f"Estimated harvest date: {report['harvest_readiness']['recommended_harvest_date']}."
+        if report["harvest_readiness"]["available"] else
+        "Harvest-date estimate: unavailable until field maturity observations support a validated model."
+    )
     return (
         f"Season climate - {report['field_name']} ({report['start']} to {report['end']})\n"
         f"Rain: {season['rain_total_mm']} mm; longest dry spell: {season['longest_dry_spell_days']} days.\n"
@@ -529,8 +701,10 @@ def human_summary(report):
         f"max {season['temperature_max_c']} C; night mean {hourly['night_temperature_mean_c']} C.\n"
         f"Humidity: mean {season['humidity_mean_pct']}%, night mean {hourly['night_humidity_mean_pct']}%; "
         f"RH >=95% for {hourly['hours_rh_ge_95pct']} hourly observations.\n"
+        f"Solar exposure: {season['solar_energy_total_mj_m2']} MJ/m2 over "
+        f"{season['days_with_solar_radiation']} observed days; mean VPD {hourly['vpd_mean_kpa']} kPa.\n"
         f"Heat accumulation: GDD10 {indices['gdd_base10_c_days']} C-days; Huglin {indices['huglin_index']}.\n"
-        f"{sugar_text}"
+        f"{sugar_text}\n{harvest_text}"
     )
 
 
@@ -575,9 +749,14 @@ def analyze_field(conn, field, params, local_tz, today):
     indices = calculate_indices(records, float(params.get("huglin_k") or 1.03))
     preharvest_start = max(start, end - timedelta(days=29))
     preharvest_records = [row for row in records if row["day"] >= preharvest_start]
+    preharvest_observations = {
+        timestamp: values for timestamp, values in observations.items()
+        if timestamp.date() >= preharvest_start
+    }
     preharvest = subset_statistics(preharvest_records)
+    preharvest_hourly = hourly_statistics(preharvest_observations)
     summary = {"season": season, "hourly": hourly, "indices": indices}
-    feature_vector = quality_feature_vector(summary, preharvest)
+    feature_vector = quality_feature_vector(summary, preharvest, preharvest_hourly)
     configured_model = params.get("brix_model_path")
     if not configured_model:
         candidate = Path(params["repo_path"]) / "models" / f"brix_{field_id}.json"
@@ -598,6 +777,7 @@ def analyze_field(conn, field, params, local_tz, today):
         "hourly": hourly,
         "indices": indices,
         "preharvest_or_recent_30d": dict(preharvest, start=preharvest_start.isoformat(), end=end.isoformat()),
+        "preharvest_or_recent_30d_hourly": preharvest_hourly,
         "monthly": monthly_statistics(records),
         "monthly_day_night": monthly_day_night_statistics(observations),
         "quality_context_features": feature_vector,
@@ -608,6 +788,9 @@ def analyze_field(conn, field, params, local_tz, today):
             "of grape composition or final wine quality."
         ),
     }
+    report["harvest_readiness"] = harvest_readiness(
+        report["variety"], report["sugar_estimate"]
+    )
     report["send_text"] = human_summary(report)
     return report
 
@@ -646,6 +829,15 @@ def model_info():
             "Do not infer Brix from weather alone. Emit an estimate only from a field-matched model "
             "explicitly marked validated and accompanied by validation error and training sample count."
         ),
+        "harvest_policy": (
+            "Cultivar literature is a candidate prior. Emit a harvest date only from a locally "
+            "validated phenology/composition model with current field maturity measurements and "
+            "held-out error in days."
+        ),
+        "research_series": (
+            "Report mode writes covered numeric variables to season_climate_metrics for generic "
+            "cross-series discovery."
+        ),
     }
 
 
@@ -681,6 +873,7 @@ def main():
     today = datetime.now(local_tz).date()
     with sqlite3.connect(db_path) as conn:
         reports = [analyze_field(conn, field, params, local_tz, today) for field in fields]
+        research_metrics_written = persist_research_metrics(conn, reports)
     year = int(params.get("season_year") or reports[0]["end"][:4])
     artifacts = write_artifacts(repo_path, reports, year) if as_bool(params.get("write_artifacts"), True) else []
     output = {
@@ -689,6 +882,7 @@ def main():
         "field_scope": params.get("field") or "all",
         "field_reports": reports,
         "artifacts": artifacts,
+        "research_metrics_written": research_metrics_written,
         "send_text": "\n\n".join(report["send_text"] for report in reports),
     }
     print(json.dumps(output, ensure_ascii=False))

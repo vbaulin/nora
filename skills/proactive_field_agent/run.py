@@ -1119,7 +1119,7 @@ def pending_operation_follow_up(connection, field_id, now=None):
 
 def queue_research(connection, field_id, query, reason, evidence):
     now = iso_now()
-    connection.execute(
+    cursor = connection.execute(
         """
         INSERT INTO research_requests(
             field_id, query, reason, evidence_json, status, attempts,
@@ -1130,6 +1130,52 @@ def queue_research(connection, field_id, query, reason, evidence):
         (field_id, query, reason, json_text(evidence), "queued", 0, now, now),
     )
     connection.commit()
+    return bool(cursor.rowcount)
+
+
+def ensure_variety_research_requests(connection, profiles):
+    """Queue one internal evidence search per cultivar, not one per parcel."""
+    by_variety = {}
+    for profile in profiles:
+        variety = str(profile.get("variety") or "").strip()
+        if variety:
+            by_variety.setdefault(variety.casefold(), {"variety": variety, "fields": []})[
+                "fields"
+            ].append(profile["field_id"])
+    queued = []
+    for item in by_variety.values():
+        variety = item["variety"]
+        query = (
+            f'peer-reviewed Vitis vinifera cultivar "{variety}" phenology thermal '
+            "requirements flowering veraison harvest maturity berry sugar titratable "
+            "acidity pH solar radiation water status Mediterranean"
+        )
+        existing = connection.execute(
+            "SELECT 1 FROM research_requests WHERE query=? LIMIT 1", (query,)
+        ).fetchone()
+        if existing:
+            continue
+        evidence = [{
+            "variety": variety,
+            "field_ids": sorted(item["fields"]),
+            "requested_claims": [
+                "phenological timing and thermal requirements",
+                "veraison-to-harvest interval",
+                "berry sugar, titratable acidity and pH maturity context",
+                "solar-radiation and water-status response",
+                "reported region and validation population",
+            ],
+            "use": "candidate prior for local comparison, never a harvest instruction",
+        }]
+        if queue_research(
+            connection,
+            sorted(item["fields"])[0],
+            query,
+            f"Variety evidence profile: {variety}",
+            evidence,
+        ):
+            queued.append({"variety": variety, "fields": sorted(item["fields"])})
+    return queued
 
 
 def phrase(language, key, **values):
@@ -2206,6 +2252,21 @@ def store_research_synthesis(connection, request_row, sources):
         "leaf wetness" in str(request_row.get("query") or "").lower()
         or "wetness" in str(request_row.get("reason") or "").lower()
     )
+    request_evidence = request_row.get("evidence")
+    if not isinstance(request_evidence, list):
+        try:
+            request_evidence = json.loads(request_row.get("evidence_json") or "[]")
+        except (TypeError, ValueError):
+            request_evidence = []
+    reason = str(request_row.get("reason") or "")
+    is_variety_profile = reason.startswith("Variety evidence profile:")
+    variety_evidence = next(
+        (item for item in request_evidence if isinstance(item, dict) and item.get("variety")),
+        {},
+    )
+    applicable_fields = [
+        str(item) for item in (variety_evidence.get("field_ids") or [profile["field_id"]])
+    ]
     synthesis = {
         "request_id": request_row["id"],
         "field_id": profile["field_id"],
@@ -2220,11 +2281,30 @@ def store_research_synthesis(connection, request_row, sources):
             for item in sources
         ],
         "direct_field_observations": direct_observations if is_wetness else [],
+        "evidence_class": (
+            "cultivar_literature_prior" if is_variety_profile else "external_method_evidence"
+        ),
+        "variety": variety_evidence.get("variety") if is_variety_profile else None,
+        "applicable_fields": applicable_fields if is_variety_profile else [profile["field_id"]],
+        "required_local_validation": (
+            [
+                "dated phenology",
+                "serial Brix",
+                "titratable acidity and pH",
+                "berry weight or crop-load context",
+                "harvest date and intended wine style",
+            ]
+            if is_variety_profile else []
+        ),
         "conclusion": (
             "Direct farmer-confirmed canopy wetness is available and takes precedence over "
             "candidate sensor literature for this event. The board will compare the observation "
             "with its weather and disease series; no farmer literature review is required."
             if is_wetness and direct_observations else
+            "Cultivar-specific sources were retained as candidate phenology and maturity priors. "
+            "The board must compare their region, measurements and validation population with "
+            "local climate and berry observations before estimating harvest timing."
+            if is_variety_profile else
             "Candidate sources were retained for internal method comparison. They do not by "
             "themselves validate a field claim or change an operational threshold."
         ),
@@ -2232,11 +2312,13 @@ def store_research_synthesis(connection, request_row, sources):
         "farmer_action_required": False,
         "causal_claim": False,
     }
-    upsert_fact(
-        connection, profile["field_id"], "research", "external_source_synthesis",
-        synthesis, "public_sources", f"research_request:{request_row['id']}",
-        confidence=0.5, status="candidate_evidence",
-    )
+    predicate = "variety_evidence_profile" if is_variety_profile else "external_source_synthesis"
+    for target_field in synthesis["applicable_fields"]:
+        upsert_fact(
+            connection, target_field, "research", predicate,
+            synthesis, "public_sources", f"research_request:{request_row['id']}",
+            confidence=0.5, status="candidate_evidence",
+        )
     if str(request_row.get("reason") or "").startswith(
         "A field-related nano-os-agent experiment"
     ):
@@ -2609,6 +2691,10 @@ def mode_observe(connection, params, create=False):
     retired_source_reviews = retire_legacy_research_review_proposals(connection)
     changed_profiles = save_profiles(connection, profiles)
     profile_facts(connection, profiles)
+    variety_research_queued = (
+        ensure_variety_research_requests(connection, profiles)
+        if as_bool(params.get("research"), False) else []
+    )
     recovered_farmer_evidence = backfill_leaf_wetness_decisions(connection, repo_path)
     observations = discover_states(repo_path, profiles, selected_field)
     nano_observations = discover_nano_experiments(
@@ -2632,6 +2718,7 @@ def mode_observe(connection, params, create=False):
         "status": "success", "mode": "tick" if create else "observe",
         "repo_path": repo_path, "fields": [profile["field_id"] for profile in profiles],
         "profiles_changed": changed_profiles,
+        "variety_research_queued": variety_research_queued,
         "retired_source_review_proposals": retired_source_reviews,
         "recovered_farmer_evidence": recovered_farmer_evidence,
         "observations": {

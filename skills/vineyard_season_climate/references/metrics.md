@@ -56,3 +56,25 @@ The skill may emit Brix only when a field-matched JSON model:
 
 Without that model, return the climate feature vector for later calibration and
 set `sugar_estimate.available=false`.
+
+## Autonomous research series
+
+Each report writes one cumulative seasonal snapshot per field and date to
+`season_climate_metrics`. Metric names preserve their source section, for
+example `season.solar_energy_total_mj_m2`, `hourly.vpd_mean_kpa`,
+`preharvest_or_recent_30d.rain_total_mm`, and
+`indices.gdd_base10_c_days`.
+
+The research engine discovers these channels and tests candidate associations
+against other numeric or event series. No agronomic relationship is declared
+in the table. A relationship becomes reportable only after the engine's sample,
+temporal alignment, split-consistency, and correction requirements pass.
+
+## Harvest timing
+
+Temperature-forcing models can estimate phenological stages after local or
+transfer validation, but harvest is also a compositional and stylistic choice.
+Do not equate simulated maturity, a fixed Brix threshold, and the optimum
+collection date. Preserve the stage definition and validation error of every
+model and require current field composition measurements before operational
+use.

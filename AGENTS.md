@@ -195,7 +195,7 @@ Product/treatment advice is not a generic report route:
 - Never say "unable to retrieve the latest data" unless an actual tool/skill
   call failed and the failure is shown in the current turn.
 
-Seasonal climate and grape-ripening questions use a separate observed-weather
+Seasonal climate, grape-ripening, and harvest-timing questions use a separate observed-weather
 route. For questions about rainfall received by a field, April-to-harvest or
 monthly climate, day/night temperature or humidity, vintage heat/wetness,
 growing-degree days, Huglin/cool-night indices, grape quality context, or
@@ -203,11 +203,14 @@ sugar/Brix estimation, call:
 
 `vineyard-season-climate {"mode":"report","field":"<field or all>"}`
 
-Use its returned period, coverage, monthly statistics, indices, `send_text`,
-and sugar-estimation status. Never mix forecast rain into observed seasonal
-totals. Never derive Brix directly from heat or rainfall; a numerical estimate
-is valid only when the skill reports `sugar_estimate.available=true` from a
-validated field-matched model with validation error metadata.
+Use its returned period, coverage, monthly statistics, solar exposure, indices,
+quality context, `send_text`, sugar-estimation status, and harvest-readiness
+status. Never mix forecast rain into observed seasonal totals. Never derive
+Brix directly from heat or rainfall; a numerical estimate is valid only when
+the skill reports `sugar_estimate.available=true` from a validated field-matched
+model with validation error metadata. Never issue a harvest date from cultivar
+literature or climate alone. A date requires `harvest_readiness.available=true`
+from a locally validated phenology/composition model.
 
 ## Session Memory Is Not Truth
 

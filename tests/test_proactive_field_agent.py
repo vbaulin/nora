@@ -290,6 +290,45 @@ class ProactiveFieldAgentTest(unittest.TestCase):
         self.assertIsNotNone(fact)
         self.assertIn("https://extension.psu.edu/grape-disease", fact["value_json"])
 
+    def test_one_variety_search_covers_all_fields_and_stays_internal(self):
+        connection = self.connection()
+        profiles = MODULE.field_profiles(str(self.repo))
+        second = dict(profiles[0])
+        second["field_id"] = "field_2"
+        second["name"] = "Camp Sud"
+        second["profile"] = dict(second["profile"], id="field_2", name="Camp Sud")
+        profiles.append(second)
+        MODULE.save_profiles(connection, profiles)
+
+        queued = MODULE.ensure_variety_research_requests(connection, profiles)
+        self.assertEqual(queued, [{
+            "variety": "Chardonnay",
+            "fields": ["field_1", "field_2"],
+        }])
+        self.assertEqual(MODULE.ensure_variety_research_requests(connection, profiles), [])
+        request = MODULE.pending_research(connection)
+        self.assertEqual(request["evidence"][0]["variety"], "Chardonnay")
+
+        result = MODULE.mode_ingest_research(connection, {
+            "request_id": request["id"],
+            "sources": [{
+                "title": "Cultivar phenology study",
+                "url": "https://example.org/chardonnay-phenology",
+                "snippet": "Candidate cultivar-specific evidence.",
+            }],
+        })
+        self.assertEqual(result["synthesis"]["evidence_class"], "cultivar_literature_prior")
+        self.assertEqual(
+            result["synthesis"]["applicable_fields"], ["field_1", "field_2"]
+        )
+        self.assertFalse(result["synthesis"]["farmer_action_required"])
+        rows = connection.execute(
+            "SELECT field_id FROM facts WHERE predicate='variety_evidence_profile' "
+            "ORDER BY field_id"
+        ).fetchall()
+        self.assertEqual([row["field_id"] for row in rows], ["field_1", "field_2"])
+        self.assertIsNone(MODULE.next_proposal(connection))
+
     def test_search_credentials_are_whitelisted_and_provider_order_is_bounded(self):
         (self.repo / ".env").write_text(
             "SUPABASE_PUBLISHABLE_KEY=must-not-load\n"

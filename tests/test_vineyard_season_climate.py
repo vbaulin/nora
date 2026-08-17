@@ -90,3 +90,97 @@ def test_brix_requires_validated_field_model(tmp_path):
     assert estimate["available"] is True
     assert estimate["estimate_brix"] == 11.1
     assert estimate["validation_rmse_brix"] == 0.8
+
+
+def test_quality_context_retains_solar_vpd_and_recent_night_humidity():
+    summary = {
+        "indices": {"gdd_base10_c_days": 900.0, "huglin_index": 1400.0},
+        "season": {
+            "rain_total_mm": 210.0,
+            "temperature_mean_c": 19.0,
+            "mean_diurnal_range_c": 12.0,
+            "humidity_mean_pct": 67.0,
+            "heat_days_ge_35c": 4,
+            "longest_dry_spell_days": 23,
+            "solar_energy_total_mj_m2": 2400.0,
+            "solar_energy_mean_daily_mj_m2": 20.0,
+            "high_solar_days": 72,
+        },
+        "hourly": {
+            "night_temperature_mean_c": 15.0,
+            "night_humidity_mean_pct": 82.0,
+            "hours_rh_ge_90pct": 160,
+            "hours_rh_ge_95pct": 50,
+            "vpd_mean_kpa": 0.8,
+            "vpd_max_kpa": 3.1,
+        },
+    }
+    preharvest = {
+        "rain_total_mm": 18.0,
+        "temperature_mean_c": 21.0,
+        "solar_energy_total_mj_m2": 580.0,
+        "heat_days_ge_35c": 1,
+    }
+    recent_hourly = {"night_humidity_mean_pct": 77.0}
+    features = MODULE.quality_feature_vector(summary, preharvest, recent_hourly)
+    assert features["solar_energy_total_mj_m2"] == 2400.0
+    assert features["vpd_max_kpa"] == 3.1
+    assert features["preharvest_30d_night_humidity_mean_pct"] == 77.0
+
+
+def test_climate_metrics_are_persisted_as_research_series():
+    connection = sqlite3.connect(":memory:")
+    reports = [{
+        "status": "success",
+        "field_id": "field-1",
+        "start": "2026-04-01",
+        "end": "2026-08-17",
+        "coverage": {"solar_pct": 98.0},
+        "season": {"rain_total_mm": 122.5, "high_solar_days": 65},
+        "hourly": {"vpd_mean_kpa": 0.9},
+        "indices": {"gdd_base10_c_days": 1010.0},
+        "preharvest_or_recent_30d": {"rain_total_mm": 8.0},
+        "preharvest_or_recent_30d_hourly": {"night_humidity_mean_pct": 79.0},
+    }]
+    written = MODULE.persist_research_metrics(
+        connection, reports, generated_at="2026-08-17T08:00:00+00:00"
+    )
+    assert written == 7
+    row = connection.execute(
+        "SELECT value, unit FROM season_climate_metrics "
+        "WHERE field_id=? AND metric=?",
+        ("field-1", "season.rain_total_mm"),
+    ).fetchone()
+    assert row == (122.5, "mm")
+
+
+def test_missing_solar_channel_is_not_persisted_as_zero_exposure():
+    connection = sqlite3.connect(":memory:")
+    report = {
+        "status": "success",
+        "field_id": "field-1",
+        "start": "2026-04-01",
+        "end": "2026-08-17",
+        "coverage": {"solar_hourly_slots": 0},
+        "season": {
+            "days_with_solar_radiation": 0,
+            "solar_energy_total_mj_m2": 0.0,
+            "high_solar_days": 0,
+        },
+    }
+    MODULE.persist_research_metrics(connection, [report])
+    metrics = {
+        row[0] for row in connection.execute(
+            "SELECT metric FROM season_climate_metrics"
+        ).fetchall()
+    }
+    assert "season.solar_energy_total_mj_m2" not in metrics
+    assert "season.days_with_solar_radiation" not in metrics
+
+
+def test_harvest_date_is_not_inferred_from_weather_or_literature_alone():
+    result = MODULE.harvest_readiness("Chardonnay", {"available": False})
+    assert result["available"] is False
+    assert result["recommended_harvest_date"] is None
+    assert "titratable acidity and pH" in result["missing_evidence"]
+    assert "candidate" in result["literature_role"].lower()

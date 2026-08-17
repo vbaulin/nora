@@ -18,6 +18,7 @@ board without the vineyard app simply has one fewer domain.
 import json
 import os
 import re
+import sqlite3
 from pathlib import Path
 
 # Mirrors black_rot.INFECTION_THRESHOLD and WETNESS_RH_THRESHOLD in Goidanich.
@@ -328,7 +329,7 @@ def calibration_sources(context):
 
 
 def catalog_sources(context):
-    """Expose all local evidence, including season_climate_metrics, generically."""
+    """Expose the remaining application tables through generic discovery."""
     repo = repo_path(context)
     database = Path(repo) / "goidanich.db"
     if not database.exists():
@@ -342,7 +343,59 @@ def catalog_sources(context):
         "max_series": 240,
         "max_categories": 32,
         "max_partitions_per_table": 128,
+        "exclude_tables": ["season_climate_metrics"],
     }]
+
+
+def climate_series(context):
+    """Expose each discovered field/metric channel without prescribing a hypothesis.
+
+    The climate table is an EAV relation. Generic table sampling cannot
+    guarantee that every metric survives a board-wide series budget, so this
+    adapter expands only its observed dimensions. Weather is marked as an
+    environmental driver so identical station channels are not tested against
+    one another; time lag and the relationship to disease, fruit or operations
+    remain for the research engine to discover.
+    """
+    repo = repo_path(context)
+    database = Path(repo) / "goidanich.db"
+    if not database.exists():
+        return []
+    try:
+        with sqlite3.connect(database) as connection:
+            rows = connection.execute(
+                """
+                SELECT DISTINCT field_id, metric
+                FROM season_climate_metrics
+                WHERE metric LIKE 'weather.%'
+                ORDER BY field_id, metric
+                """
+            ).fetchall()
+    except (OSError, sqlite3.Error):
+        return []
+    field_names = {item["id"]: item["name"] for item in configured_fields(repo)}
+    series = []
+    for field_id, metric in rows:
+        field_id = str(field_id)
+        metric = str(metric)
+        label = f"{metric} for {field_names.get(field_id, field_id)}"
+        series.append({
+            "name": f"vineyard-climate:{field_id}:{metric}",
+            "role": "driver",
+            "subject": f"vineyard:{field_id}",
+            "source": {
+                "kind": "sqlite", "path": str(database),
+                "table": "season_climate_metrics", "columns": ["value"],
+                "time_column": "observed_at",
+                "where": "field_id = ? AND metric = ?",
+                "where_values": [field_id, metric],
+                "label": label, "limit": 5000,
+            },
+            "key": "value", "time_key": "observed_at",
+            "statistic": "mean", "label": label,
+            "discover_time_windows": False,
+        })
+    return series
 
 
 def evidence_paths(context):
@@ -364,6 +417,7 @@ PACK = {
         "Grapevine field evidence: disease-model response, climate and solar exposure, "
         "fruit-quality observations, operations, phenology, and alert performance."
     ),
+    "series": climate_series,
     "questions": declare_questions,
     "catalog_sources": catalog_sources,
     "calibration_sources": calibration_sources,

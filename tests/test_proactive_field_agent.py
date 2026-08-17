@@ -17,6 +17,11 @@ MODULE = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 
+PACK_PATH = Path(__file__).resolve().parents[1] / "skills" / "proactive_field_agent" / "pack.py"
+PACK_SPEC = importlib.util.spec_from_file_location("proactive_field_agent_pack", PACK_PATH)
+PACK_MODULE = importlib.util.module_from_spec(PACK_SPEC)
+PACK_SPEC.loader.exec_module(PACK_MODULE)
+
 
 class ProactiveFieldAgentTest(unittest.TestCase):
     def setUp(self):
@@ -57,6 +62,32 @@ class ProactiveFieldAgentTest(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def test_climate_channels_are_expanded_without_prescribing_direction(self):
+        with sqlite3.connect(self.repo / "goidanich.db") as db:
+            db.execute(
+                "CREATE TABLE season_climate_metrics("
+                "field_id TEXT, observed_at TEXT, metric TEXT, value REAL)"
+            )
+            db.executemany(
+                "INSERT INTO season_climate_metrics VALUES(?,?,?,?)",
+                [
+                    ("field_1", "2026-08-01", "weather.rain_mm", 2.0),
+                    ("field_1", "2026-08-01", "weather.solar_energy_mj_m2", 19.0),
+                ],
+            )
+        series = PACK_MODULE.climate_series({
+            "params_in": {"repo_path": str(self.repo)},
+        })
+        self.assertEqual(len(series), 2)
+        self.assertTrue(all(item["role"] == "driver" for item in series))
+        self.assertEqual(
+            {tuple(item["source"]["where_values"]) for item in series},
+            {
+                ("field_1", "weather.rain_mm"),
+                ("field_1", "weather.solar_energy_mj_m2"),
+            },
+        )
 
     def state_payload(self, disease="powdery_mildew", stale=False, wetness=False,
                       powdery_risk=75.0, powdery_due=True, black_index=0.0,

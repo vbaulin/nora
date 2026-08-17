@@ -39,6 +39,12 @@ class ProactiveDeploymentContractTest(unittest.TestCase):
         self.assertIn('payload.get("status") == "skipped"', cron)
         self.assertIn("evidence has not changed", cron)
 
+    def test_daily_refresh_exposes_climate_to_autonomous_research(self):
+        cron = (ROOT / "scripts" / "vineyard_guard_cron.py").read_text(encoding="utf-8")
+        self.assertIn("def call_season_climate", cron)
+        self.assertIn('"vineyard_season_climate"', cron)
+        self.assertIn("research_metrics_written", cron)
+
     def test_scheduler_recovers_stale_locks_and_cleans_up_failures(self):
         tick = (ROOT / "scripts" / "vineyard_guard_tick.sh").read_text(encoding="utf-8")
         self.assertIn("acquire_lock()", tick)

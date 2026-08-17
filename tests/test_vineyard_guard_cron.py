@@ -29,6 +29,12 @@ class VineyardGuardCronTest(unittest.TestCase):
         ) as daily, mock.patch.object(
             MODULE, "call_black_rot", return_value=success
         ), mock.patch.object(
+            MODULE, "call_season_climate",
+            return_value={
+                "ok": True,
+                "stdout": {"status": "success", "research_metrics_written": 18},
+            },
+        ) as climate, mock.patch.object(
             MODULE,
             "train_personalized_models",
             return_value={
@@ -44,8 +50,30 @@ class VineyardGuardCronTest(unittest.TestCase):
 
         self.assertEqual(status, 0)
         self.assertEqual(daily.call_count, 2)
+        climate.assert_called_once()
+        self.assertEqual(climate.call_args.args[0]["field"], "all")
         train.assert_called_once()
         self.assertEqual(train.call_args.args[0], ["field_1"])
+
+    def test_climate_research_failure_does_not_block_disease_alert_cache(self):
+        args = types.SimpleNamespace(
+            days=31, high_threshold=70, watch_threshold=50, delta_threshold=15,
+        )
+        success = {"ok": True, "stdout": {"status": "success"}}
+        with mock.patch.object(MODULE, "refresh_forecast_once", return_value={"ok": True}), \
+                mock.patch.object(MODULE, "configured_fields", return_value=["field_1"]), \
+                mock.patch.object(MODULE, "call_daily", return_value=success), \
+                mock.patch.object(MODULE, "call_black_rot", return_value=success), \
+                mock.patch.object(
+                    MODULE, "call_season_climate",
+                    return_value={"ok": False, "returncode": 1, "stdout": {}},
+                ), mock.patch.object(
+                    MODULE, "train_personalized_models",
+                    return_value={"ok": True, "models": [], "failures": []},
+                ):
+            status = MODULE.mode_refresh(args)
+
+        self.assertEqual(status, 0)
 
     def test_supabase_cycle_syncs_three_diseases_then_validates_released_models(self):
         sync = {"ok": True, "stdout": {"status": "success"}}

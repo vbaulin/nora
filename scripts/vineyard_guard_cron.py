@@ -223,6 +223,14 @@ def call_research(params):
     )
 
 
+def call_season_climate(params):
+    return run_json(
+        [os.path.join(SKILLS, "vineyard_season_climate", "run.py")],
+        payload=params,
+        timeout=300,
+    )
+
+
 def refresh_forecast_once():
     script = os.path.join(REPO, "forecast_projection.py")
     if not os.path.exists(script):
@@ -308,6 +316,18 @@ def mode_refresh(args):
                 "stderr": result.get("stderr"),
                 "stdout": payload,
             })
+    climate = call_season_climate({
+        "mode": "report",
+        "field": "all",
+        "repo_path": REPO,
+        "end": observed_end,
+        "write_artifacts": True,
+    })
+    climate_payload = climate.get("stdout") or {}
+    climate_ok = bool(
+        climate.get("ok")
+        and climate_payload.get("status") in {"success", "partial"}
+    )
     if failures:
         print("Vineyard Guard daily cache refresh incomplete.")
         print(json.dumps({"refreshed": refreshed, "failures": failures}, ensure_ascii=False)[:4000])
@@ -319,9 +339,16 @@ def mode_refresh(args):
         return 1
     trained = sum(1 for model in training.get("models") or [] if model.get("trained"))
     awaiting = len(training.get("models") or []) - trained
+    climate_summary = (
+        f"{climate_payload.get('research_metrics_written', 0)} daily climate observations "
+        "exposed to autonomous research"
+        if climate_ok else
+        "climate research refresh unavailable; disease alert cache remains valid"
+    )
     print(
         f"Vineyard Guard daily cache refreshed for {len(fields)} fields and 3 diseases; "
-        f"{trained} personalized models trained, {awaiting} awaiting confirmed labels."
+        f"{trained} personalized models trained, {awaiting} awaiting confirmed labels; "
+        f"{climate_summary}."
     )
     return 0
 

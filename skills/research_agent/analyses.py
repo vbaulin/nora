@@ -2020,6 +2020,11 @@ def discover_sqlite_series(catalog_source, limits=None):
             "mtime_ns": stat.st_mtime_ns, "sample_limit": sample_limit,
             "max_tables": max_tables, "max_series": max_series,
             "max_categories": int(catalog_source.get("max_categories") or 32),
+            "max_partitions_per_table": int(
+                catalog_source.get("max_partitions_per_table") or 32
+            ),
+            "include_tables": sorted(catalog_source.get("include_tables") or []),
+            "exclude_tables": sorted(catalog_source.get("exclude_tables") or []),
         })
     except OSError:
         return []
@@ -2043,7 +2048,14 @@ def discover_sqlite_series(catalog_source, limits=None):
                 "WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
             ).fetchall()
             if IDENTIFIER.fullmatch(str(row[0] or ""))
-        ][:max_tables]
+        ]
+        include_tables = set(catalog_source.get("include_tables") or [])
+        exclude_tables = set(catalog_source.get("exclude_tables") or [])
+        if include_tables:
+            tables = [table for table in tables if table in include_tables]
+        if exclude_tables:
+            tables = [table for table in tables if table not in exclude_tables]
+        tables = tables[:max_tables]
         for table in tables:
             schema = connection.execute(f"PRAGMA table_info({table})").fetchall()
             columns = [row[1] for row in schema if IDENTIFIER.fullmatch(str(row[1] or ""))]

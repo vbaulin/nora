@@ -740,6 +740,14 @@ class SchemaDiscoveryTest(ResearchTestCase):
         self.assertTrue(any(item.get("discover_time_windows") for item in items))
         self.assertTrue(all(item["role"] == "both" for item in items))
 
+    def test_catalogue_can_exclude_a_table_owned_by_an_eav_adapter(self):
+        items = ANALYSES.discover_sqlite_series({
+            "kind": "sqlite_catalog", "path": str(self.database()),
+            "max_series": 64, "exclude_tables": ["arbitrary_trace"],
+            "cache": False,
+        })
+        self.assertEqual(items, [])
+
     def test_catalogue_is_consumed_without_declared_series(self):
         connection = self.connection()
         context = self.context(

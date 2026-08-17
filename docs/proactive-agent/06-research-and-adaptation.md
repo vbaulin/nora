@@ -224,11 +224,19 @@ skill, or a glob of the artifacts a skill wrote, and any source may carry a
              "params": {"mode": "report", "write_artifacts": true}}}
 ```
 
-Vineyard Guard uses exactly this: `vineyard-season-climate` computes each
-season's rainfall and accumulated heat and writes one artifact per year; the
-engine reads those artifacts and compares this season against the median and
-deviation of the previous ones. Five ordinary seasons and one drought produce
-one finding, and five ordinary seasons produce none.
+Vineyard Guard uses this boundary in two complementary ways.
+`vineyard-season-climate` writes human-readable annual artifacts and a daily
+SQLite matrix of 18 unit-preserving environmental channels per field. Its EAV
+adapter expands the observed field/metric dimensions, marks weather as an
+environmental driver, and leaves response choice and lag discovery to the
+generic engine. Disease outputs, image metrics, operations, phenology, and
+fruit-composition observations can therefore become candidate responses
+without adding a named agronomic correlation to the pack.
+
+The daily deterministic refresh updates this matrix before the hourly idle
+research loop. A cultivar literature profile supplies source-attributed prior
+knowledge, but it cannot by itself release a harvest date: current local
+phenology and composition measurements remain necessary.
 
 A skill-backed question sets its own `min_interval_seconds` — reading a season
 of weather is a weekly job, not an hourly one.

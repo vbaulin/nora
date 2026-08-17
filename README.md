@@ -314,10 +314,16 @@ runtimes. Its public integration contracts cover:
 - concise scheduled Telegram summaries and full reports on demand or alert;
 - catalog-checked, two-step farmer feedback and treatment confirmation;
 - board and field identity, SIGPAC-enriched provisioning, and Supabase sync;
-- field memory and proactive questions grounded in current model artifacts.
+- field memory and proactive questions grounded in current model artifacts;
 - observed April-to-harvest climate summaries with monthly rainfall,
   day/night conditions, heat/wetness indices, and calibration-ready Brix
-  features through `vineyard-season-climate`.
+  features through `vineyard-season-climate`;
+- autonomous, field-specific searches for relationships between solar
+  exposure, rainfall, heat, humidity, disease response, operations, phenology,
+  and fruit measurements, without a fixed list of correlations; and
+- one internally researched evidence profile per cultivar. Literature informs
+  a candidate maturity prior, while harvest timing remains unavailable until
+  local phenology and berry-composition measurements validate it.
 
 Read [VINEYARD_GUARD.md](VINEYARD_GUARD.md), the
 [disease-model contract](docs/applications/vineyard-disease-risk-models.md),

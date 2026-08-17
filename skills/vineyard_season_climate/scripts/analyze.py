@@ -191,40 +191,58 @@ def resolve_period(field, params, today):
     return start, nominal_end, explicit_harvest
 
 
-def fetch_observations(conn, station, start, end, local_tz, latitude, longitude):
-    rows = conn.execute(
-        """
-        SELECT codi_variable, data_lectura, valor_lectura
-        FROM meteo_raw
-        WHERE codi_estacio=? AND codi_variable IN (?, ?, ?, ?)
-        ORDER BY data_lectura
-        """,
-        (station, TEMP_CODE, HUMIDITY_CODE, RAIN_CODE, SOLAR_CODE),
-    ).fetchall()
+def fetch_observations(
+    conn, station, start, end, local_tz, latitude, longitude, row_cache=None,
+):
+    # Bound the query before timestamp parsing. Multi-field boards commonly
+    # share one weather station; parsing the station's full archive once per
+    # field is prohibitively slow on the board's small RISC-V CPU.
+    query_start = (start - timedelta(days=1)).isoformat()
+    query_end = (end + timedelta(days=2)).isoformat()
+    cache_key = (station, query_start, query_end, str(local_tz))
+    rows = row_cache.get(cache_key) if row_cache is not None else None
+    if rows is None:
+        raw_rows = conn.execute(
+            """
+            SELECT codi_variable, data_lectura, valor_lectura
+            FROM meteo_raw
+            WHERE codi_estacio=? AND codi_variable IN (?, ?, ?, ?)
+              AND data_lectura>=? AND data_lectura<?
+            ORDER BY data_lectura
+            """,
+            (
+                station, TEMP_CODE, HUMIDITY_CODE, RAIN_CODE, SOLAR_CODE,
+                query_start, query_end,
+            ),
+        ).fetchall()
+        rows = [
+            (int(variable), parse_timestamp(raw_timestamp, local_tz), float(raw_value))
+            for variable, raw_timestamp, raw_value in raw_rows
+        ]
+        if row_cache is not None:
+            row_cache[cache_key] = rows
     observations = defaultdict(dict)
     source_rows = defaultdict(int)
     source_slots = defaultdict(set)
-    for variable, raw_timestamp, raw_value in rows:
-        timestamp = parse_timestamp(raw_timestamp, local_tz)
+    for variable, timestamp, value in rows:
         if timestamp.date() < start or timestamp.date() > end:
             continue
         key = timestamp.replace(minute=0, second=0, microsecond=0)
-        value = float(raw_value)
-        source_rows[int(variable)] += 1
-        source_slots[int(variable)].add(key)
-        if int(variable) == RAIN_CODE:
+        source_rows[variable] += 1
+        source_slots[variable].add(key)
+        if variable == RAIN_CODE:
             observations[key]["rain"] = observations[key].get("rain", 0.0) + value
-        elif int(variable) == SOLAR_CODE:
+        elif variable == SOLAR_CODE:
             observations[key]["solar_sum"] = observations[key].get("solar_sum", 0.0) + value
             observations[key]["solar_count"] = observations[key].get("solar_count", 0) + 1
-        elif int(variable) == TEMP_CODE:
+        elif variable == TEMP_CODE:
             observations[key]["temp_sum"] = observations[key].get("temp_sum", 0.0) + value
             observations[key]["temp_count"] = observations[key].get("temp_count", 0) + 1
-        elif int(variable) == HUMIDITY_CODE:
+        elif variable == HUMIDITY_CODE:
             observations[key]["humidity_sum"] = observations[key].get("humidity_sum", 0.0) + value
             observations[key]["humidity_count"] = observations[key].get("humidity_count", 0) + 1
-        observations[key]["is_day"] = solar_is_day(key, latitude, longitude)
-    for values in observations.values():
+    for timestamp, values in observations.items():
+        values["is_day"] = solar_is_day(timestamp, latitude, longitude)
         if values.get("temp_count"):
             values["temp"] = values["temp_sum"] / values["temp_count"]
         if values.get("humidity_count"):
@@ -736,14 +754,14 @@ def markdown_report(report):
     return "\n".join(lines)
 
 
-def analyze_field(conn, field, params, local_tz, today):
+def analyze_field(conn, field, params, local_tz, today, row_cache=None):
     field_id = str(field.get("id") or "field")
     field_name = str(field.get("name") or field.get("location") or field_id)
     latitude, longitude = field_coordinates(field)
     station = field_station(field, params.get("station"))
     start, end, explicit_harvest = resolve_period(field, params, today)
     observations, source_counts = fetch_observations(
-        conn, station, start, end, local_tz, latitude, longitude
+        conn, station, start, end, local_tz, latitude, longitude, row_cache
     )
     records = daily_records(observations, start, end, latitude)
     season = subset_statistics(records)
@@ -875,7 +893,17 @@ def main():
     local_tz = ZoneInfo(str(params.get("timezone") or "Europe/Madrid"))
     today = datetime.now(local_tz).date()
     with sqlite3.connect(db_path) as conn:
-        reports = [analyze_field(conn, field, params, local_tz, today) for field in fields]
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_meteo_raw_station_time_variable
+            ON meteo_raw(codi_estacio, data_lectura, codi_variable)
+            """
+        )
+        row_cache = {}
+        reports = [
+            analyze_field(conn, field, params, local_tz, today, row_cache)
+            for field in fields
+        ]
         research_metrics_written = persist_research_metrics(conn, reports)
     for report in reports:
         report.pop("_research_daily", None)

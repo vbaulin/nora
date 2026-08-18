@@ -1,11 +1,11 @@
 ---
-title: Proactive Dialogue and Confirmation
-summary: Let a change initiate one precise question while keeping consequential actions under confirmation.
+title: Let Evidence Start the Conversation
+summary: Send one useful question from a new observation and connect an ordinary-language answer to the right experiment.
 order: 5
 eyebrow: Chapter 5
 ---
 
-# Proactive Dialogue and Confirmation
+# Let Evidence Start the Conversation
 
 The proactive adapter converts released evidence into an interaction. It does
 not replace the scientific model, task engine, or domain-specific write route.
@@ -18,7 +18,7 @@ Its loop is deliberately bounded:
 observe -> compare -> propose one next step -> wait -> record decision
 ```
 
-## Seven objects
+## What a useful question needs
 
 A proactive application should make these objects explicit:
 
@@ -35,7 +35,7 @@ This model generalizes beyond farming. A microscope can propose a focus check;
 a fermenter can ask whether a sample was taken; a machine monitor can request a
 bearing inspection.
 
-## Modes in the reference adapter
+## How the reference companion processes a reply
 
 | Mode | Purpose |
 |---|---|
@@ -49,7 +49,7 @@ bearing inspection.
 | `record_operation` | Write only a complete, explicitly confirmed operation |
 | `notify` | Package an existing proposal through the normal notification route |
 
-## Stable references
+## Give every open question a stable reference
 
 Farmer-facing proposals include an identifier such as `PF-12`. A short reply
 can then be resolved to the exact field, disease, or operation follow-up that
@@ -64,7 +64,7 @@ The first processing step is read-only `proposal_context`. If it resolves one
 subject and one domain route, the domain capture skill prepares a structured
 draft. Only an explicit second confirmation writes the result.
 
-## Ambiguity is an output
+## Ask when the subject is ambiguous
 
 When a message could refer to more than one field, sample, or operation, the
 correct result is a clarification question. Guessing creates false evidence.
@@ -77,11 +77,11 @@ Agent: Which field, which product/code, dose per hectare, treated area, and
        application method should I record?
 ```
 
-The system can understand informal language while preserving a deterministic
-write boundary. Language interpretation drafts the structure; confirmation
+The system can understand informal language while preserving a deliberate
+confirmation step. Language interpretation drafts the structure; confirmation
 authorizes persistence.
 
-## Notification policy
+## Protect the operator's attention
 
 Proactivity should not become message flooding. The reference adapter:
 
@@ -91,7 +91,7 @@ Proactivity should not become message flooding. The reference adapter:
 - attaches only artifacts belonging to the relevant alert disease;
 - never treats an accepted proposal as proof that an operation occurred.
 
-## A question is the last step, not the first
+## Investigate locally before asking
 
 Everything above describes how to ask well. The stronger discipline is to ask
 rarely, because the board answered the question itself. A raw threshold

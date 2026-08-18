@@ -1,24 +1,24 @@
 ---
-title: Reasoning and Deterministic Execution
-summary: Put uncertain planning and physical control on opposite sides of an explicit contract.
+title: Give the AI a Laboratory, Not a Shell
+summary: Combine open-ended scientific reasoning with a physical system that can keep measuring reliably on its own.
 order: 1
 eyebrow: Chapter 1
 ---
 
-# Reasoning and Deterministic Execution
+# Give the AI a Laboratory, Not a Shell
 
-An LLM is useful when the next question is uncertain: which measurement would
-discriminate between two hypotheses, which existing capability matches a new
-request, or which failed step deserves investigation. It is a poor process
-supervisor for a camera, sensor, actuator, or week-long monitor.
+An LLM can help choose a discriminating measurement, connect a request to an
+existing capability, or explain why a step failed. A camera still needs to
+capture on time when the network is down, and a week-long monitor cannot depend
+on one uninterrupted conversation.
 
-nano-os-agent therefore begins with a boundary rather than a prompt.
+Nora combines both strengths:
 
 ```text
-uncertain intent -> declared task -> deterministic execution -> evidence
+scientific question -> repeatable task -> physical observation -> evidence
 ```
 
-## Three runtime roles
+## A system that can keep working
 
 | Runtime | Owns | Does not own |
 |---|---|---|
@@ -31,12 +31,12 @@ Note where the research engine sits. It reasons about data, deterministically
 and within a budget, which is exactly the part of "reasoning" that does not
 need an LLM at all.
 
-The distinction is implemented in the repository contracts
+The distinction is implemented in the runtime
 ([AGENTS.md](https://github.com/vbaulin/nora/blob/main/AGENTS.md) and
 [HARDWARE_BOUNDARY.md](https://github.com/vbaulin/nora/blob/main/HARDWARE_BOUNDARY.md)),
 not merely described in this tutorial.
 
-## Capability-first routing
+## Start from what the instrument can already do
 
 Before answering a board question, PicoClaw should inspect registered skills,
 current nano-os-agent tasks, and existing artifacts. A current structured
@@ -55,7 +55,7 @@ flowchart TD
     E --> A["Explain only released evidence"]
 ```
 
-## The hardware boundary
+## Why named capabilities matter
 
 Direct shell access may look expedient, but it bypasses the controls needed on
 a constrained edge board. Camera initialization, NPU memory, I2C writes, and
@@ -69,11 +69,11 @@ Use this order:
 3. A registered skill for a reusable board capability.
 4. A draft skill followed by validation and promotion.
 
-The boundary is especially important after an error. A low-level failure is
+This separation is especially important after an error. A low-level failure is
 evidence that a declared capability failed; it is not permission to replace the
 task with unjournaled probing.
 
-## Why this makes the system proactive
+## Why it can work between visits
 
 Autonomy does not require an LLM to remain awake. nano-os-agent can execute and
 journal while PicoClaw is offline. A compact summary or released anomaly can

@@ -1,162 +1,144 @@
-# Tutorial: Build an Autonomous Research Executor
+# Tutorial: Build a Scientific Observer That Can Follow Up
 
-## From deterministic measurement to evidence-based dialogue
+This tutorial turns one measurement into a self-running scientific workflow.
+You will collect observations, investigate the resulting time series, create a
+useful question from new evidence, and connect the answer to the next
+experiment.
 
-This is the single-page operator version. The chaptered tutorial, with
-diagrams and a laptop quickstart, is at
+You can complete the data sections on a laptop. A LicheeRV Nano or another
+Linux host is needed only when you connect a physical instrument.
+
+The longer, chaptered version is available at
 [vbaulin.github.io/nora](https://vbaulin.github.io/nora/).
 
-nora runs experiments, keeps the evidence honest, and asks you only when the
-answer would change something. It is not a chatbot: it does not wait for a
-chat question, and it does not let an LLM operate hardware continuously. It
-runs bounded experiments, records evidence, studies what came back, proposes
-one next action, and waits for confirmation when that action has consequences.
+## What You Are Building
 
-The runtime is not tied to the board. The executor is a static Go binary that
-builds for x86-64, ARM and RISC-V, and the research engine is
-standard-library Python, so the same tree runs on a small board, a laptop, or
-a cloud VM — see [`deploy/`](../deploy/README.md). A board matters when the
-experiment is physical; when the measurements arrive over the network, the
-work is identical.
+Most monitoring systems stop after recording and alerting. This observer has a
+longer loop:
 
-Vineyard Guard is the complete worked application later in the tutorial. Its
-farmer interaction demonstrates the general method; agriculture is not the
-architecture.
+```text
+measure -> keep context -> compare with history -> investigate a change
+        -> ask for missing human knowledge -> run the next bounded experiment
+```
 
-At the end, you will understand how to:
-
-- run a deterministic experiment independently of the LLM;
-- distinguish measurement, memory, protocol adaptation, skill learning, and
-  model training;
-- turn released evidence into a concise proactive message;
-- resolve informal human replies without silently changing state;
-- validate and promote a new hardware skill;
-- retain attributed internet research as candidate evidence;
-- attach an application such as a microscope, fermentation monitor, machine
-  health service, or Vineyard Guard;
-- verify the existing farmer-facing reference deployment safely.
-
-## 1. The general scientific loop
-
-The platform separates reasoning from physical execution:
+A microscope can increase sampling around a transition. A fermentation station
+can request one manual density measurement when image and audio signals
+disagree. A field board can compare weather, disease models, operations, and
+inspection feedback. The machinery is the same in each case.
 
 ```mermaid
 flowchart LR
-    G["Scientific goal"] --> P["PicoClaw: reason and select capability"]
-    P --> C["Inspect current tools, skills, tasks, and artifacts"]
-    C --> N["nano-os-agent: deterministic task"]
-    N --> H["Sensor, camera, NPU, actuator, or software model"]
-    H --> J["Measurements and experiment journal"]
-    J --> R{"Release checks pass?"}
-    R -->|no| Q["Quarantine result and diagnose"]
-    R -->|yes| E["Current evidence"]
-    E --> D{"Change, discrepancy, or missing fact?"}
-    D -->|no| J
-    D -->|yes| O["One bounded proposal"]
-    O --> U["Human or supervisory policy"]
-    U -->|confirm| N
-    U -->|correct or reject| M["Record decision with provenance"]
-    M --> E
+    G["Research question"] --> T["Repeatable task"]
+    T --> O["Observation"]
+    O --> J["Evidence notebook"]
+    J --> R["Local investigation"]
+    R --> M{"Would missing knowledge change the next step?"}
+    M -->|no| J
+    M -->|yes| Q["One human question"]
+    Q --> C["Confirmed answer"]
+    C --> T
 ```
 
-The loop is proactive because new evidence can initiate a proposal. It remains
-controlled because the proposal is not the physical action.
+## 1. Choose the Unit You Want to Follow
 
-Three runtimes carry different responsibilities:
+Start with a subject, not a device. A subject is the entity whose history must
+remain coherent:
 
-| Runtime | Responsibility |
-|---|---|
-| PicoClaw | Interpret intent, inspect capabilities, select a skill or task, explain evidence, and communicate through chat or Telegram |
-| nano-os-agent | Execute hardware and software steps with timeouts, retries, expectations, journals, and before/after metrics |
-| Application adapter | Convert domain artifacts into observations, define proposal rules, and store confirmed domain events |
+- a sample under a microscope;
+- one fermentation batch;
+- a motor under a known operating load;
+- a plant, plot, or environmental station;
+- a robot and the object it is manipulating; or
+- a dataset, simulation, or model version.
 
-The current `proactive-field-agent` is one application adapter. It implements
-the pattern for fields and Vineyard Guard. A microscope or fermentation
-application should provide its own observation adapter and proposal policy
-while reusing PicoClaw, nano-os-agent, the task runner, and the skill lifecycle.
-
-## 2. What learning means here
-
-The word *learning* covers five separate mechanisms. Keeping them separate
-prevents chat history from being mistaken for experimental knowledge.
-
-### 2.1 Evidence memory
-
-The board accumulates timestamped measurements, artifacts, task verdicts, and
-human-confirmed observations. Each item retains its source. A journal entry can
-show that a focus score fell after six hours; it cannot by itself explain why.
-
-### 2.2 Protocol adaptation
-
-A deterministic policy can change the next measurement schedule within
-declared bounds. For example, a microscope can move from one frame every ten
-minutes to one frame per minute when a registered change-point detector fires.
-The journal must record both the trigger and the new interval.
-
-### 2.3 Skill learning
-
-PicoClaw may propose or write a draft capability. nano-os-agent validates it
-against explicit inputs, outputs, safety checks, and repeated experiments. The
-skill becomes available for unattended use only after `validate_skill` and
-`promote_skill` pass.
-
-### 2.4 Model learning
-
-Fitted parameters, classifiers, or federated model deltas belong to an
-application training pipeline. Training data, model identity, evaluation, and
-release status must be explicit. An LLM paraphrase is not model training.
-
-### 2.5 Human correction
-
-A human can label a false alarm, identify a sample, correct an operation, or
-report an outcome. Free text first becomes a structured draft. It enters
-evidence memory only after confirmation.
-
-These mechanisms support useful adaptation without claiming causality. A later
-observation can be linked to an earlier operation as a temporal association,
-with `causal_claim=false`, until an experimental design supports a stronger
-claim.
-
-## 3. Verify the platform
-
-You need a LicheeRV Nano board with PicoClaw and nano-os-agent installed. A
-camera, sensor, or application repository is optional for the first read-only
-experiment.
-
-On the board, check the gateway:
-
-```bash
-wget -qO- http://127.0.0.1:18790/health
-wget -qO- http://127.0.0.1:18790/ready
-```
-
-`/health` should report `status: ok`; `/ready` should report `status: ready`.
-
-Inspect registered capabilities before trying hardware:
-
-```bash
-/opt/picoclaw/picoclaw skills list
-ls -1 /root/nano-os-agent/tasks
-```
-
-The same information is available in the board web interface:
+Write one initial question:
 
 ```text
-http://BOARD_IP:18800/runtime
-http://BOARD_IP:18800/nano-os-agent
+Does sample A change growth regime during the next 24 hours?
 ```
 
-The nano-os-agent page lists tasks, recent runs, skills, journals, and rendered
-artifacts. It is the deterministic control surface. Chat is the reasoning and
-explanation surface.
+Then name the observations that could answer it:
 
-## 4. Run a first read-only experiment
+```text
+image, capture time, focus score, illumination, object area, edge velocity
+```
 
-Create a one-shot task on the board. This task reads system state and writes an
-experiment record; it does not change hardware:
+This small design step prevents the experiment from becoming a collection of
+unrelated sensor readings.
+
+## 2. Try Autonomous Investigation on a Laptop
+
+Clone the repository and create a small journal:
 
 ```bash
-cat > /tmp/tutorial_system_snapshot.yaml <<'YAML'
+git clone https://github.com/vbaulin/nora.git
+cd nora
+mkdir -p /tmp/nora-demo/monitors
+
+python3 - <<'PY'
+import datetime as dt
+import json
+import random
+
+random.seed(1)
+now = dt.datetime.now(dt.timezone.utc)
+rows = [
+    {
+        "timestamp": (now - dt.timedelta(minutes=(48 - i) * 30)).isoformat(),
+        "lux": min(100.0, round(random.gauss(86, 15), 1)),
+        "temp_c": round(21 + random.gauss(0, 0.4), 2),
+    }
+    for i in range(48)
+]
+open("/tmp/nora-demo/monitors/light_probe.jsonl", "w").write(
+    "\n".join(json.dumps(row) for row in rows)
+)
+PY
+```
+
+Ask the research engine to inspect the directory:
+
+```bash
+printf '%s' '{"mode":"cycle","state_dir":"/tmp/nora-demo/state","journal_dirs":"/tmp/nora-demo/monitors"}' \
+  | ./skills/research_agent/run.sh
+```
+
+The light values accumulate at 100, so the engine raises a possible measurement
+ceiling. It does not need a rule naming `lux`; it infers numeric channels from
+the journal and matches the observed shape to a suitable analysis.
+
+```json
+{
+  "status": "success",
+  "raised": ["lux piles up against 100 instead of passing it"],
+  "investigated": [{
+    "subject": "light_probe",
+    "analysis": "ceiling_saturation",
+    "sample_size": 48,
+    "verdict": "material_unresolved"
+  }]
+}
+```
+
+The temperature channel remains ordinary and produces no finding. The engine
+stores that negative result so it does not repeatedly rediscover the same
+unproductive question.
+
+## 3. Express a Physical Observation as an Experiment
+
+Build Nora for the host:
+
+```bash
+go build -o nora main.go
+
+# Cross-build for the reference RISC-V board:
+GOOS=linux GOARCH=riscv64 CGO_ENABLED=0 go build -o nora-riscv64 main.go
+```
+
+A task describes the operation, its time limit, and the result required for a
+successful reading:
+
+```yaml
 - id: tutorial_system_snapshot
   name: "Tutorial system snapshot"
   priority: 1
@@ -170,30 +152,25 @@ cat > /tmp/tutorial_system_snapshot.yaml <<'YAML'
       expect:
         ram_total_mb: ">=1"
       timeout: 15
+      max_retries: 1
       on_fail: block
-YAML
-
-/root/nano-os-agent/nano-os-agent \
-  --once /tmp/tutorial_system_snapshot.yaml
 ```
 
-Read the newest journal entry from the configured journal location:
+Run it:
 
 ```bash
-tail -1 /root/nano-os-agent/experiments.jsonl 2>/dev/null \
-  || tail -1 /tmp/experiments.jsonl
+/root/nano-os-agent/nano-os-agent --once tutorial_system_snapshot.yaml
+tail -1 /root/nano-os-agent/experiments.jsonl
 ```
 
-The important result is not prose. It is a task verdict linked to the executed
-steps and their structured outputs. If the expectation fails, the result must
-remain failed or partial. PicoClaw may diagnose it, but it may not relabel it as
-success.
+The journal tells you which steps ran, which checks passed, how long the task
+took, and where its artifacts were written. A failed expectation remains
+failed. Chat can explain the failure, but it cannot rewrite the experimental
+record.
 
-## 5. Extend one measurement into a monitor
+## 4. Turn One Reading into a Monitor
 
-A repeated task keeps sampling local and wakes the LLM only for a compact
-summary or anomaly. Keep templates at `status: template` until an operator
-intentionally launches them.
+Add bounded repetition:
 
 ```yaml
 - id: environmental_baseline
@@ -203,7 +180,6 @@ intentionally launches them.
   steps:
     - id: snapshot
       action: call_skill
-      save_as: environment
       parameters:
         skill_name: sensor_fusion_snapshot
       expect:
@@ -216,67 +192,51 @@ intentionally launches them.
         continue_on_fail: true
 ```
 
-This task produces one day of five-minute observations. A later
-`monitor_summary` call can reduce those rows to extrema, trends, failures, and
-representative artifacts. PicoClaw should reason over that compact evidence,
-not hundreds of raw chat messages.
+This template describes one day of five-minute samples. Keep long examples at
+`status: template` until you intentionally launch a pending copy.
 
-## 6. Make an experiment proactive
+Local repetition matters for cost and continuity. The board can collect 288
+samples without 288 network requests or LLM turns. Later, `monitor_summary`
+or the research engine reads the compact journal.
 
-A proactive application needs seven explicit objects:
+## 5. Let the Observer Find Questions
 
-1. **Subject:** the instrument, sample, machine, plot, batch, or experimental
-   unit being observed.
-2. **Observation:** a current structured measurement with timestamp, source,
-   units, freshness, and uncertainty.
-3. **Trigger:** a declared threshold, discrepancy, missing fact, or change
-   point.
-4. **Proposal:** one bounded next observation, comparison, or operation.
-5. **Confirmation rule:** whether a human must approve or correct the proposal.
-6. **Executor route:** the exact nano-os-agent task or skill that performs it.
-7. **Outcome rule:** what later evidence will close the proposal.
+The research engine selects analyses from the shape of stored evidence. Current
+analyses include:
 
-A minimal released observation can use this shape:
+| Observed shape | Scientific question |
+|---|---|
+| Persistent level change | Did the subject move beyond its usual variation? |
+| Values crowding a limit | Is the sensor or model saturating? |
+| Missing interval | Did the source stop observing? |
+| Two sources diverge | Which measurement or assumption needs checking? |
+| One series repeatedly moves first | Is the relationship stable enough to design a follow-up study? |
+| Alerts disagree with confirmed outcomes | Should the local alert policy be recalibrated? |
+| This season differs from previous periods | Which weather, operation, or sampling difference explains the deviation? |
 
-```json
-{
-  "subject_id": "microscope_01/sample_A",
-  "observed_at": "2026-08-02T09:30:00+02:00",
-  "measurement": "focus_score",
-  "value": 0.41,
-  "unit": "normalized_index",
-  "source": "focus_quality_score@1.2.0",
-  "freshness": "current",
-  "uncertainty": "illumination changed by 3%",
-  "experiment_verdict": "keep"
-}
-```
+Candidate relationships are generated from timestamped numeric channels rather
+than a fixed list of expected correlations. The engine tests both halves of the
+available window, corrects for the number of lags and clock windows considered,
+and records rejected pairs. A surviving result supports a lead-lag hypothesis,
+not a causal claim.
 
-The adapter may then create a proposal:
+Four internal outcomes control attention:
 
-```json
-{
-  "proposal_id": "MIC-41",
-  "subject_id": "microscope_01/sample_A",
-  "reason": "focus score fell below the validated 0.55 limit",
-  "next_action": "capture a three-position focus bracket",
-  "executor": "task:microscope_focus_bracket",
-  "confirmation_required": true,
-  "status": "proposed"
-}
-```
+| Outcome | What happens |
+|---|---|
+| The pattern matters and local evidence cannot settle it | It may become one human-facing finding. |
+| The pattern is measurable but changes no decision | It stays in the notebook. |
+| Existing observations already answer it | The answer is stored without asking anyone. |
+| Data are insufficient to run the comparison | The gap is recorded, not presented as a discovery. |
 
-The proposal remains distinct from execution. This distinction is the core
-safety property of proactive interaction.
+## 6. Let Evidence Start a Conversation
 
-## 7. Human interaction through chat or Telegram
-
-The channel should transmit a short evidence statement, uncertainty, one
+A useful proactive message contains a subject, observation, uncertainty, one
 request, and a stable reference:
 
 ```text
 Microscope M1, sample A: focus quality fell from 0.78 to 0.41.
-Illumination remained within 3%, so focus drift is the current working
+Illumination changed by less than 3%, so focus drift is the current
 explanation, not a confirmed cause.
 
 Proposed check: capture a three-position focus bracket.
@@ -284,8 +244,7 @@ Reply accept, defer, or correct.
 Ref: MIC-41
 ```
 
-If the operator replies `yes, do it after lunch`, the LLM resolves the
-reference and creates a structured draft:
+An informal reply such as `yes, after lunch` becomes a draft:
 
 ```json
 {
@@ -296,385 +255,151 @@ reference and creates a structured draft:
 }
 ```
 
-The user confirms or corrects the draft. Only then is the decision written and
-the deterministic task queued. A reply without a resolvable reference, subject,
-or operation asks a clarification question instead of guessing.
-
-After execution, the companion reports the outcome from task evidence:
+The operator confirms or corrects the draft. Only then is the decision written
+and the task queued. After execution, the result again comes from the journal:
 
 ```text
 MIC-41 completed. The center frame scored 0.43; the +0.4 mm frame scored 0.76.
-The result supports a focus-offset correction for this setup. No permanent
-camera setting has been changed.
+No permanent camera setting was changed.
 ```
 
-This pattern also works when no physical action is proposed. The companion can
-ask for a manual label, a reference measurement, or permission to research a
-method.
+The same route handles labels, manual observations, operations, and corrections.
+Ambiguous replies lead to one clarification rather than a guessed record.
 
-## 8. Use internet research without turning it into an instruction
+## 7. Teach Nora a New Sensor
 
-When local evidence cannot answer a question, PicoClaw can run a bounded search
-and retain:
+An unknown device becomes a reusable capability through experiments:
 
-- the exact query;
-- source title and URL;
-- provider and retrieval time;
-- a short source snippet;
-- the proposal that requested review.
+1. list the skills and current hardware map;
+2. run read-only discovery;
+3. identify candidate hardware from local evidence and source-attributed
+   documentation;
+4. draft a skill with declared inputs, units, and JSON output;
+5. call `validate_skill`;
+6. test repeated readings, range, missing-device behavior, memory, and timing;
+7. promote the skill only after the declared checks pass; and
+8. recheck it when hardware or behavior changes.
 
-Search output is candidate evidence. It cannot directly select a chemical,
-change an actuator, establish a scientific fact, or promote a skill. The next
-message should distinguish the source claim from the board observation:
-
-```text
-Two manufacturer documents recommend a focus bracket after thermal drift.
-Our board measured a 6.2 C enclosure rise, but we have not tested whether that
-temperature change caused this focus shift. Shall I run the bracket test?
-```
-
-The deployed field adapter tries Tavily, Brave, DuckDuckGo HTML, and
-DuckDuckGo Lite in that order according to configured credentials and endpoint
-availability. New applications can reuse the same source-attribution rule.
-
-## 9. Learn a new hardware skill
-
-Unknown hardware follows a release process rather than direct shell probing:
-
-1. inspect current skills, tasks, and the hardware capability map;
-2. run a read-only discovery task;
-3. create a draft skill with declared inputs and JSON outputs;
-4. call `validate_skill`;
-5. run repeated experiments with explicit expectations;
-6. retain representative artifacts and failure cases;
-7. call `promote_skill` only after the checks pass;
-8. monitor drift after promotion.
-
-The repository template
+The task template
 [`tasks/023_promote_learned_skill.yaml`](../tasks/023_promote_learned_skill.yaml)
-shows the validation and promotion chain.
+implements the validation and promotion sequence.
 
-For example, an unrecognized I2C device should first produce a read-only bus
-inventory. PicoClaw may research candidate part numbers and draft a decoder.
-nano-os-agent then tests stable register reads. Only a validated decoder becomes
-an unattended sensor skill. A partial experiment remains quarantined.
+For an I2C device, the first experiment should inventory addresses without
+writing registers. A candidate datasheet can inform the decoder, but only
+stable physical readings make that decoder eligible for unattended use.
 
-## 10. Learning examples across applications
+## 8. Add an Application
 
-### Microscope timelapse
+The experiment runner and research engine are general. An application adds:
 
-Observation: crystal-edge velocity rises abruptly after six hours.
+- subject identities and stable properties;
+- the available observation stores;
+- scientific questions that are always relevant;
+- models and units specific to the field;
+- operations and labels supplied by people;
+- rules for deciding when a finding deserves a message; and
+- a route from an accepted proposal to a named task or skill.
 
-Proactive response: increase sampling for a bounded interval, preserve frames
-before and after the transition, and ask whether the operator wants a repeat at
-the same temperature.
+Keep measurements and credentials separate from reusable runtime code. A lab
+can publish its instrument skill without publishing sample identities. A field
+network can exchange selected model updates without centralizing all raw
+observations. See
+[Build Applications Without Giving Up Your Data](../REPO_BOUNDARY.md).
 
-Learning: the protocol now has evidence for where dense sampling is useful. It
-does not yet prove the transition mechanism.
+## 9. Example: Microscope Observer
 
-### Fermentation monitor
+The subject is `microscope_01/sample_A`. A repeated task records:
 
-Observation: bubble activity falls while temperature remains stable.
-
-Proactive response: request one manual density measurement instead of declaring
-a stalled fermentation. After confirmation, compare the manual result with
-audio and image signals.
-
-Learning: confirmed pairs can calibrate a local proxy or form labelled training
-data for a later model.
-
-### Machine health
-
-Observation: a motor vibration spectrum gains a persistent sideband after a
-load change.
-
-Proactive response: ask for the operating load and schedule a short repeat
-measurement. Do not stop the machine unless an explicit safety controller owns
-that decision.
-
-Learning: the board builds a machine-specific baseline and preserves the
-conditions under which the sideband appeared.
-
-### New environmental sensor
-
-Observation: I2C discovery repeatedly finds the same unknown address.
-
-Proactive response: propose a read-only identification experiment, research
-public datasheets, validate a draft decoder, and ask the operator to confirm
-the physical sensor model.
-
-Learning: a promoted skill becomes a reusable board capability. A guessed part
-number does not.
-
-## 11. Worked application: Vineyard Guard
-
-Vineyard Guard demonstrates the full loop with field YAML, three independent
-disease families, weather forecasts, plots, Supabase synchronization, farmer
-feedback, treatment records, and Telegram delivery.
-
-The phrase "the plant talks to the farmer" is an interface metaphor. The plant
-is not treated as a literal speaker. Farmer-facing claims must come from:
-
-1. a current measurement or disease-model result;
-2. a reviewed stable field property;
-3. a farmer-confirmed operation or observation;
-4. a cited external source retained for review.
-
-### 11.1 Why copy the example manifest?
-
-The provisioning guide starts with:
-
-```bash
-cp config/vineyard-board.example.json /tmp/my-board.json
+```json
+{
+  "subject_id": "microscope_01/sample_A",
+  "observed_at": "2026-08-02T09:30:00+02:00",
+  "focus_score": 0.78,
+  "illumination_change_percent": 1.8,
+  "object_count": 43,
+  "median_area_px": 812,
+  "edge_velocity_px_h": 2.4,
+  "image_path": "/tmp/microscope/sample_A_0930.jpg"
+}
 ```
 
-`config/vineyard-board.example.json` is a version-controlled template. It must
-remain generic so a pull, test, or new installation starts from reviewed
-defaults. Editing it directly is technically possible, but it creates four
-avoidable problems:
+When edge velocity changes, Nora checks focus and illumination before raising
+a biological question. A confirmed high-frequency run produces dense images
+around the transition. The original interval, trigger, confirmation, and
+result remain in one timeline.
 
-- real board IDs, coordinates, and farm metadata can be committed by mistake;
-- the repository becomes dirty for every deployment;
-- future template changes produce merge conflicts with one farm's values;
-- a second board may inherit the first board's identity.
+## 10. Example: Vineyard Guard
 
-The `/tmp` copy is deliberately disposable for a tutorial or one-time SD-card
-provisioning run. For a long-lived private manifest, store it outside the Git
-checkout, for example:
+Vineyard Guard is the complete field application. Each plot has its own
+identity, variety, weather history, disease models, operations, feedback, and
+plots. A daily board cycle:
 
-```bash
-mkdir -p "$HOME/.config/nano-os-agent/boards"
-cp config/vineyard-board.example.json \
-  "$HOME/.config/nano-os-agent/boards/my-board.json"
-```
+1. synchronizes selected network and feedback state;
+2. refreshes weather and three independent disease families;
+3. writes one current cache per field and disease;
+4. sends one concise board summary;
+5. attaches plots for active risks;
+6. studies field history during idle time; and
+7. asks the grower only for an observation or decision the board cannot make.
 
-Pass that path to the provisioner. The source template remains untouched.
+An informal reply such as `N2 is wet but I see no symptoms` is resolved to a
+field and disease context, shown as a structured draft, and stored only after
+confirmation. Treatment records follow the same two-step route and retain
+product identity, dose, water volume, area, method, and date.
 
-### 11.2 Provision field identity
+The field example demonstrates a general property: human observations are not
+outside the data system. Once confirmed, they become timestamped evidence that
+can test model alerts, calibrate local predictions, and guide the next study.
 
-Edit the private manifest with a unique board ID and one unique ID per physical
-field. Record at least the display name, GPS coordinates, variety, and planting
-year or vine age.
+Use the detailed [Vineyard Guard guide](../VINEYARD_GUARD.md) and
+[field application chapter](proactive-agent/08-vineyard-guard.md) for
+provisioning and scheduler commands.
 
-Preview before writing an SD-card root filesystem:
+## 11. Inspect the System
 
-```bash
-python3 scripts/provision_vineyard_sd.py \
-  --manifest "$HOME/.config/nano-os-agent/boards/my-board.json" \
-  --rootfs /Volumes/rootfs \
-  --dry-run
-```
-
-The complete SIGPAC and first-boot procedure is in
-[Vineyard board and SD-card provisioning](vineyard-sd-card-provisioning.md).
-
-### 11.3 Synchronize the application runtime
-
-From this repository:
+On a configured board:
 
 ```bash
-BOARD=root@192.168.36.102 \
-SSH_OPTIONS='-o StrictHostKeyChecking=no' \
-./scripts/sync_vineyard_board.sh
+wget -qO- http://127.0.0.1:18790/health
+wget -qO- http://127.0.0.1:18790/ready
+/opt/picoclaw/picoclaw skills list
+ls -1 /root/nano-os-agent/tasks
 ```
 
-The script synchronizes runtime contracts, Vineyard Guard skills, scheduler
-scripts, the proactive adapter, and selected Goidanich application files. It
-keeps `/root/nano-os-agent/skills` authoritative and bind-mounts those skills
-into the PicoClaw workspace. It does not copy this tutorial or the rest of the
-repository documentation because those files are not required at runtime.
-
-### 11.4 Verify the field adapter
-
-On the board:
-
-```bash
-/opt/picoclaw/picoclaw skills list | grep -E \
-  'proactive-field-agent|farmer-feedback-capture|farmer-notify|daily-vineyard-briefing'
-
-printf '%s\n' '{"mode":"self_test"}' \
-  | /root/nano-os-agent/skills/proactive_field_agent/run.sh \
-  | python3 -m json.tool
-```
-
-A ready deployment reports `installed=true`, `operational_ready=true`, SQLite
-integrity `ok`, configured fields, and current downy-mildew, powdery-mildew,
-and black-rot state for every field.
-
-### 11.5 Run an isolated proactive cycle
-
-Use temporary state so the tutorial cannot alter production proposals:
-
-```bash
-export DEMO_STATE=/tmp/proactive-field-tutorial
-export GOIDANICH=/root/.picoclaw/workspace/goidanich
-
-SKILL_MODE=observe \
-SKILL_STATE_DIR="$DEMO_STATE" \
-SKILL_REPO_PATH="$GOIDANICH" \
-  /root/nano-os-agent/skills/proactive_field_agent/run.sh \
-  | python3 -m json.tool
-
-SKILL_MODE=tick \
-SKILL_STATE_DIR="$DEMO_STATE" \
-SKILL_REPO_PATH="$GOIDANICH" \
-  /root/nano-os-agent/skills/proactive_field_agent/run.sh \
-  | python3 -m json.tool
-```
-
-Read the result by role:
-
-- `profiles` are reviewed field identities and stable covariates;
-- `observations` are current model, sensor, or experiment results;
-- `operations` are confirmed farmer records;
-- `facts` preserve provenance and confidence;
-- `proposals` are unexecuted candidate next steps;
-- `decisions` are explicit farmer responses;
-- `next_research` is a queued question, not an answer.
-
-An empty proposal list is valid when no action or clarification is needed.
-
-### 11.6 Farmer interaction example
-
-Assume the board sends:
+The web interface exposes the same working state:
 
 ```text
-N1 Chardonnay demana una inspecció del dosser.
-Evidència: senyal meteorològic de Black rot de la vinya
-(Guignardia bidwellii) i vigilància d'oïdi.
-No és una ordre de tractament.
-Ref: PF-12
+http://BOARD_IP:18800/runtime
+http://BOARD_IP:18800/nano-os-agent
 ```
 
-The farmer replies informally:
+The Task Runner shows running and completed tasks, skills, experiment journals,
+and rendered artifacts. Chat explains and starts work; it is not the source of
+instrument state.
 
-```text
-PF-12: cap símptoma
-```
+## 12. Before You Leave It Running
 
-The gateway first resolves context without writing:
+Confirm that:
 
-```bash
-printf '%s\n' \
-  '{"mode":"proposal_context","raw_text":"PF-12: cap símptoma"}' \
-  | /root/nano-os-agent/skills/proactive_field_agent/run.sh \
-  | python3 -m json.tool
-```
+- every physical operation has a named skill or task;
+- tasks have time limits and bounded repetition;
+- measurements include timestamp, unit, subject, and source;
+- failed and partial outcomes remain visible;
+- proposals and completed operations are distinct;
+- consequential work requires the intended confirmation;
+- external sources retain URLs and do not become instructions by themselves;
+- raw measurements and secrets are stored where the study intends; and
+- notification tests send human text and media rather than raw JSON or local
+  file paths.
 
-Because the proposal mentions two diseases, the adapter asks which disease the
-inspection concerns. For one resolved disease it returns `written=false`, the
-field, the disease, and `next_route=farmer-feedback-capture`.
+The design reasons behind these checks are explained in
+[Working with Physical Hardware](../HARDWARE_BOUNDARY.md).
 
-`farmer-feedback-capture` then produces a structured draft. Only the second
-call with `confirmed=true` writes the event, refreshes the relevant dashboard,
-and synchronizes it with Supabase. Accepting PF-12 does not authorize a
-treatment.
+## Continue
 
-General operations such as pruning, mowing, soil work, irrigation,
-fertilization, harvest, or sensor installation use `draft_operation` followed
-by explicit `record_operation` confirmation. Treatments and disease
-inspections remain on the product-catalog-aware feedback route.
-
-### 11.7 Daily proactive schedule
-
-BusyBox `crond` invokes `scripts/vineyard_guard_tick.sh` every five minutes.
-Dated stamps and locks make each stage run at most once per local day:
-
-| Local time | Stage |
-|---|---|
-| 07:55 | Synchronize board identity, neighbours, feedback events, disease history, training policy, peer/model deltas, and released models with Supabase; validate a released model locally when one exists |
-| 08:00 | Refresh weather, forecasts, dashboards, reports, and plots; fit field-specific downy and powdery models from confirmed outcomes |
-| 08:15 | Evaluate downy mildew, powdery mildew, and grapevine black rot independently; package one daily summary |
-| 08:35 | Ingest evidence, create bounded proposals, run at most one queued research request, and suppress duplicates |
-| 17:00 | Ingest later operations or observations and create a follow-up only when justified |
-
-The three disease families remain independent. A low result in one cannot
-suppress an alert or plot from another. A proactive proposal already covered
-by the daily report is retained as evidence and skipped for duplicate delivery.
-
-Federated transport being enabled does not imply that a model delta exists.
-The local trainer requires enough labelled windows and at least one confirmed
-positive and one confirmed negative outcome. Until then the artifact remains
-untrained, deterministic disease layers continue to operate, and no fallback
-coefficient is shared. Black-rot disease history is synchronized separately;
-the current black-rot implementation is not a learned federated classifier.
-
-### 11.8 Test Telegram packaging without sending
-
-```bash
-export PICOCLAW_OUTBOX=/tmp/proactive-field-tutorial-outbox
-mkdir -p "$PICOCLAW_OUTBOX"
-
-printf '%s\n' \
-  "{\"mode\":\"tick\",\"state_dir\":\"$DEMO_STATE\",\"repo_path\":\"$GOIDANICH\",\"notify\":true}" \
-  | /root/nano-os-agent/skills/proactive_field_agent/run.sh \
-  | python3 -m json.tool
-
-set -a
-. /root/.picoclaw/telegram.env
-set +a
-
-python3 /root/.picoclaw/workspace/scripts/telegram_outbox_sender.py \
-  --outbox "$PICOCLAW_OUTBOX" \
-  --once \
-  --dry-run
-```
-
-`--dry-run` validates recipients and media without sending or marking a package
-as delivered. Remove only the isolated tutorial data when finished:
-
-```bash
-rm -rf "$DEMO_STATE" "$PICOCLAW_OUTBOX"
-```
-
-## 12. Audit and safety checklist
-
-Before unattended operation, verify:
-
-- [ ] `/health` returns `ok` and `/ready` returns `ready`.
-- [ ] every physical action has a nano-os-agent skill or task route.
-- [ ] experiment verdicts preserve failed, partial, and blocked outcomes.
-- [ ] measurements include units, timestamps, source, and freshness.
-- [ ] a proposal is not represented as an executed action.
-- [ ] consequential operations require explicit confirmation.
-- [ ] later outcomes are not converted automatically into causal claims.
-- [ ] web sources retain URLs and remain candidate evidence.
-- [ ] draft skills pass validation and repeated experiments before promotion.
-- [ ] chat history is never used as current instrument or field state.
-- [ ] Telegram sends human text and media, not raw JSON or local file paths.
-- [ ] secrets do not appear in Git, traces, reports, or screenshots.
-
-For Vineyard Guard, also verify current state for all three diseases, a dry-run
-of the Telegram outbox, successful daily scheduler stamps, and an ambiguous
-multi-disease reply that asks for clarification.
-
-## 13. Where state lives
-
-General nano-os-agent evidence is stored in the configured experiment journal,
-task state, monitor journals, and artifact directories. The web Task Runner
-renders those artifacts without making chat the source of truth.
-
-The Vineyard Guard reference adapter adds:
-
-```text
-/root/.picoclaw/workspace/proactive_field/proactive_field.db
-/root/.picoclaw/workspace/proactive_field/traces.jsonl
-/root/.picoclaw/workspace/goidanich/results/
-/tmp/picoclaw_outbox/
-/tmp/vineyard_guard_cron.log
-```
-
-Use skill APIs rather than editing SQLite manually. The trace rotates at 1 MB
-and redacts credential-like top-level fields. `/tmp` contains transient media
-and should have enough free space for current plots and experiment artifacts.
-
-## Further reading
-
-- [PicoClaw and nano-os-agent web integration](picoclaw-nano-webapp-integration.md)
-- [Automatic lab experiments](applications/automatic-lab-experiments.md)
-- [Microscope timelapse station](applications/microscope-timelapse.md)
-- [Scientific reflexes](applications/scientific-reflexes.md)
+- [Chaptered tutorial](https://vbaulin.github.io/nora/)
+- [Application atlas](applications/)
+- [Board installation](../INSTALL_BOARD.md)
+- [Run on a laptop or cloud VM](../deploy/README.md)
 - [Self-improving field and lab observer](applications/self-improving-field-lab-observer.md)
-- [Waku-Agent patterns in the proactive field loop](waku-agent-proactive-field-integration.md)
-- [Vineyard Guard runtime](../VINEYARD_GUARD.md)
-- [Vineyard board and SD-card provisioning](vineyard-sd-card-provisioning.md)
+- [Automatic laboratory experiments](applications/automatic-lab-experiments.md)

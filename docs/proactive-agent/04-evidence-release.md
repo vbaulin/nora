@@ -1,18 +1,18 @@
 ---
-title: Evidence Memory and Release Gates
-summary: Preserve provenance, quarantine failed runs, and avoid turning temporal order into causality.
+title: Keep the Scientific Notebook Trustworthy
+summary: Preserve what was measured, where it came from, how fresh it is, and what remains uncertain.
 order: 4
 eyebrow: Chapter 4
 ---
 
-# Evidence Memory and Release Gates
+# Keep the Scientific Notebook Trustworthy
 
 A proactive system needs memory, but not every stored value has the same
 epistemic status. nano-os-agent journals attempted experiments. Application
 adapters maintain observations and confirmed facts. PicoClaw explains released
 evidence. Chat history is not a truth source for board state.
 
-## Evidence classes
+## Different records answer different questions
 
 | Class | Example | Permitted statement |
 |---|---|---|
@@ -22,21 +22,21 @@ evidence. Chat history is not a truth source for board state.
 | Public source | A paper or manual with URL and retrieval time | The source states or supports a candidate method |
 | Proposal | Inspect a sample or test a sensor placement | This is a suggested next action, not an executed fact |
 
-## Release gate
+## Decide what may be used as current evidence
 
 Field-related nano-os-agent results use a narrow release rule:
 
 - **Passing and internally consistent:** retain as `observed_success` with the
   scope of that run.
-- **Failed, partial, blocked, or step-inconsistent:** quarantine the result and
-  exclude its measurements from operational advice.
+- **Failed, partial, blocked, or step-inconsistent:** retain the result as
+  diagnostic evidence but exclude its measurements from operational advice.
 - **Missing current application state:** create an internal refresh or
   investigation request rather than inventing a current value.
 
-The gate limits what may influence downstream explanations. It does not erase
+This rule limits what may influence downstream explanations. It does not erase
 failure; failure remains valuable diagnostic evidence.
 
-## Provenance
+## Keep the path back to the source
 
 Every durable item should answer:
 
@@ -49,7 +49,7 @@ Every durable item should answer:
 
 Without these fields, a numeric value may be precise but scientifically weak.
 
-## Temporal association is not causality
+## Time order does not prove cause
 
 Suppose a farmer confirms an operation and a later observation is clean. The
 agent may store:
@@ -67,9 +67,9 @@ The sequence can guide a future question, but it does not establish that the
 operation caused the outcome. Stronger claims require controls, replication,
 or another defensible design.
 
-## Staleness
+## Old measurements need an age label
 
-Evidence also has a time boundary. A fresh dashboard, sensor snapshot, or task
+Evidence also has a useful lifetime. A fresh dashboard, sensor snapshot, or task
 result can answer a current question. Yesterday's value may remain valid
 history, but it should not be silently reused as today's state. Application
 adapters therefore define freshness and regeneration rules.

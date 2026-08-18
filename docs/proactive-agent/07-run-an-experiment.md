@@ -1,17 +1,17 @@
 ---
-title: Run and Extend an Experiment
-summary: Start on a laptop, move to hardware, turn one reading into a monitor, and let the board research what it recorded.
+title: Run Your First Observer
+summary: Start with a local journal, move to a board, and connect a measured change to a controlled follow-up.
 order: 7
 eyebrow: Chapter 7
 ---
 
-# Run and Extend an Experiment
+# Run Your First Observer
 
 This chapter is the operational path from nothing to a board that studies its
 own measurements. Everything up to hardware runs on a laptop with Python 3
 alone. No board, no install, no keys.
 
-## Part 1 — On your laptop
+## Part 1: On your laptop
 
 ### Run one analysis
 
@@ -35,7 +35,7 @@ printf '%s' '{"mode":"investigate","state_dir":"/tmp/nora-lab/state","analysis":
 
 The verdict is `material_unresolved`: the second half of the record sits about
 14 g above the first, far beyond the within-half spread. The finding names its
-own limitation — a level shift is a change in the record, not an explanation
+own limitation: a level shift is a change in the record, not an explanation
 for it.
 
 ### Let it find the question itself
@@ -48,8 +48,8 @@ printf '%s' '{"mode":"cycle","state_dir":"/tmp/nora-lab/state","journal_dirs":"/
 
 `raised` shows the question the scan wrote for itself. Run the command a second
 time: `raised` and `investigated` are both empty. A question it already knows is
-not news, and a question it could not close is re-checked on an interval —
-every six hours by default — rather than re-derived every cycle.
+not news, and a question it could not close is re-checked on an interval,
+every six hours by default, rather than re-derived every cycle.
 
 ### Read the state
 
@@ -61,7 +61,7 @@ printf '%s' '{"mode":"reportable","state_dir":"/tmp/nora-lab/state"}' | ./skills
 `reportable` is the list an adapter would deliver to a human. Everything else
 stays on the board.
 
-## Part 2 — On the board
+## Part 2: On the board
 
 ### Build
 

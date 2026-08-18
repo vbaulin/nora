@@ -1,372 +1,327 @@
 <p align="center">
-  <img src="assets/readme/hero.svg" width="100%" alt="nano-os-agent: deterministic executor for autonomous scientific experiments">
+  <img src="assets/readme/hero.svg" width="100%" alt="nora turns a scientific question into observation, local investigation, and a useful human decision">
 </p>
 
 <p align="center">
   <a href="go.mod"><img alt="Go 1.21" src="https://img.shields.io/badge/Go-1.21-0b1410?style=flat-square&logo=go&logoColor=72d99b"></a>
   <a href="https://wiki.sipeed.com/hardware/en/lichee/RV_Nano/1_intro.html"><img alt="RISC-V SG2002" src="https://img.shields.io/badge/RISC--V-SG2002-0b1410?style=flat-square&logo=riscv&logoColor=72d99b"></a>
-  <a href="docs/tutorial-proactive-field-companion.md"><img alt="Research executor tutorial" src="https://img.shields.io/badge/tutorial-research_executor-173e2a?style=flat-square"></a>
-  <a href="https://vbaulin.github.io/nora/"><img alt="GitHub Pages" src="https://img.shields.io/badge/docs-GitHub_Pages-173e2a?style=flat-square"></a>
+  <a href="https://vbaulin.github.io/nora/"><img alt="Interactive tutorial" src="https://img.shields.io/badge/tutorial-build_your_first_observer-173e2a?style=flat-square"></a>
+  <a href="docs/applications/automatic-lab-experiments.md"><img alt="Application examples" src="https://img.shields.io/badge/examples-field_%2B_lab-173e2a?style=flat-square"></a>
 </p>
 
-**nora** (nano-os-agent) is an autonomous research executor. PicoClaw reasons
-about goals and selects capabilities; the executor runs declared steps, handles
-retries and timeouts, records measurements and artifacts, and releases only
-results that satisfy explicit checks. Between samples, the research engine
-studies what was recorded.
+# A small computer that can run an experiment, notice what changed, and investigate why
 
-> The LLM may design or revise an experiment. It does not babysit the hardware
-> loop or convert an unverified observation into a fact.
+**nora** gives cameras, sensors, scientific models, and small edge computers a
+shared way to work. You describe what to observe and what a valid result looks
+like. Nora performs the measurements, keeps the images and numbers, looks for
+patterns while the instrument is idle, and contacts a person when a decision
+needs human knowledge.
 
-nora is a general research implementer, not a product for one field. The same
-engine runs a bench rig and a vineyard; a domain arrives as a pack of
-parameters. See [REPO_BOUNDARY.md](REPO_BOUNDARY.md) for the layering.
+The result is more than remote monitoring. A Nora installation can:
 
-It is also not tied to one host. The executor is a static Go binary for
-x86-64, ARM and RISC-V, and the research engine is standard-library Python, so
-the same tree runs on a LicheeRV Nano, a laptop, or a cloud VM. Skills that
-need peripherals declare `requires_hardware: true` and are skipped with a
-stated reason where there are none. See [`deploy/`](deploy/README.md).
+- keep an experiment running for hours, weeks, or a growing season without an
+  LLM supervising every sample;
+- discover that a signal shifted, saturated, disappeared, or began to precede
+  another observation;
+- connect a finding to the exact measurements and artifacts that produced it;
+- learn a new sensor or analysis method through tested, reusable skills;
+- ask one specific question through chat or Telegram, then incorporate the
+  confirmed answer into the next investigation; and
+- run on a 256 MB RISC-V board, a laptop, or a cloud VM.
 
-[Read the tutorial](https://vbaulin.github.io/nora/) or use the
-[single-page operator tutorial](docs/tutorial-proactive-field-companion.md).
+[Start the guided tutorial](https://vbaulin.github.io/nora/) or
+[run the sixty-second data experiment](#try-the-research-engine-in-sixty-seconds).
 
-## Research on Idle Time
+## What You Get
 
-A sampling board is idle almost all the time. `skills/research_agent` spends a
-few of those seconds raising questions from the journals the tasks wrote,
-answering them with bounded analyses, and handing back only what a human should
-decide. It runs on a laptop too:
-
-```bash
-printf '%s' '{"mode":"cycle","state_dir":"/tmp/nora/state","journal_dirs":"/tmp/monitors"}' | ./skills/research_agent/run.sh
-```
-
-| Verdict | Meaning | Reaches a human |
-| --- | --- | --- |
-| `material_unresolved` | Real, decision-relevant, unanswerable locally | Yes |
-| `not_material` | Real, but it changed no decision | No |
-| `resolved_local` | Already answered by evidence on the board | No |
-| `insufficient_data` | The analysis could not run | No |
-
-A board that cannot check something has discovered nothing, and must not turn
-its own blind spot into a request for attention or hardware.
-
-### What it can find
-
-| Analysis | Question |
+| Included | What it gives you |
 |---|---|
-| `level_shift` | Did the level move beyond its own noise? |
-| `ceiling_saturation` | Is a channel piling up against a limit? |
-| `data_gap` | Did a source go quiet? |
-| `threshold_materiality` | Did an uncertainty ever change a decision? |
-| `source_disagreement` | Do two sources that should agree, agree? |
-| `outcome_calibration` | Are the board's own alerts earning their interruptions? |
-| `neighbour_reports` | Do nearby boards see something this one does not? |
-| `baseline_deviation` | Is this period unlike the ones before it? |
-| `lagged_association` | Does one series move before another, by a fixed number of days? |
-| `coverage_gaps` | Which questions has the board framed that nothing here can measure? |
+| **Experiment runner** | YAML experiments with ordered steps, time limits, retries, expected results, and local repetition. |
+| **Instrument skills** | Reusable camera, audio, I2C, ADC, GPIO, NPU, environmental sensing, and analysis capabilities. |
+| **Local research engine** | Bounded analyses that inspect journals for shifts, disagreements, gaps, saturation, lead-lag relationships, and failed assumptions. |
+| **Evidence notebook** | Timestamped measurements, images, task outcomes, model identity, and human corrections that remain connected to their source. |
+| **Proactive companion** | A sparse observe-investigate-ask loop for chat or Telegram. It can start a conversation from new evidence instead of waiting for a prompt. |
+| **Skill workshop** | Draft, validate, test, promote, and later recheck a newly learned hardware or software capability. |
+| **Web control surface** | PicoClaw pages for chat, models, runtime health, tasks, skills, journals, and rendered artifacts. |
+| **Application examples** | Microscope imaging, fermentation, machine health, environmental observation, dataset construction, and Vineyard Guard. |
 
-`lagged_association` is the one that forms hypotheses nobody wrote down. Packs
-expose evidence stores, not a catalogue of expected relationships. The engine
-infers timestamped numeric channels and entity partitions from SQLite schemas
-and JSONL journals, generates unlabeled clock windows for subdaily data, then
-tests candidate leads. It reports **precedence, never causation**. Guards are
-tuned so a negative is the easy answer: first differences, persistence across
-both halves, joint correction for clock windows and lags, a 30-day floor, and
-permanent memory of refuted pairs. New sensors and model outputs therefore
-enter the research space without a code change.
+## Why This Matters
 
-### From a pattern to a study
+Continuous observation is still expensive. A microscope cannot be watched all
+night, a field specialist cannot visit every plot each morning, and a small
+laboratory may not have staff to inspect every image or maintain a custom cloud
+pipeline. Cheap sensors help collect data, but they do not decide which change
+deserves attention or preserve how that conclusion was reached.
+
+Nora addresses four practical constraints.
+
+| Constraint | Nora's contribution |
+|---|---|
+| **Expert time is scarce** | Routine sampling and first-pass investigation happen locally. People receive a focused question or finding, not a stream of telemetry. |
+| **Scientific automation is costly to integrate** | One task format and one skill interface connect cameras, sensors, models, and analysis scripts. A validated capability can be reused by the next experiment. |
+| **Connectivity and data ownership vary** | Measurements and raw media can remain on the instrument. Network services are optional additions rather than prerequisites for the local loop. |
+| **Generative explanations are not measurements** | Hardware work is executed by a deterministic runtime. Claims remain linked to current files, structured results, and explicit checks. |
+
+This design is useful in community laboratories, rural monitoring, teaching,
+small research groups, long-running field studies, and other settings where
+attention and connectivity are limited. It does not replace a scientist,
+technician, grower, or safety controller. It extends their reach by preparing
+better evidence and asking narrower questions.
+
+## What Autonomy Looks Like
+
+Imagine a microscope recording crystal growth every ten minutes.
 
 ```text
-anomaly → hypothesis → "is this worth investigating?" → you confirm → study drafted
+09:00  A task captures an image and records focus, illumination, and edge speed.
+15:20  The local engine detects a persistent change in edge speed.
+15:21  It checks whether focus or illumination changed at the same time.
+15:22  The change survives the local comparison, so one proposal is created.
+15:23  The researcher receives:
+       "Sample A changed growth regime at 15:10. Focus remained stable.
+        Run a two-hour high-frequency sequence? Ref: EXP-17"
+15:31  The researcher confirms. Nora queues the declared task and records why.
+17:35  Images, measurements, and the task outcome are available for review.
 ```
 
-A confirmed hypothesis drafts a bounded task written as `status: template`,
-which the executor does not run. Promotion is a human act. A published disease
-model can likewise be drafted as a candidate skill — sources attached, marked
-unvalidated, installed by nobody until it passes `validate-skill`.
-
-The board also reweights its own research from its own record: an analysis that
-has produced nothing material here is demoted, one whose findings you keep
-declining is demoted too, and neither is ever silenced.
-
-## Evidence Before Explanation
-
-<table>
-  <tr>
-    <td width="44%" valign="top">
-      <img src="assets/readme/licheerv-nano.jpg" alt="LicheeRV Nano camera and board hardware">
-      <br><sub>Physical target: LicheeRV Nano with CSI camera and SG2002 compute.</sub>
-    </td>
-    <td width="56%" valign="top">
-      <img src="docs/assets/picoclaw-nano-agent-md-preview.png" alt="PicoClaw nano-os-agent task runner showing rendered evidence">
-      <br><sub>Operator surface: tasks, artifacts, rendered reports, and deletion controls.</sub>
-    </td>
-  </tr>
-</table>
-
-The executor is useful anywhere observation must continue after an LLM turn
-ends: microscope timelapses, fermentation, machine health, environmental
-sensing, field experiments, dataset construction, or verification of robotic
-actions. Vineyard Guard is the complete reference application because it
-exercises scheduling, weather and disease models, plots, Telegram delivery,
-Supabase synchronization, and human confirmation under field conditions.
+No language model held the camera loop. No threshold crossing was silently
+turned into a scientific fact. The machine did the repetitive work; the person
+made the consequential choice.
 
 <p align="center">
-  <img src="images/Nano-os-Agent.jpg" width="760" alt="Original nano-os-agent concept artwork">
-  <br><sub>Original project artwork, retained as the early concept for a board with reusable sensing skills.</sub>
+  <img src="assets/readme/research-loop.svg" width="100%" alt="Stored signals become locally tested questions, findings, and selective human decisions">
 </p>
 
-## Architecture
+## Try the Research Engine in Sixty Seconds
 
-<p align="center">
-  <img src="assets/readme/evidence-loop.svg" width="100%" alt="Evidence-gated proactive experiment loop">
-</p>
-
-| Layer | Responsibility |
-|---|---|
-| **PicoClaw** | Interpret intent, inspect skills and current artifacts, choose a capability, and explain released evidence. |
-| **nano-os-agent** | Execute task steps and native skills with expectations, retries, timeouts, metrics, and journals. |
-| **Research engine** | Raise questions from journals and feedback, answer them with bounded analyses, and keep the verdicts and their limits. |
-| **Domain pack** | Declare the questions a field always cares about, as parameters for those analyses. |
-| **Application adapter** | Convert domain artifacts into observations, deliver findings, and define bounded proposal and confirmation rules. |
-
-Hardware access follows one route:
-
-```text
-PicoClaw intent
-  -> MCP tool or task YAML
-  -> nano-os-agent skill/native handler
-  -> camera, NPU, sensor, actuator, or model
-  -> structured result + experiment journal
-```
-
-Direct, unjournaled camera, NPU, GPIO, I2C, PWM, or long-running shell loops
-break this contract. See [HARDWARE_BOUNDARY.md](HARDWARE_BOUNDARY.md) and the
-gateway-facing [orchestrator prompt](PICOCLAW_ORCHESTRATOR_PROMPT.md).
-
-## First Experiment
-
-Build the static binary for the host you have:
+The research engine uses standard-library Python. This example runs on a
+laptop without a board, account, or external service.
 
 ```bash
-GOOS=linux GOARCH=riscv64 CGO_ENABLED=0 go build -o nano-os-agent main.go  # LicheeRV Nano
-GOOS=linux GOARCH=amd64   CGO_ENABLED=0 go build -o nora main.go           # cloud VM
-GOOS=linux GOARCH=arm64   CGO_ENABLED=0 go build -o nora main.go           # Ampere, Graviton, Pi
-go build -o nora main.go                                                   # your machine
+git clone https://github.com/vbaulin/nora.git
+cd nora
+
+mkdir -p /tmp/nora-demo/monitors
+python3 - <<'PY'
+import datetime as dt
+import json
+import random
+
+random.seed(1)
+now = dt.datetime.now(dt.timezone.utc)
+rows = [
+    {
+        "timestamp": (now - dt.timedelta(minutes=(48 - i) * 30)).isoformat(),
+        "lux": min(100.0, round(random.gauss(86, 15), 1)),
+        "temp_c": round(21 + random.gauss(0, 0.4), 2),
+    }
+    for i in range(48)
+]
+open("/tmp/nora-demo/monitors/light_probe.jsonl", "w").write(
+    "\n".join(json.dumps(row) for row in rows)
+)
+PY
+
+printf '%s' '{"mode":"cycle","state_dir":"/tmp/nora-demo/state","journal_dirs":"/tmp/nora-demo/monitors"}' \
+  | ./skills/research_agent/run.sh
 ```
 
-Run one read-only task on a configured board:
+The synthetic light channel repeatedly reaches its upper limit. Nora finds
+that pattern without a rule naming `lux`:
+
+```json
+{
+  "status": "success",
+  "raised": ["lux piles up against 100 instead of passing it"],
+  "investigated": [{
+    "subject": "light_probe",
+    "analysis": "ceiling_saturation",
+    "sample_size": 48,
+    "verdict": "material_unresolved"
+  }]
+}
+```
+
+The temperature channel varies normally, so it produces no finding. Silence
+is a normal result when the evidence does not support an interruption.
+
+## Connect It to the Physical World
+
+Nora's Go executor runs the experiment close to the instrument. PicoClaw adds
+language, channel routing, and a web interface. The research engine studies
+what the executor recorded. Application packs give those observations meaning
+for a particular laboratory, machine, environment, or field.
+
+<p align="center">
+  <img src="assets/readme/evidence-loop.svg" width="100%" alt="A question becomes a local task, physical observation, evidence, investigation, and human decision">
+</p>
+
+| Part | Human-facing role |
+|---|---|
+| **PicoClaw** | Understand a request, find the right capability, show current evidence, and communicate through the web, chat, or Telegram. |
+| **nano-os-agent** | Run the declared experiment and keep the physical loop stable when nobody is connected. |
+| **Research engine** | Compare recorded series, test candidate patterns, remember rejected leads, and rank unresolved findings. |
+| **Application pack** | Add field names, units, scientific questions, models, and confirmation rules for one use case. |
+
+The same executable builds for the board, common cloud architectures, and a
+development machine:
+
+```bash
+GOOS=linux GOARCH=riscv64 CGO_ENABLED=0 go build -o nora main.go  # LicheeRV Nano
+GOOS=linux GOARCH=amd64   CGO_ENABLED=0 go build -o nora main.go  # x86-64 VM
+GOOS=linux GOARCH=arm64   CGO_ENABLED=0 go build -o nora main.go  # ARM VM or Pi
+go build -o nora main.go                                      # current machine
+```
+
+Skills that need physical devices declare that requirement. On a laptop or VM
+they are skipped with an explanation; data and software experiments continue
+to work.
+
+## Your First Physical Experiment
+
+A task states what should happen and what success means:
 
 ```yaml
-- id: tutorial_system_snapshot
-  name: "Tutorial system snapshot"
+- id: environmental_snapshot
+  name: "Environmental snapshot"
   priority: 1
   status: pending
   steps:
-    - id: read_system
+    - id: read_environment
       action: call_skill
-      parameters:
-        skill_name: system_info
-      expect:
-        ram_total_mb: ">=1"
-      timeout: 15
-      on_fail: block
-```
-
-```bash
-/root/nano-os-agent/nano-os-agent --once tutorial_system_snapshot.yaml
-tail -1 /root/nano-os-agent/experiments.jsonl
-```
-
-The meaningful output is the task verdict linked to its executed steps,
-measurements, and artifacts. A failed expectation remains failed or partial;
-PicoClaw may diagnose it, but it cannot relabel it as success.
-
-For board installation, memory limits, camera setup, and service integration,
-use [INSTALL_BOARD.md](INSTALL_BOARD.md).
-
-## Task Contract
-
-Tasks are YAML-defined experiment chains. A step can call a skill, retain a
-named result, assert expected fields, retry, continue after a temporary failure,
-or repeat locally into a compact JSONL monitor.
-
-```yaml
-- id: environmental_baseline
-  name: "Environmental baseline"
-  priority: 3
-  status: template
-  steps:
-    - id: snapshot
-      action: call_skill
-      save_as: environment
       parameters:
         skill_name: sensor_fusion_snapshot
       expect:
         status: success
-      repeat:
-        interval_sec: 300
-        max_iterations: 288
-        journal_path: /tmp/monitors/environmental_baseline.jsonl
-        continue_on_fail: true
+      timeout: 20
+      max_retries: 1
+      on_fail: block
 ```
 
-The executor can pass earlier outputs to later steps with
-`${step_id.field}` or `${save_as.field}`. Long monitors stay local; PicoClaw
-reads a compact summary or an anomaly rather than spending one model turn per
-sample.
+```bash
+/root/nano-os-agent/nano-os-agent --once environmental_snapshot.yaml
+tail -1 /root/nano-os-agent/experiments.jsonl
+```
 
-## Skill Lifecycle
+Add a `repeat` block to turn the reading into a bounded monitor. Add a later
+step to capture an image after a sound event. Reference an earlier output with
+`${step_id.field}` to keep data flow inside the experiment rather than inside
+chat history.
+
+The [guided tutorial](https://vbaulin.github.io/nora/) starts on a laptop,
+moves to a board, and ends with a proactive application.
+
+## Teach Nora a New Instrument
+
+An unfamiliar sensor does not require permanent custom logic in the chat
+prompt. It becomes a tested skill:
 
 ```text
-draft -> validate -> repeated experiment -> evidence -> promote -> monitor
-  ^          |               |                              |
-  +----------+---------------+------------------------------+
-                  revise on failure or drift
+discover device -> draft decoder -> validate output -> repeat experiment
+                -> promote skill -> use in future tasks -> recheck on drift
 ```
 
-- **Draft skills** may be incomplete and are not trusted for unattended use.
-- **Validation** checks declared inputs, outputs, safety, and execution.
-- **Experiments** produce before/after metrics and artifacts.
-- **Promotion** requires passing evidence; failed and partial runs remain
-  quarantined.
-- **Revalidation** is required when hardware, models, or environmental
-  conditions change.
+For an I2C sensor, the first task can inventory the bus without writing to it.
+PicoClaw can identify candidate datasheets and draft a decoder. The executor
+then tests register stability, units, plausible ranges, missing-device
+behavior, memory use, and repeated results. Only the version that passes those
+checks becomes available for unattended work.
 
-Runtime preference is native Go for deterministic primitives, vendor C/C++ for
-camera and zero-copy NPU paths, compiled Go helpers for CPU analysis, and Python
-for vendor bindings or early prototypes.
+This creates a growing local laboratory vocabulary. A camera setup, sensor
+decoder, image analysis, or model wrapper learned for one study can be reused
+without repeating the integration work.
 
-## Proactive Interaction
+<p align="center">
+  <img src="images/Nano-os-Agent.jpg" width="760" alt="Nora as a compact scientific companion beside instruments, samples, and field observations">
+  <br>
+  <sub>The original Nora concept: a persistent companion for instruments in the laboratory and in the field.</sub>
+</p>
 
-The adapter converts a stream of measurements into a sparse sequence of useful
-interactions. Its unit of work is not a conversation turn, but an
-evidence-linked proposal with a subject, reason, priority, provenance, and
-next observation.
+## Applications
 
-| Proactive capability | Observable behaviour |
+| Application | What Nora can observe and investigate |
 |---|---|
-| **Evidence-triggered attention** | A scheduled `tick` reads fresh artifacts, task verdicts, field profiles, and confirmed operations, then reacts to a declared change, discrepancy, or missing parameter. |
-| **One high-value question** | The runtime ranks candidate proposals and creates at most one new proposal per subject, reducing repeated prompts while preserving unresolved questions. |
-| **Context-bearing dialogue** | Every actionable prompt receives a `PF-<id>`. Informal replies are resolved to the pending subject, field, experiment, and disease before any record is drafted. |
-| **Structured confirmation** | Free-form observations and operations become a structured draft. Missing field, time, product, quantity, or outcome information is requested before a confirmed write. |
-| **Outcome follow-up** | After an operation-specific delay, the companion asks once for the later observation. The resulting sequence is retained as an association, providing material for subsequent experiments. |
-| **Selective notification** | A proposal reaches Telegram only above its configured priority threshold. Signals already covered by the daily briefing are marked `skipped_covered` rather than sent twice. |
-| **Bounded research** | An unresolved capability or failed experiment can open one focused source search. URLs and snippets enter a review proposal, not an operating instruction. |
-| **Experiment-to-memory learning** | nano-os-agent results enter reusable memory only when the executed steps are internally consistent and satisfy their declared expectations. |
+| [Microscope timelapse](docs/applications/microscope-timelapse.md) | Focus, illumination, object counts, morphology, growth rate, and transitions that justify denser sampling. |
+| [Automatic laboratory experiments](docs/applications/automatic-lab-experiments.md) | Timed images, reaction endpoints, liquid levels, protocol checks, and comparisons with controls. |
+| [Fermentation](docs/applications/wine-fermentation-monitor.md) | Temperature, audio activity, turbidity, manual density measurements, and batch-specific trajectories. |
+| [Machine health](docs/applications/machine-health-monitor.md) | Status lights, gauges, audio or vibration drift, operating conditions, and machine-specific baselines. |
+| [Environmental sentinel](docs/applications/environmental-event-sentinel.md) | Weather, sound, camera confirmation, missing observations, and changing local baselines. |
+| [Dataset builder](docs/applications/automatic-dataset-builder.md) | Hard negatives, uncertain samples, confirmed labels, and model or skill evaluation. |
+| [Robot manipulation](docs/applications/robot-manipulation.md) | Action verification, bounded retries, visual feedback, and local reflexes. |
+| [Vineyard and plant research](docs/applications/vineyard-plant-research.md) | Disease conditions, phenology, weather, fruit development, field operations, and grower feedback. |
 
-### A Proactive Cycle
+The [application atlas](docs/applications) contains more worked patterns.
 
-```text
-07:00  A scheduled tick observes a changed measurement and its source artifact.
-07:00  The companion selects one question: "Inspect sample A for morphology X. Ref: PF-12"
-09:14  The operator replies informally: "PF-12: absent; image looks clear."
-09:14  proposal_context resolves sample A + experiment X without writing.
-09:15  A structured observation is shown for confirmation.
-Day +2 The next tick links the confirmed outcome to the earlier operation,
-       retains temporal order, and proposes a controlled comparison if useful.
-```
+## A Reference Deployment: Vineyard Guard
 
-This cycle can begin from a sensor excursion, a camera-derived change, a failed
-task expectation, a missing experimental covariate, an overdue observation, or
-a source-attributed research result. The same machinery supports laboratory
-samples, machines, fermentation batches, robots, environmental stations, and
-field plots.
+Vineyard Guard shows the full system working across a growing season. Each
+field has its own identity, weather history, disease models, plots, operations,
+and confirmed observations. The board refreshes its evidence daily, sends one
+concise summary, attaches disease-specific plots when attention is needed, and
+asks the grower for information the models cannot observe.
 
-The reference `proactive-field-agent` uses `PF-<id>` references so informal
-Telegram replies can be resolved to one field and one pending question. An
-accepted proposal does not mean that treatment or another operation occurred.
-Confirmed operations and later observations are retained as temporal
-associations with `causal_claim=false` unless an experimental design supports
-a stronger inference.
+The same local records also support broader research questions: how nighttime
+humidity relates to disease signals, whether weather patterns precede changes
+in fruit measurements, which alerts agree with inspection, and when a missing
+measurement prevents a useful conclusion. Nearby boards can exchange selected
+model information while their raw field history remains under local control.
 
-Start with the [chaptered GitHub Pages tutorial](https://vbaulin.github.io/nora/)
-or inspect the [skill contract](skills/proactive_field_agent/SKILL.md).
+Vineyard Guard is an application, not Nora's definition. The disease-model
+source and deployment data can remain in a separate repository while the
+executor, research engine, and reusable hardware skills remain general.
 
-## Application Atlas
+Read [the Vineyard Guard example](VINEYARD_GUARD.md) or the
+[application chapter](docs/proactive-agent/08-vineyard-guard.md).
 
-The executor is general; application adapters provide domain observations and
-policies.
+## What Nora Will Not Pretend to Know
 
-| Application | What becomes evidence |
+- A model forecast is not a confirmed physical event.
+- A sequence in time does not prove that one event caused the next.
+- A failed or partial experiment is not rewritten as success.
+- A web search result does not become an operating instruction.
+- A proposed operation is not recorded as completed.
+- A numerical sugar, harvest, disease, or quality estimate requires a model
+  that was validated for that field and measurement process.
+
+These are ordinary scientific distinctions expressed in software. They let an
+autonomous system do more useful work without making stronger claims than its
+data support.
+
+## Documentation
+
+| Start here | Purpose |
 |---|---|
-| [Microscope timelapse](docs/applications/microscope-timelapse.md) | Focus, illumination, segmented objects, growth, and anomaly-triggered sampling. |
-| [Automatic lab experiments](docs/applications/automatic-lab-experiments.md) | Timed sample observations, reaction endpoints, liquid levels, and protocol checks. |
-| [Fermentation monitor](docs/applications/wine-fermentation-monitor.md) | Temperature, pH, bubbling, turbidity, batch trends, and confirmed operations. |
-| [Machine health](docs/applications/machine-health-monitor.md) | Status LEDs, gauges, startup checks, audio drift, and machine-specific baselines. |
-| [Robot manipulation](docs/applications/robot-manipulation.md) | Visual servoing, action verification, bounded retries, and local reflexes. |
-| [Dataset builder](docs/applications/automatic-dataset-builder.md) | Hard negatives, uncertainty samples, labels, and model/skill evaluation. |
-| [Vineyard and plant research](docs/applications/vineyard-plant-research.md) | Phenology, ripeness, stress, wetness, growth, disease models, and field feedback. |
-
-The complete list is in [docs/applications](docs/applications).
-
-## Vineyard Guard Reference Application
-
-Vineyard Guard is an optional application connected to the private Goidanich
-repository. It remains separate from the universal PicoClaw and nano-os-agent
-runtimes. Its public integration contracts cover:
-
-- independent downy mildew, powdery mildew, and grapevine black-rot routes;
-- fresh daily cache generation and disease-specific plots;
-- concise scheduled Telegram summaries and full reports on demand or alert;
-- catalog-checked, two-step farmer feedback and treatment confirmation;
-- board and field identity, SIGPAC-enriched provisioning, and Supabase sync;
-- field memory and proactive questions grounded in current model artifacts;
-- observed April-to-harvest climate summaries with monthly rainfall,
-  day/night conditions, heat/wetness indices, and calibration-ready Brix
-  features through `vineyard-season-climate`;
-- autonomous, field-specific searches for relationships between solar
-  exposure, rainfall, heat, humidity, disease response, operations, phenology,
-  and fruit measurements, without a fixed list of correlations; and
-- one internally researched evidence profile per cultivar. Literature informs
-  a candidate maturity prior, while harvest timing remains unavailable until
-  local phenology and berry-composition measurements validate it.
-
-Read [VINEYARD_GUARD.md](VINEYARD_GUARD.md), the
-[disease-model contract](docs/applications/vineyard-disease-risk-models.md),
-and the [SD-card provisioning guide](docs/vineyard-sd-card-provisioning.md).
+| [Interactive tutorial](https://vbaulin.github.io/nora/) | Build a first observer, add a monitor, investigate its journal, and connect a human decision. |
+| [Single-page tutorial](docs/tutorial-proactive-field-companion.md) | The complete walkthrough in one Markdown document. |
+| [Application atlas](docs/applications) | Concrete microscope, fermentation, machine, robotics, field, and dataset examples. |
+| [Board installation](INSTALL_BOARD.md) | Build, install, and run Nora on the LicheeRV Nano. |
+| [Run off-board](deploy/README.md) | Laptop, x86-64, ARM, systemd, container, and cloud deployment. |
+| [Working with physical hardware](HARDWARE_BOUNDARY.md) | Why skills make device automation reproducible, and how to add a new instrument. |
+| [Build an application while keeping data local](REPO_BOUNDARY.md) | Separate reusable runtime code from private measurements, identities, and credentials. |
 
 ## Repository Map
 
-| Path | Purpose |
+| Path | Contains |
 |---|---|
-| [`main.go`](main.go) | Task engine, MCP server, safety checks, state, and experiment journal. |
-| [`program.yaml`](program.yaml) | Human-owned research goals, hypotheses, metrics, and constraints. |
-| [`tasks/`](tasks) | One-shot experiments and long-running templates. |
-| [`skills/`](skills) | Reusable capabilities and application adapters. |
-| [`pico/`](pico) | PicoClaw launcher/web integration. |
-| [`docs/`](docs) | Runtime contracts, applications, deployment, and tutorials. |
-| [`scripts/`](scripts) | Board synchronization, provisioning, schedulers, and maintenance. |
+| [`main.go`](main.go) | Static task executor, local actions, MCP tools, task state, and experiment journal. |
+| [`program.yaml`](program.yaml) | Research goals, hypotheses, metrics, and constraints owned by the operator. |
+| [`tasks/`](tasks) | Ready-to-run experiments and inactive templates. |
+| [`skills/`](skills) | Instrument drivers, analyses, research, validation, and application adapters. |
+| [`pico/`](pico) | PicoClaw launcher and web integration. |
+| [`docs/`](docs) | Tutorials, applications, and deployment guides. |
+| [`scripts/`](scripts) | Provisioning, board synchronization, scheduling, and maintenance. |
 
-## Operational Limits
+## Current Limits
 
-- The target has 256 MB RAM; camera/NPU reservations leave substantially less
-  for user processes. Long-running skills must remain compact.
-- Transient images, audio, and monitor journals belong in `/tmp` when durable
-  retention is unnecessary, reducing SD-card writes.
-- A model output is not a confirmed physical event. Preserve model identity,
-  units, inputs, uncertainty, and field or laboratory confirmation.
-- Internet snippets are candidate evidence, never automatic operating or
-  treatment instructions.
-- Human corrections are drafted into structured form before they are written.
-- `status: template` prevents example monitors from starting accidentally.
+The reference board has 256 MB RAM, with part of that memory reserved for the
+camera and NPU. Skills therefore use bounded processes and compact local
+journals. Hardware support depends on the board image and connected devices.
+Application-specific models still require application-specific validation and
+labelled outcomes. Nora provides the experimental machinery; it does not make
+every attached model scientifically valid.
 
-## Further Reading
-
-- [Tutorial: build an autonomous research executor](docs/tutorial-proactive-field-companion.md)
-- [Autonomous task patterns](AUTONOMOUS_TASKS.md)
-- [Self-improving runtime design](SELF-IMPROVING.md)
-- [Skill reconciliation](SKILLS_RECONCILIATION.md)
-- [PicoClaw and Goidanich coordination](PICOCLAW_GOIDANICH_COORDINATION.md)
-- [PicoClaw gateway board synchronization](docs/picoclaw-gateway-board-sync.md)
-- [PicoClaw webapp and nano-os-agent integration](docs/picoclaw-nano-webapp-integration.md)
-
-The README visual system follows the inspection-first workflow from
+The README visual system follows
 [beautify-github-readme](https://github.com/oil-oil/beautify-github-readme).
-The chaptered tutorial structure is adapted from
-[PocketFlow Tutorial Codebase Knowledge](https://github.com/The-Pocket/PocketFlow-Tutorial-Codebase-Knowledge);
-its content is manually verified against this repository rather than claimed
-as an automatically generated analysis.
+The chapter structure of the tutorial follows the relationship-first method of
+[PocketFlow Tutorial Codebase Knowledge](https://github.com/The-Pocket/PocketFlow-Tutorial-Codebase-Knowledge),
+with every runtime claim checked against this repository.

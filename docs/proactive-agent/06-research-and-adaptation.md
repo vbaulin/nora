@@ -1,11 +1,11 @@
 ---
-title: Research the Evidence on Idle Time
-summary: How the board raises its own questions, answers most of them alone, and interrupts a human only for the rest.
+title: Use Idle Time for Discovery
+summary: Let the observer form candidate questions from its journals, test them locally, and retain what it learns.
 order: 6
 eyebrow: Chapter 6
 ---
 
-# Research the Evidence on Idle Time
+# Use Idle Time for Discovery
 
 A board that samples once an hour is idle for fifty-nine minutes. Those minutes
 are enough to answer questions about data already on disk. This chapter is the
@@ -14,7 +14,7 @@ engine that spends them: `skills/research_agent`.
 It is domain-neutral. It knows about questions, analyses, findings, verdicts
 and watches, and nothing about what the numbers mean.
 
-## The loop
+## What happens between measurements
 
 ![Signals and feedback become a question, a bounded analysis produces a finding, and the verdict decides who hears about it](../../assets/readme/research-loop.svg)
 
@@ -56,12 +56,12 @@ them and you know most of what the board can notice on its own.
 | `neighbour_reports` | Do nearby reporters see something this board does not? |
 | `baseline_deviation` | Is the current period unlike the periods before it? |
 | `lagged_association` | Does one series move before another, by a fixed number of days? |
-| `relationship_forecast` | A confirmed relationship's driver ran high — what would it imply, and when? |
+| `relationship_forecast` | A confirmed relationship's driver ran high: what would it imply, and when? |
 | `coverage_gaps` | Which questions has the board framed that nothing here can measure? |
 
 Three of these are what a networked board with a weather history is for.
 `neighbour_reports` reads confirmed reports from other boards with their
-distance and asks whether the local indicator agrees — a confirmation two
+distance and asks whether the local indicator agrees. A confirmation two
 kilometres away raises the prior here and earns one cheap local check, nothing
 more. `source_disagreement` between a weather forecast and what the station
 later measured answers whether the forecast driving a risk projection can still
@@ -71,7 +71,7 @@ weather: not "is it warm" but "is this season unlike the last several".
 ## Forming a hypothesis nobody wrote down
 
 Everything above answers a question somebody registered. That makes the board a
-scheduler for a research catalogue — useful, but not a scientist. The step
+scheduler for a research catalogue: useful, but not a scientist. The step
 across is schema discovery plus `lagged_association`. A domain pack points to
 an evidence store. It does not list expected variables, divide the clock into
 named agronomic periods, or prescribe candidate relationships.
@@ -154,7 +154,7 @@ observation and what it would imply:
 ```text
 Channel A crossed its local high threshold on 2026-08-08. By the relationship
 confirmed for this apparatus (rho 0.958 over 146 days), that would point at a
-change in channel B around 2026-08-11 — a projection of that relationship, not
+change in channel B around 2026-08-11: a projection of that relationship, not
 a measurement.
 ```
 
@@ -179,7 +179,7 @@ groups them by the measurement each needs, and reports the register **once**.
 it would let me answer 2 questions I cannot answer now.
 ```
 
-Once, not per blocked question — a board that repeats "I cannot test this"
+Once, not per blocked question. A board that repeats "I cannot test this"
 every cycle has turned a gap into nagging. A gap describes the board's
 instruments, not the field, and adding a measurement makes a question testable
 rather than making its answer positive.
@@ -187,7 +187,7 @@ rather than making its answer positive.
 ## Drafting a published model as a skill
 
 Research sometimes finds a model in the literature that this board does not
-have. It may be written down as a candidate skill — with sources attached, and
+have. It may be written down as a candidate skill, with sources attached and
 only after a person agrees. The manifest carries `status: draft`,
 `requires_validation: true`, its sources, and the checks it must pass, and it
 lands where nothing discovers it as a capability.
@@ -195,7 +195,7 @@ lands where nothing discovers it as a capability.
 The route refuses without a published source: a model nobody has written down
 is a hypothesis, and this is for putting literature into testable shape, not
 for inventing agronomy. A disease model is not a sensor driver, because its
-output becomes treatment advice — so validation against confirmed local
+output becomes treatment advice, so validation against confirmed local
 outcomes and promotion stay separate human acts.
 
 ## Learning what to research
@@ -224,7 +224,7 @@ skill, or a glob of the artifacts a skill wrote, and any source may carry a
              "params": {"mode": "report", "write_artifacts": true}}}
 ```
 
-Vineyard Guard uses this boundary in two complementary ways.
+Vineyard Guard uses this separation in two complementary ways.
 `vineyard-season-climate` writes human-readable annual artifacts and a daily
 SQLite matrix of 18 unit-preserving environmental channels per field. Its EAV
 adapter expands the observed field/metric dimensions, marks weather as an
@@ -238,7 +238,7 @@ research loop. A cultivar literature profile supplies source-attributed prior
 knowledge, but it cannot by itself release a harvest date: current local
 phenology and composition measurements remain necessary.
 
-A skill-backed question sets its own `min_interval_seconds` — reading a season
+A skill-backed question sets its own `min_interval_seconds`; reading a season
 of weather is a weekly job, not an hourly one.
 
 Each reads a JSONL journal or a local SQLite table, so anything nora already
@@ -282,7 +282,7 @@ no matter how large it is.
 This is the kind of detail that decides whether an autonomous researcher is
 useful or merely busy.
 
-## Verdicts and silence
+## Why most analyses remain quiet
 
 | Verdict | What happens |
 | --- | --- |
@@ -327,7 +327,7 @@ free, and it is not repeated after a refusal.
 
 ## Failure as diagnostic evidence
 
-A failed or partial task run is quarantined from advice, but it can open a
+A failed or partial task run is excluded from advice, but it can open a
 narrow investigation:
 
 ```text

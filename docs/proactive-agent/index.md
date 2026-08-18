@@ -1,42 +1,87 @@
 ---
-title: Build an Autonomous Research Executor
-summary: Software that runs experiments, keeps the evidence honest, and asks you only when the answer would change something.
+title: Build a Scientific Observer That Works Between Visits
+summary: Give a camera, sensor, model, or dataset a local experiment loop that measures, investigates, and asks for human judgment when it matters.
 order: 0
 eyebrow: nora tutorial
 ---
 
-# Build an Autonomous Research Executor
+# Build a Scientific Observer That Works Between Visits
 
-nora runs experiments, keeps the evidence honest, and asks you only when the
-answer would change something.
+Suppose you need to follow a sample for three days, a fermentation for two
+weeks, a machine through hundreds of cycles, or a vineyard through a growing
+season. The difficult part is rarely taking one measurement. It is taking the
+same measurement reliably, preserving its context, noticing an unexpected
+change, and deciding what should happen next.
 
-It is not a chatbot. Nothing here waits for a prompt: you describe an
-experiment once, a deterministic runtime performs it on a schedule, and the
-results are studied without anyone opening a conversation.
+This tutorial builds that system with Nora.
 
-The domain is yours. A vineyard board, a bench rig with a light sensor, and a
-cloud VM watching an uploaded dataset run the same engine and differ only in
-configuration.
+By the end, your observer will be able to:
 
-## The whole idea in one picture
+- run a declared experiment on a schedule without keeping an LLM online;
+- collect measurements, images, audio, model outputs, and task outcomes;
+- examine its own journals for shifts, gaps, saturation, disagreements, and
+  relationships that were not named in advance;
+- present a finding with the measurements that support it;
+- ask a person one resolvable question through chat or Telegram;
+- turn a confirmed reply into structured scientific context; and
+- learn a new sensor or analysis method through validation and repeated tests.
 
-A board that samples once an hour is idle for fifty-nine minutes. nora spends a
-few of those seconds reading what it already recorded, and speaks up only when
-something is both real and worth your time.
+The same code runs on a small RISC-V board, a laptop, or a cloud VM. Physical
+instruments are optional for the first three chapters.
 
-![The research loop: signals and feedback become a question, a bounded analysis produces a finding, and the verdict decides who hears about it](../../assets/readme/research-loop.svg)
+## Begin with a Research Situation
 
-Most of what it finds, it keeps to itself. That is the feature.
+Choose one of these as a mental model. You can change applications later.
 
-## Try it in sixty seconds
+| Situation | Repetitive work Nora can take over | Judgment that remains human |
+|---|---|---|
+| **Microscope** | Capture, focus check, segmentation, growth metrics, denser sampling after change | Whether a morphology is scientifically meaningful |
+| **Fermentation** | Temperature, image and audio trends, batch comparison, missing-sample detection | Manual density result, intervention, batch interpretation |
+| **Machine** | Startup sequence, indicator reading, audio or vibration baseline, repeat measurement | Safety decision, maintenance authorization |
+| **Field station** | Weather, canopy images, model runs, plots, cross-field comparison | Scouting result, operation, local agronomic context |
+| **Uploaded dataset** | Schema discovery, anomaly screening, baseline comparison, candidate relationships | Study design, external validity, causal interpretation |
 
-The research engine is standard-library Python, so the core loop runs on your
-laptop with no board and no install. Clone the repository, then create a
-journal that looks like something a sensor task would have written:
+The tutorials use all five examples, but every chapter produces a reusable
+piece of one system.
+
+## The Finished Experience
+
+A successful deployment is quiet most of the time.
+
+```text
+08:00  The observer completes its scheduled measurements.
+08:02  New rows and artifacts enter the local notebook.
+08:03  The research engine compares them with the subject's own history.
+08:04  Ordinary variation is stored without a notification.
+14:20  A persistent change appears in one channel.
+14:21  Related channels and recent operations are checked locally.
+14:22  The remaining uncertainty would change the next experiment.
+14:23  One evidence-linked question reaches the operator.
+14:41  The operator answers in ordinary language and confirms the structured record.
+14:42  The next bounded experiment is queued.
+```
+
+This is proactive computing in a scientific setting. The software does not
+need a person to remember the right question at the right time. It also does
+not decide that a correlation is causal or that a proposed operation occurred.
+
+![The research loop: stored signals and feedback become a question, a bounded analysis produces a finding, and only a material unresolved result reaches a person](../../assets/readme/research-loop.svg)
+
+## Try the Local Research Loop
+
+The engine uses standard-library Python, so this demonstration needs no board
+and no account.
 
 ```bash
-mkdir -p /tmp/nora-demo/monitors && python3 - <<'PY'
-import json, datetime as dt, random
+git clone https://github.com/vbaulin/nora.git
+cd nora
+mkdir -p /tmp/nora-demo/monitors
+
+python3 - <<'PY'
+import datetime as dt
+import json
+import random
+
 random.seed(1)
 now = dt.datetime.now(dt.timezone.utc)
 rows = [
@@ -48,134 +93,133 @@ rows = [
     for i in range(48)
 ]
 open("/tmp/nora-demo/monitors/light_probe.jsonl", "w").write(
-    "\n".join(json.dumps(row) for row in rows))
+    "\n".join(json.dumps(row) for row in rows)
+)
 PY
+
+printf '%s' '{"mode":"cycle","state_dir":"/tmp/nora-demo/state","journal_dirs":"/tmp/nora-demo/monitors"}' \
+  | ./skills/research_agent/run.sh
 ```
 
-Now let the board research it:
-
-```bash
-printf '%s' '{"mode":"cycle","state_dir":"/tmp/nora-demo/state","journal_dirs":"/tmp/nora-demo/monitors","evidence_journal":"/tmp/nora-demo/experiments.jsonl"}' | ./skills/research_agent/run.sh
-```
+The light values repeatedly reach 100. The engine identifies a possible
+measurement ceiling:
 
 ```json
-{"status": "success", "mode": "cycle",
- "raised": ["lux piles up against 100 instead of passing it"],
- "investigated": [{"subject": "light_probe", "analysis": "ceiling_saturation",
-                   "verdict": "material_unresolved", "sample_size": 48,
-                   "open_question": "whether the channel is clipping at its range"}],
- "safety": "Findings are evidence about stored data. No action was taken and no message was sent."}
+{
+  "status": "success",
+  "raised": ["lux piles up against 100 instead of passing it"],
+  "investigated": [{
+    "subject": "light_probe",
+    "analysis": "ceiling_saturation",
+    "sample_size": 48,
+    "verdict": "material_unresolved"
+  }]
+}
 ```
 
-Nobody told it to look at `lux`. It read the journal, noticed that the values
-pile up against 100 instead of passing it, checked whether that pile-up is a
-real wall or just the top of a range, and produced a finding it cannot settle
-alone. `temp_c` varied normally, so it produced nothing — which is most of the
-job.
+Nobody supplied a rule about `lux`. Nora inspected the timestamped numeric
+channels and selected an analysis that matched the observed shape. The
+temperature values did not support a finding, so the engine said nothing about
+them.
 
-## Where it runs
+## Why a Small Local Observer Changes the Cost of Research
 
-You just ran it on a laptop. Nothing about the engine assumes a board.
+Many studies fail to collect dense longitudinal evidence because expert time,
+instrument integration, network access, or cloud processing is limited. A
+small local runtime changes the division of labor:
 
-| | Small board | Laptop | Cloud VM |
-|---|---|---|---|
-| Task executor | yes | yes | yes |
-| Research engine and analyses | yes | yes | yes |
-| Domain packs and adapters | yes | yes | yes |
-| Camera, NPU, I2C, GPIO, audio | yes | no | no |
-| Where measurements come from | attached sensors | files you provide | APIs, uploads, a database |
+- instruments perform the repeated observation close to the source;
+- compact journals preserve months of measurements without one LLM call per
+  sample;
+- local analyses remove routine false alarms before they consume attention;
+- confirmed human observations enter the same timeline as sensor and model
+  results; and
+- reusable skills reduce the cost of connecting the next instrument.
 
-The executor is one static Go binary — `GOOS=linux GOARCH=amd64` for an
-ordinary cloud VM, `arm64` for Oracle Ampere or a Raspberry Pi, `riscv64` for
-the LicheeRV Nano — and the research engine is standard-library Python. Skills
-that need peripherals declare `requires_hardware: true` and are skipped with a
-stated reason on a host that has none, instead of failing inside a driver.
+This does not make a low-cost board equivalent to a laboratory instrument. It
+makes the board a persistent assistant around the instrument: one that can
+follow a method, retain context, and prepare the next decision.
 
-The board matters when the experiment is physical: a canopy, a fermenter, a
-machine that vibrates. When measurements arrive over the network, the same
-runtime does the same work on a VM that costs nothing.
-[`deploy/`](https://github.com/vbaulin/nora/tree/main/deploy) has the systemd
-unit, the container file, and the Oracle Cloud walkthrough.
+## What You Will Build
 
-## Why it works this way
+```mermaid
+flowchart LR
+    Q["Question"] --> T["Repeatable experiment"]
+    T --> I["Instrument or dataset"]
+    I --> N["Local evidence notebook"]
+    N --> R["Automatic investigation"]
+    R --> F{"Finding changes a decision?"}
+    F -->|no| N
+    F -->|yes| H["Human question"]
+    H --> D["Confirmed decision or observation"]
+    D --> T
+```
 
-An unattended board has a great deal of time and very little to say. Two easy
-failure modes follow: it stays silent until someone thinks to ask, or it
-reports every threshold crossing and gets muted. Neither is research.
+Nora uses four cooperating parts:
 
-Four verdicts decide who hears about a finding:
-
-| Verdict | Meaning | Reaches a human |
-| --- | --- | --- |
-| `material_unresolved` | Real, decision-relevant, unanswerable from local evidence | Yes |
-| `not_material` | Real, but it changed no decision | No |
-| `resolved_local` | Already answered by evidence on the board | No |
-| `insufficient_data` | The analysis could not run | No |
-
-The last row is the one that keeps an agent honest. A board that cannot check
-something has not discovered anything, and must not turn its own blind spot
-into a request for attention or hardware.
-
-## Core abstractions
-
-The chapter order follows the dependency structure of the code, not the
-directory tree.
-
-| Abstraction | Question it answers |
+| Part | What you experience |
 |---|---|
-| Reasoning/execution boundary | Which decisions belong to an LLM, and which to a deterministic runtime? |
-| Task contract | How is an experiment made explicit, repeatable, and time-bounded? |
-| Skill lifecycle | How does a new capability become trusted for unattended use? |
-| Evidence release | Which results may become current facts, and which stay quarantined? |
-| Proactive dialogue | How does new evidence start a precise human interaction without acting? |
-| Autonomous research | How does the board use idle time to answer its own questions? |
-| Experimental operation | How do you run, inspect, and extend a first experiment? |
-| Domain packs | How does a field such as viticulture plug in without defining the runtime? |
+| **PicoClaw** | Chat, Telegram, model selection, skill discovery, explanations, and the web interface. |
+| **nano-os-agent** | The process that keeps tasks running, handles temporary failures, and records what happened. |
+| **Research engine** | The local investigator that compares series and decides whether a finding deserves attention. |
+| **Application pack** | The scientific vocabulary, subject identities, models, and confirmation rules for your use case. |
 
-## Learning path
+## Learning Path
 
-1. [Separate reasoning from execution](01-reasoning-and-execution.md) — why an
-   LLM must not hold the sampling loop.
-2. [Encode an experiment as a task](02-task-contract.md) — YAML steps,
-   repeats, journals.
-3. [Validate and promote reusable skills](03-skill-lifecycle.md) — how a new
-   capability earns unattended use.
-4. [Release evidence without overstating it](04-evidence-release.md) — the
-   difference between a reading and a fact.
-5. [Turn a change into one confirmable proposal](05-proactive-dialogue.md) —
-   asking a human well, and rarely.
-6. [Research the evidence on idle time](06-research-and-adaptation.md) — the
-   engine, the analyses, and a worked study.
-7. [Run and extend a first experiment](07-run-an-experiment.md) — laptop first,
-   then hardware.
-8. [Adapt it to your own domain](08-vineyard-guard.md) — write a pack; read the
-   vineyard one as a complete example.
+The chapter titles follow what you will accomplish, not the repository layout.
 
-## What learning means
+1. [Give the AI a laboratory, not a shell](01-reasoning-and-execution.md): connect open-ended reasoning to stable physical execution.
+2. [Turn a question into a repeatable experiment](02-task-contract.md): describe steps, expected results, retries, and local monitoring.
+3. [Teach Nora a new instrument](03-skill-lifecycle.md): package, test, and reuse a sensor or analysis capability.
+4. [Keep the scientific notebook trustworthy](04-evidence-release.md): preserve source, freshness, uncertainty, and failed experiments.
+5. [Let evidence start the conversation](05-proactive-dialogue.md): ask one question with enough context for an ordinary-language reply.
+6. [Use idle time for discovery](06-research-and-adaptation.md): find patterns automatically, test them locally, and remember refuted leads.
+7. [Run your first observer](07-run-an-experiment.md): start on a laptop, move to a board, and inspect the resulting artifacts.
+8. [Build an application for your domain](08-vineyard-guard.md): add your own subjects and questions; use Vineyard Guard as a complete field example.
 
-This codebase uses *learning* for several distinct processes. They should not
-be collapsed into one claim.
+## What the System Can Learn
 
-| Process | Durable output | What it does not prove |
-|---|---|---|
-| Evidence memory | Timestamped observations, artifacts, provenance | Why an observation occurred |
-| Autonomous research | A finding with a verdict and its limitations | That the finding generalizes beyond the window |
-| Hypothesis formation | A tested lead-lag relationship between two series | That the driver causes the response |
-| Research policy | Which analyses have been worth running on this board | That a demoted analysis is worthless elsewhere |
-| Coverage register | The measurements this board lacks, ranked | That adding one would make its answer positive |
-| Protocol adaptation | A bounded change to sampling or a next test | That the revised protocol is universally better |
-| Skill learning | A validated and promoted capability | That every future run will pass |
-| Model learning | Versioned fitted parameters and evaluation evidence | That an LLM explanation is a trained model |
-| Federated learning | A shared model plus its measured local calibration | That it performs the same on a board that did not contribute |
-| Human correction | A confirmed label, operation, or outcome | Causality between an action and a later state |
+Several different processes produce durable change. The distinction matters
+when you interpret the result.
 
-The rest of the tutorial keeps these meanings explicit.
+| Learning process | What changes |
+|---|---|
+| **Evidence memory** | New measurements, images, task results, and confirmed observations join the subject's timeline. |
+| **Research memory** | Supported findings and refuted candidate relationships affect what the engine investigates next. |
+| **Sampling adaptation** | A declared policy changes sampling density or proposes a follow-up experiment within set limits. |
+| **Skill learning** | A tested decoder, instrument action, or analysis becomes a reusable capability. |
+| **Model learning** | An application fits versioned parameters from labelled data and records local evaluation. |
+| **Federated learning** | An application may exchange selected model updates while measurements remain local. |
+| **Human correction** | A confirmed label or operation changes the evidence available to later analyses. |
 
-## Method note
+None of these turns temporal order into causality. A controlled experiment,
+independent measurement, or appropriate statistical design is still required
+for a causal claim.
 
-The chapter map uses the abstraction-first, relationship-first structure of
+## Where Nora Runs
+
+| | Edge board | Laptop | Cloud VM |
+|---|---|---|---|
+| Experiment runner | yes | yes | yes |
+| Research engine | yes | yes | yes |
+| Application packs | yes | yes | yes |
+| Camera, NPU, I2C, GPIO, audio | when attached | usually no | usually no |
+| Typical evidence source | local instruments | files and development devices | APIs, uploads, databases |
+
+The static Go executor builds for `riscv64`, `amd64`, and `arm64`. Skills
+that need hardware identify that requirement and remain inactive on a host
+without the device. The [off-board deployment guide](../../deploy/README.md)
+covers systemd, containers, and cloud VMs.
+
+## Continue
+
+Start with [Chapter 1: Give the AI a laboratory, not a shell](01-reasoning-and-execution.md).
+
+For a compact version of the entire course, use the
+[single-page tutorial](../tutorial-proactive-field-companion.md).
+
+### Method note
+
+The chapter map uses the relationship-first approach of
 [PocketFlow Tutorial Codebase Knowledge](https://github.com/The-Pocket/PocketFlow-Tutorial-Codebase-Knowledge).
-The text was not produced by an unattended codebase generator: every runtime
-claim is checked against this repository's task engine, skill contracts,
-research engine, and operator documentation, and every command in the tutorial
-was executed against the current tree.
+The commands and runtime claims are checked against the current repository.

@@ -1,15 +1,15 @@
 ---
-title: Skills and the Hardware Boundary
-summary: Package a capability, validate it experimentally, and promote only the evidence-backed version.
+title: Teach Nora a New Instrument
+summary: Turn a sensor, camera action, or analysis into a tested capability that future experiments can reuse.
 order: 3
 eyebrow: Chapter 3
 ---
 
-# Skills and the Hardware Boundary
+# Teach Nora a New Instrument
 
-A skill is a reusable capability with an explicit execution contract. The
-directory contains `SKILL.md` plus an implementation such as a thin shell
-wrapper, compiled helper, Python adapter, or native endpoint.
+A skill is a reusable way to obtain an observation or perform a bounded
+operation. It lets the next experiment ask for a temperature, image, spectrum,
+or model result without rebuilding the device integration.
 
 ```yaml
 ---
@@ -30,10 +30,10 @@ returns:
 ---
 ```
 
-The contract lets PicoClaw discover the capability and lets nano-os-agent
-enforce a known execution route.
+The description lets PicoClaw discover the capability and gives nano-os-agent a
+known way to execute and check it.
 
-## Draft to active
+## From first reading to reusable method
 
 ```mermaid
 stateDiagram-v2
@@ -53,7 +53,7 @@ stateDiagram-v2
 The distinction prevents a plausible script from becoming an unattended board
 capability merely because it ran once.
 
-## Runtime preference
+## Choose an implementation that fits the instrument
 
 1. Native Go in `main.go` for deterministic primitives, MCP, task execution,
    safety checks, and journaling.
@@ -67,7 +67,7 @@ The preferred path is:
 prototype -> validate repeatedly -> compile where useful -> promote
 ```
 
-## Validation evidence
+## Make the device earn unattended use
 
 A useful validation task should test more than process exit status. Depending
 on the skill, it can check:
@@ -81,15 +81,15 @@ on the skill, it can check:
 - failure behavior when the sensor is absent;
 - comparison with a known reference or control.
 
-Promotion retains the contract and the evidence that supported it. Later drift
+Promotion retains the capability description and the evidence that supported it. Later drift
 or a changed device can trigger revalidation without changing the core task
 engine.
 
-## Why skills precede shell commands
+## Why the next experiment should reuse the skill
 
 A registered skill provides one location for safety, retries, board-specific
 initialization, parsing, and structured output. A raw shell command spreads
 those responsibilities into every caller and produces evidence that is harder
 to interpret.
 
-Next: [decide which task and skill results may become evidence](04-evidence-release.md).
+Next: [keep the scientific notebook trustworthy](04-evidence-release.md).

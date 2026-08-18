@@ -1,20 +1,17 @@
 ---
-title: Tasks, Steps, and Journals
-summary: Express experiments as inspectable YAML with expectations, retries, and local repetition.
+title: Turn a Question into a Repeatable Experiment
+summary: Describe an observation once, then let Nora repeat it with known limits and a readable notebook.
 order: 2
 eyebrow: Chapter 2
 ---
 
-# Tasks, Steps, and Journals
+# Turn a Question into a Repeatable Experiment
 
-The task is nano-os-agent's unit of experimental intent. In
-[`main.go`](https://github.com/vbaulin/nora/blob/main/main.go), `Task` contains
-identity, priority, status, optional hypothesis linkage, success criteria,
-steps, and subtasks. Each `Step` declares an action, parameters, timeout,
-expectations, retry policy, failure policy, optional saved name, and optional
-repeat configuration.
+A task turns "observe this subject" into a method another person can inspect
+and rerun. It states the operation, required result, time limit, recovery from
+temporary failure, and where the evidence should be kept.
 
-## Minimal task
+## Describe one observation
 
 ```yaml
 - id: tutorial_system_snapshot
@@ -38,7 +35,7 @@ This is more than a command wrapper. It states what operation is allowed, how
 long it may run, what output must be present, what is retained, and what failure
 means.
 
-## Step semantics
+## What each field gives you
 
 | Field | Role |
 |---|---|
@@ -55,7 +52,7 @@ Later steps can reference earlier outputs with `${step_id.field}` or
 `${save_as.field}`. This keeps data flow inside the task instead of copying
 intermediate values through chat.
 
-## Local repetition
+## Leave it observing
 
 ```yaml
 repeat:
@@ -72,7 +69,7 @@ the series to extrema, trends, failures, and representative artifacts.
 This is the cost-control mechanism: one task can collect hundreds of samples
 without hundreds of LLM calls.
 
-## Experiment journal
+## Return to a scientific notebook
 
 After a task, nano-os-agent records an `ExperimentEntry` with:
 
@@ -86,10 +83,10 @@ Task state and experiment evidence are different. State answers *what the
 executor is doing now*. The journal answers *what was attempted and what
 happened*.
 
-## Template versus pending
+## Keep examples inactive until they are ready
 
 Long-running examples should remain `status: template`. This makes them
 discoverable without launching them automatically. An operator or PicoClaw
 creates a deliberate pending copy when the experiment is ready to run.
 
-Next: [turn repeated task logic into a reusable skill](03-skill-lifecycle.md).
+Next: [teach Nora a reusable instrument capability](03-skill-lifecycle.md).

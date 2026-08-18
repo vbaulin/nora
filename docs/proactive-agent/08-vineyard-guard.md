@@ -1,28 +1,32 @@
 ---
-title: Adapt It to Your Own Domain
-summary: Write a research pack, deliver findings through an adapter, and read Vineyard Guard as a complete worked example.
+title: Build an Application for Your Domain
+summary: Add subjects, scientific questions, models, and human knowledge without changing the general experiment engine.
 order: 8
 eyebrow: Chapter 8
 ---
 
-# Adapt It to Your Own Domain
+# Build an Application for Your Domain
 
-Everything so far was domain-neutral on purpose. This chapter is where a field
-of study plugs in. It has two parts: a **pack**, which tells the research engine
-what questions your domain always cares about, and an **adapter**, which
-delivers a finding to a human in their language and records the answer.
+An application makes Nora useful to a particular community. It names the
+subjects that matter, connects trusted models and measurements, and explains a
+finding in the language of the people who can act on it. You add this knowledge
+without rewriting the experiment runner or the research engine.
+
+This chapter uses two small additions: a **pack**, which tells the research
+engine which recurring scientific questions matter in a domain, and an
+**adapter**, which delivers a finding to a person and records the answer.
 
 ![Four layers: the engine holds the analyses, a pack declares questions as parameters, an adapter speaks to a person, and the private application holds models and data](../../assets/readme/domain-layers.svg)
 
 Vineyard Guard is the worked example. It is a complete application, not the
 definition of nora.
 
-## A pack is parameters, not code
+## Start with subjects and questions
 
 The vineyard's canopy-wetness question looked domain-specific: a black-rot
 infection index derived from rain and humidity, with an upper bound that
 assumes near-saturated air also wets the leaves. Underneath, it is the shape
-`threshold_materiality` already answers — two estimates of one quantity around
+`threshold_materiality` already answers: two estimates of one quantity around
 a decision threshold.
 
 So the vineyard pack contains no analysis code at all. From
@@ -46,8 +50,8 @@ So the vineyard pack contains no analysis code at all. From
 }
 ```
 
-The second vineyard question — whether the station serving a field can ever
-reach the 95% humidity criterion the model depends on — is `ceiling_saturation`
+The second vineyard question, whether the station serving a field can ever
+reach the 95% humidity criterion the model depends on, is `ceiling_saturation`
 with `criterion: 95.0`. The third, whether the board's alerts are earning their
 interruptions, is `outcome_calibration` over its own proposals and the farmer's
 confirmed outcomes.
@@ -77,7 +81,7 @@ printf '%s' '{"mode":"self_test"}' | ./skills/research_agent/run.sh
 `checks.packs` lists what was found and `checks.pack_errors` explains what was
 not.
 
-## Write the domain questions before the code
+## Write the scientific questions before the adapter
 
 Before parameterising anything, write the question in one sentence and say what
 would change if the answer went either way. If nothing changes, it is not a
@@ -88,7 +92,7 @@ domain questions are one of: two estimates around a threshold, a channel
 against a limit, two sources that should agree, predictions against outcomes, a
 source that stopped, a level that moved.
 
-## The adapter delivers, the engine does not
+## Connect findings to the people who know the context
 
 The engine returns `reportable` findings and stops. An adapter decides who
 hears about it, in what language, and how the answer comes back.
@@ -102,14 +106,14 @@ Vineyard Guard's adapter is `proactive-field-agent`. It:
 - treats a refusal as an answer that closes the subject for the season.
 
 A bench rig might print to a dashboard, open a ticket, or write a file. The
-contract is the same: state the numbers, order the options by cost, and accept
+method is the same: state the numbers, order the options by cost, and accept
 "nothing for now".
 
 ### The difference this makes
 
 The same board, the same watch flag, before and after the research step.
 
-Before — a question dressed as a purchase:
+Before, a question dressed as a purchase:
 
 ```text
 The data are compatible with a wet canopy, but no sensor confirms it. I propose
@@ -117,7 +121,7 @@ comparing a leaf-wetness sensor before treating this proxy as an operational
 alert. Should I investigate it?
 ```
 
-After — the board did the investigating first:
+After, the board did the investigating first:
 
 ```text
 Camp Nord: before writing to you I analysed 60 modelled days (2026-05-02 to
@@ -136,7 +140,7 @@ you now, reply "none" and I will close it.
 ```
 
 Same signal. The first message asks the farmer to fund the board's curiosity.
-The second reports a study, admits its limit, and puts the free option first —
+The second reports a study, admits its limit, and puts the free option first;
 and if the ambiguity had never crossed the threshold, there would have been no
 message at all.
 
@@ -229,7 +233,7 @@ the adapter's separate draft/confirm operation route.
 
 Downy mildew, powdery mildew, and grapevine black rot are separate model
 families with separate caches, plots, and thresholds. The adapter keeps them
-independent so a signal in one is never presented as evidence about another —
+independent so a signal in one is never presented as evidence about another,
 the same discipline the research engine applies to a subject and its analyses.
 
 You have now seen the whole path: a deterministic executor, a skill lifecycle,

@@ -229,6 +229,10 @@ A reply to an `investigation:<topic>` proposal resolves through
 options; map the answer to one option and record it. Nothing is written before
 that decision, and a refusal is recorded as a decision, not as a delay.
 
+`deeper_analysis` is internal work, not an option for the farmer. The research
+engine widens that study automatically. Do not create or deliver a `PF-*`
+proposal when additional local computation is the only available next step.
+
 For `leaf_wetness_proxy`, a direct answer such as `sí, les fulles són
 mullades`, `están secas`, or `yes, wet` is itself the requested observation.
 Record it immediately with `option_id=same_day_canopy_check`, a timestamp and

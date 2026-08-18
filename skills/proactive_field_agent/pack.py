@@ -81,7 +81,7 @@ def configured_fields(repo):
     return fields
 
 
-def black_rot_source(repo, field_id, columns):
+def black_rot_source(repo, field_id, columns, label=None):
     return {
         "kind": "sqlite",
         "path": str(Path(repo) / "goidanich.db"),
@@ -90,7 +90,7 @@ def black_rot_source(repo, field_id, columns):
         "time_column": "day",
         "where": "field_id = ?",
         "where_values": [field_id],
-        "label": f"black_rot_daily_predictions[{field_id}]",
+        "label": label or f"black_rot_daily_predictions[{field_id}]",
         "limit": 2000,
     }
 
@@ -225,11 +225,15 @@ def declare_questions(context):
                     "label": "forecast temperature",
                     "limit": 2000,
                 },
-                "reference": black_rot_source(repo, field_id, ["temp"]),
+                "reference": black_rot_source(
+                    repo, field_id, ["temp"], label="observed station temperature",
+                ),
                 "key": "temp",
                 "time_key": "day",
+                "unit": "°C",
                 "tolerance": 2.0,
                 "disagreement_share_limit": 0.3,
+                "min_interval_seconds": 7 * 24 * 3600,
                 "open_question": (
                     "whether the forecast source still reflects this station"
                 ),

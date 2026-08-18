@@ -1346,7 +1346,7 @@ class QuietBoardTest(ResearchTestCase):
 
 
 class AutonomousFollowUpTest(ResearchTestCase):
-    """The board may offer to keep digging on its own time."""
+    """The board keeps digging on its own time before involving a person."""
 
     def shifted_finding(self, connection):
         self.write_journal("probe.jsonl", [
@@ -1392,6 +1392,100 @@ class AutonomousFollowUpTest(ResearchTestCase):
             opened["params"]["source"]["max_lines"],
             400 * ENGINE.DEEPER_ANALYSIS_FACTOR,
         )
+
+    def test_cycle_uses_its_own_time_before_notifying_a_person(self):
+        connection = self.connection()
+        base = dt.date(2026, 6, 1)
+        primary = [
+            {"day": (base + dt.timedelta(days=index)).isoformat(), "temp": 25.0}
+            for index in range(40)
+        ]
+        reference = [
+            {"day": (base + dt.timedelta(days=index)).isoformat(), "temp": 20.0}
+            for index in range(40)
+        ]
+        ENGINE.open_question(
+            connection,
+            "vineyard:field_1",
+            "forecast temperature differs from the observed station",
+            "source_disagreement",
+            {
+                "primary": {
+                    "kind": "inline", "records": primary,
+                    "label": "forecast temperature",
+                },
+                "reference": {
+                    "kind": "inline", "records": reference,
+                    "label": "observed station temperature",
+                },
+                "key": "temp",
+                "time_key": "day",
+                "tolerance": 2.0,
+                "options": [{"id": "deeper_analysis", "cost": "none"}],
+            },
+        )
+        result = ENGINE.cycle(
+            connection,
+            ANALYSES.BUILTIN_ANALYSES,
+            self.context(),
+            budget={"max_questions": 2, "max_seconds": 10},
+        )
+        self.assertEqual(len(result["autonomous_follow_ups"]), 1)
+        self.assertEqual(len(result["investigated"]), 2)
+        self.assertEqual(result["reportable"], [])
+        extended = result["investigated"][1]
+        self.assertEqual(extended["autonomous_follow_up_of"], result["investigated"][0]["id"])
+        extended_question = ENGINE.question_by_id(connection, extended["question_id"])
+        self.assertEqual(extended_question["params"]["depth"], "extended")
+        decision = connection.execute(
+            "SELECT source, option_id FROM decisions ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        self.assertEqual(decision["source"], "autonomous_research")
+        self.assertEqual(decision["option_id"], ENGINE.DEEPER_ANALYSIS_OPTION)
+
+    def test_autonomous_only_findings_are_internal_not_reportable(self):
+        connection = self.connection()
+        base = dt.date(2026, 6, 1)
+        question = ENGINE.open_question(
+            connection,
+            "vineyard:field_1",
+            "forecast temperature differs from the observed station",
+            "source_disagreement",
+            {
+                "primary": {
+                    "kind": "inline",
+                    "records": [
+                        {"day": (base + dt.timedelta(days=index)).isoformat(), "temp": 25.0}
+                        for index in range(40)
+                    ],
+                },
+                "reference": {
+                    "kind": "inline",
+                    "records": [
+                        {"day": (base + dt.timedelta(days=index)).isoformat(), "temp": 20.0}
+                        for index in range(40)
+                    ],
+                },
+                "key": "temp",
+                "time_key": "day",
+                "tolerance": 2.0,
+                "options": [{"id": "deeper_analysis", "cost": "none"}],
+            },
+        )
+        finding = ENGINE.run_question(
+            connection, question, ANALYSES.BUILTIN_ANALYSES, self.context(),
+        )
+        self.assertTrue(ENGINE.autonomous_only_finding(finding))
+        result = self.run_skill({
+            "mode": "reportable",
+            "state_dir": str(self.root / "state"),
+        })
+        self.assertEqual(result["findings"], [])
+        stored = self.run_skill({
+            "mode": "findings",
+            "state_dir": str(self.root / "state"),
+        })
+        self.assertEqual(stored["findings"][0]["id"], finding["id"])
 
     def test_declining_opens_nothing(self):
         connection = self.connection()

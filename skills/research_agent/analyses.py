@@ -587,6 +587,8 @@ def source_disagreement(ctx):
     primary_records = load_records(primary, ctx.get("limits"))
     reference_records = load_records(reference, ctx.get("limits"))
     time_key = params.get("time_key")
+    primary_name = source_label(primary)
+    reference_name = source_label(reference)
 
     def by_day(records, value_key):
         buckets = {}
@@ -608,11 +610,15 @@ def source_disagreement(ctx):
     finding = base_finding(
         ctx, "source_disagreement",
         ctx.get("claim") or "two sources disagree beyond tolerance",
-        f"Compared {source_label(primary)} against {source_label(reference)} on "
+        f"Compared {primary_name} against {reference_name} on "
         f"{len(shared)} shared periods with tolerance {tolerance:g}.",
         len(shared), primary, limitations,
         (shared[0], shared[-1]) if shared else (None, None),
     )
+    finding["evidence"] = [
+        {"source": primary_name, "key": key},
+        {"source": reference_name, "key": reference_key},
+    ]
     if len(shared) < max(3, MIN_SAMPLES // 3):
         finding.update({
             "verdict": engine.VERDICT_INSUFFICIENT, "confidence": 0.2,
@@ -623,11 +629,18 @@ def source_disagreement(ctx):
     differences = [left[day] - right[day] for day in shared]
     exceeding = [day for day, delta in zip(shared, differences) if abs(delta) > tolerance]
     finding["metrics"] = {
+        "primary_source": primary_name,
+        "reference_source": reference_name,
+        "primary_key": key,
+        "reference_key": reference_key,
+        "unit": str(params.get("unit") or ""),
         "shared_periods": len(shared),
         "tolerance": tolerance,
         "periods_beyond_tolerance": len(exceeding),
         "median_difference": round(median(differences), 4),
+        "median_absolute_difference": round(median([abs(value) for value in differences]), 4),
         "max_difference": round(max(differences, key=abs), 4),
+        "max_absolute_difference": round(max(abs(value) for value in differences), 4),
         "first_beyond": exceeding[0] if exceeding else None,
     }
     share = len(exceeding) / len(shared)

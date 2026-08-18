@@ -1710,6 +1710,17 @@ def investigation_candidates(connection, profile, records):
 
 
 RESEARCH_KIND_PREFIX = "research:"
+AUTONOMOUS_RESEARCH_OPTIONS = frozenset({"deeper_analysis"})
+
+
+def farmer_actionable_research_options(options):
+    """Return only choices that require knowledge or a decision from a person."""
+    return [
+        option for option in (options or [])
+        if isinstance(option, dict)
+        and option.get("id")
+        and str(option["id"]) not in AUTONOMOUS_RESEARCH_OPTIONS
+    ]
 
 # Analyses this adapter already renders itself, in the farmer's language and
 # with its own agronomic phrasing. Delivering the engine's generic version too
@@ -1780,10 +1791,14 @@ def research_candidates(connection, profile, params, include_board_wide=False):
                 continue
         elif not include_board_wide:
             continue
-        rendered = investigations.render_anomaly(language, name, finding)
+        options = farmer_actionable_research_options(finding.get("options") or [])
+        if not options:
+            continue
+        rendered = investigations.render_anomaly(
+            language, name, {**finding, "options": options},
+        )
         if not rendered:
             continue
-        options = finding.get("options") or []
         candidates.append({
             "field_id": profile["field_id"],
             "kind": f"{RESEARCH_KIND_PREFIX}{finding.get('analysis')}",
@@ -2384,6 +2399,35 @@ def retire_legacy_research_review_proposals(connection):
     return int(cursor.rowcount or 0)
 
 
+def retire_autonomous_research_proposals(connection):
+    """Close old prompts that asked permission for local computation."""
+    rows = connection.execute(
+        """
+        SELECT * FROM proposals
+        WHERE kind LIKE 'research:%' AND status IN ('pending','notified','deferred')
+        """
+    ).fetchall()
+    retired = []
+    for row in rows:
+        proposal = proposal_dict(row)
+        option_ids = {
+            str(option)
+            for item in proposal.get("evidence") or []
+            if isinstance(item, dict)
+            for option in (item.get("options") or [])
+            if option
+        }
+        if not option_ids or not option_ids <= AUTONOMOUS_RESEARCH_OPTIONS:
+            continue
+        connection.execute(
+            "UPDATE proposals SET status='completed', updated_at=? WHERE id=?",
+            (iso_now(), proposal["id"]),
+        )
+        retired.append(proposal["id"])
+    connection.commit()
+    return retired
+
+
 def proposal_alert_diseases(proposal):
     diseases = set()
     for item in proposal.get("evidence") or []:
@@ -2724,6 +2768,7 @@ def mode_observe(connection, params, create=False):
     if not profiles:
         return {"status": "error", "error": "no configured fields found", "repo_path": repo_path}
     retired_source_reviews = retire_legacy_research_review_proposals(connection)
+    retired_autonomous_research = retire_autonomous_research_proposals(connection)
     changed_profiles = save_profiles(connection, profiles)
     profile_facts(connection, profiles)
     variety_research_queued = (
@@ -2755,6 +2800,7 @@ def mode_observe(connection, params, create=False):
         "profiles_changed": changed_profiles,
         "variety_research_queued": variety_research_queued,
         "retired_source_review_proposals": retired_source_reviews,
+        "retired_autonomous_research_proposals": retired_autonomous_research,
         "recovered_farmer_evidence": recovered_farmer_evidence,
         "observations": {
             "seen": len(observations), "inserted": inserted_observations,

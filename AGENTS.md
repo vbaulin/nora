@@ -98,9 +98,11 @@ and must never be reported as an error.
 
 Engine findings about monitors rather than fields reach the farmer as
 `research:<analysis>` proposals. A reply resolves to `record_decision` with the
-finding's options. One of them may be `deeper_analysis`: accepting it does not
-ask the farmer for anything, it authorizes the board to repeat the study over a
-wider window on its own time. Say so plainly when presenting it.
+finding's human-actionable options. `deeper_analysis` is not a farmer decision:
+the board automatically repeats the study over a wider window on its own time.
+Do not send a proposal whose only next step is more local computation. Contact
+the farmer only if the extended study leaves a concrete observation or decision
+that requires field knowledge.
 
 Internet research uses `proactive-field-agent mode=research` or
 `mode=ingest_research`, and only for the question a local investigation could

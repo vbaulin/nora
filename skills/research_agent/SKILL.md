@@ -138,16 +138,18 @@ signals and human feedback
 An analysis that cannot run is an internal gap. It is never converted into a
 request for hardware, budget, or attention.
 
-## Offering to dig further
+## Digging further automatically
 
-A material finding may carry the `deeper_analysis` option, which is the board
-offering its own time rather than yours: accepting it opens the same question
-again over a window four times wider, at a slightly higher priority, and later
-cycles run it unattended. The narrow conclusion and the wide one are stored
-separately, so a pattern that only appears at one scale stays visible as such.
+A material finding may carry the `deeper_analysis` option. That option uses the
+board's own time, so it is executed automatically before any notification: the
+same question is opened over a window four times wider at a slightly higher
+priority. The narrow conclusion and the wide one are stored separately, so a
+pattern that only appears at one scale stays visible as such.
 
-An adapter that delivers findings should present this option in the reader's
-language and pass `option_id` back with the decision.
+An adapter must remove `deeper_analysis` from farmer-facing choices. If no other
+option remains, it sends no message. A person is contacted only when the wider
+analysis leaves a concrete observation or decision that cannot be supplied by
+the board.
 
 ## From understanding to anticipation
 

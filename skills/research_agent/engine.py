@@ -439,6 +439,13 @@ def list_questions(connection, status=None, subject=None, limit=50):
     return [question_dict(row) for row in connection.execute(query, values)]
 
 
+def question_by_id(connection, question_id):
+    row = connection.execute(
+        "SELECT * FROM questions WHERE id=?", (int(question_id),)
+    ).fetchone()
+    return question_dict(row) if row else None
+
+
 def due_questions(connection, limit=3, min_interval_seconds=0):
     """Open questions, least recently investigated first.
 
@@ -901,10 +908,10 @@ def draft_measurement_task(connection, finding, drafts_dir=None, spec=None):
 def widen_question(connection, question, factor=DEEPER_ANALYSIS_FACTOR):
     """Open the same question again over a wider window.
 
-    This is what the board does when a person accepts its offer to look
-    further: same analysis, more evidence, its own time. It is a new question
-    rather than a mutation of the old one, so the narrow conclusion and the
-    wide one stay separately auditable.
+    The board invokes this itself when the first-pass finding calls only for
+    more local computation: same analysis, more evidence, its own time. It is
+    a new question rather than a mutation of the old one, so the narrow
+    conclusion and the wide one stay separately available.
     """
     params = json.loads(json.dumps(question.get("params") or {}))
     source = params.get("source")
@@ -1020,6 +1027,33 @@ def record_decision(connection, finding_id, decision, option_id=None, note=None,
     if record is not None and drafted:
         record["drafted_task"] = drafted
     return record
+
+
+def option_ids(finding):
+    return {
+        str(option.get("id"))
+        for option in (finding.get("options") or [])
+        if isinstance(option, dict) and option.get("id")
+    }
+
+
+def autonomous_only_finding(finding):
+    """True when the only offered next step is more local computation."""
+    ids = option_ids(finding)
+    return bool(ids) and ids <= {DEEPER_ANALYSIS_OPTION}
+
+
+def can_autonomously_deepen(question, finding):
+    """A first-pass finding may widen itself once without asking a person."""
+    if finding.get("verdict") != VERDICT_MATERIAL or not autonomous_only_finding(finding):
+        return False
+    params = question.get("params") or {}
+    if params.get("depth") == "extended":
+        return False
+    holders = [params.get(key) for key in (
+        "source", "primary", "reference", "alerts", "outcomes",
+    )]
+    return any(isinstance(holder, dict) for holder in holders)
 
 
 # ---------------------------------------------------------------------------
@@ -1282,7 +1316,8 @@ def cycle(connection, registry, context, budget=None, scanners=(), journal_path=
         if not needed:
             return {
                 "skipped": True, "reason": reason, "raised": [], "seen": 0,
-                "investigated": [], "reportable": [], "elapsed_seconds": 0.0,
+                "investigated": [], "reportable": [], "autonomous_follow_ups": [],
+                "elapsed_seconds": 0.0,
                 "budget": limits, "wrote": False,
             }
     started = time.monotonic()
@@ -1299,6 +1334,7 @@ def cycle(connection, registry, context, budget=None, scanners=(), journal_path=
             raised.append({"scanner": getattr(scanner, "__name__", "scanner"), "error": str(exc)})
     investigated = []
     reportable = []
+    autonomous_follow_ups = []
     ready = due_questions(
         connection, limit=int(limits["max_questions"]),
         min_interval_seconds=float(limits.get("min_interval_seconds") or 0),
@@ -1308,10 +1344,47 @@ def cycle(connection, registry, context, budget=None, scanners=(), journal_path=
             break
         record = run_question(connection, question, registry, context)
         investigated.append(record)
-        if record.get("verdict") in REPORTABLE_VERDICTS and record.get("id"):
-            reportable.append(record)
         if record.get("id"):
             journal_finding(journal_path, record)
+        if can_autonomously_deepen(question, record):
+            stored = record_decision(
+                connection,
+                record["id"],
+                "accepted",
+                option_id=DEEPER_ANALYSIS_OPTION,
+                note="The board widened this analysis automatically before involving a person.",
+                source="autonomous_research",
+            )
+            follow_up = (stored or {}).get("follow_up_question") or {}
+            if follow_up.get("id"):
+                autonomous_follow_ups.append({
+                    "finding_id": record["id"],
+                    "question_id": follow_up["id"],
+                    "analysis": follow_up.get("analysis"),
+                })
+                if time.monotonic() - started <= limits["max_seconds"]:
+                    wider_question = question_by_id(connection, follow_up["id"])
+                    if wider_question:
+                        wider_record = run_question(
+                            connection, wider_question, registry, context,
+                        )
+                        wider_record["autonomous_follow_up_of"] = record["id"]
+                        investigated.append(wider_record)
+                        if wider_record.get("id"):
+                            journal_finding(journal_path, wider_record)
+                        if (
+                            wider_record.get("verdict") in REPORTABLE_VERDICTS
+                            and wider_record.get("id")
+                            and not autonomous_only_finding(wider_record)
+                        ):
+                            reportable.append(wider_record)
+            continue
+        if (
+            record.get("verdict") in REPORTABLE_VERDICTS
+            and record.get("id")
+            and not autonomous_only_finding(record)
+        ):
+            reportable.append(record)
     if signature is not None:
         meta_set(connection, "evidence_signature", signature)
         meta_set(connection, "last_cycle_at", iso_now())
@@ -1325,6 +1398,7 @@ def cycle(connection, registry, context, budget=None, scanners=(), journal_path=
         "seen": len(raised),
         "investigated": investigated,
         "reportable": reportable,
+        "autonomous_follow_ups": autonomous_follow_ups,
         "elapsed_seconds": round(time.monotonic() - started, 3),
         "budget": limits,
         "skipped": False,

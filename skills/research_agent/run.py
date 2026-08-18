@@ -304,6 +304,7 @@ def mode_cycle(connection, params):
             for item in result["investigated"]
         ],
         "reportable": [engine.compact_finding(item) for item in result["reportable"]],
+        "autonomous_follow_ups": result.get("autonomous_follow_ups") or [],
         "elapsed_seconds": result["elapsed_seconds"],
         "safety": (
             "Findings are evidence about stored data. No action was taken and no "
@@ -524,7 +525,10 @@ def main():
                         connection, params.get("subject"),
                         engine.VERDICT_MATERIAL, int(params.get("limit") or 20),
                     )
-                    if item.get("status") == "open"
+                    if (
+                        item.get("status") == "open"
+                        and not engine.autonomous_only_finding(item)
+                    )
                 ],
             }
         elif mode == "record_decision":

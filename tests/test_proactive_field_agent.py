@@ -768,7 +768,10 @@ class ProactiveFieldAgentTest(unittest.TestCase):
             "sample_size": 48,
             "confidence": 0.8,
             "limitations": ["The comparison does not identify ground truth."],
-            "options": [{"id": "deeper_analysis", "cost": "none"}],
+            "options": [
+                {"id": "targeted_inspection", "cost": "none"},
+                {"id": "deeper_analysis", "cost": "none"},
+            ],
         }
         rendered = {
             "title": "Anomalia detectada al Camp Nord",
@@ -783,6 +786,50 @@ class ProactiveFieldAgentTest(unittest.TestCase):
         self.assertGreaterEqual(
             candidates[0]["priority"], MODULE.DEFAULT_NOTIFICATION_THRESHOLD,
         )
+        self.assertEqual(
+            candidates[0]["evidence"][0]["options"], ["targeted_inspection"],
+        )
+
+    def test_local_computation_is_not_offered_to_the_farmer(self):
+        connection = self.connection()
+        profile = MODULE.field_profiles(str(self.repo))[0]
+        finding = {
+            "id": 21,
+            "subject": "vineyard:field_1",
+            "analysis": "source_disagreement",
+            "verdict": "material_unresolved",
+            "sample_size": 65,
+            "confidence": 0.8,
+            "options": [{"id": "deeper_analysis", "cost": "none"}],
+        }
+        with mock.patch.object(MODULE, "research_findings", return_value=[finding]), \
+                mock.patch.object(MODULE.investigations, "render_anomaly") as render:
+            candidates = MODULE.research_candidates(connection, profile, self.params())
+        self.assertEqual(candidates, [])
+        render.assert_not_called()
+
+    def test_source_comparison_names_values_and_units(self):
+        rendered = MODULE.investigations.render_anomaly("ca", "N2 Chardonnay", {
+            "subject": "vineyard:field_2",
+            "analysis": "source_disagreement",
+            "sample_size": 65,
+            "metrics": {
+                "primary_source": "forecast temperature",
+                "reference_source": "observed station temperature",
+                "shared_periods": 65,
+                "periods_beyond_tolerance": 61,
+                "median_absolute_difference": 3.4,
+                "max_absolute_difference": 7.1,
+                "unit": "°C",
+            },
+            "options": [{"id": "targeted_inspection", "cost": "none"}],
+        })
+        message = rendered["message"]
+        self.assertIn("temperatura prevista", message)
+        self.assertIn("temperatura observada a l'estació", message)
+        self.assertIn("61 de 65", message)
+        self.assertIn("3.4 °C", message)
+        self.assertNotIn("black_rot_daily_predictions", message)
 
     def test_field_research_finding_is_not_attributed_to_the_first_field(self):
         connection = self.connection()
@@ -794,7 +841,7 @@ class ProactiveFieldAgentTest(unittest.TestCase):
             "verdict": "material_unresolved",
             "sample_size": 30,
             "confidence": 0.7,
-            "options": [{"id": "deeper_analysis", "cost": "none"}],
+            "options": [{"id": "check_source", "cost": "none"}],
         }]
         with mock.patch.object(MODULE, "research_findings", return_value=findings), \
                 mock.patch.object(MODULE.investigations, "render_anomaly") as render:
@@ -814,7 +861,7 @@ class ProactiveFieldAgentTest(unittest.TestCase):
             "verdict": "material_unresolved",
             "sample_size": 12,
             "confidence": 0.8,
-            "options": [{"id": "deeper_analysis", "cost": "none"}],
+            "options": [{"id": "check_source", "cost": "none"}],
         }
         rendered = {"title": "Board finding", "message": "A source stopped."}
         with mock.patch.object(MODULE, "research_findings", return_value=[finding]), \
@@ -829,6 +876,30 @@ class ProactiveFieldAgentTest(unittest.TestCase):
             )
         self.assertEqual(excluded, [])
         self.assertEqual(len(included), 1)
+
+    def test_old_permission_prompt_for_local_analysis_is_retired(self):
+        connection = self.connection()
+        proposal = MODULE.create_proposal(connection, {
+            "field_id": "field_1",
+            "kind": "research:source_disagreement",
+            "target": "farmer",
+            "priority": MODULE.RESEARCH_NOTIFICATION_PRIORITY,
+            "title": "Research finding",
+            "message": "Should I analyse a longer window?",
+            "rationale": "A narrow comparison differed.",
+            "evidence": [{
+                "research_finding_id": 17,
+                "options": ["deeper_analysis"],
+            }],
+            "confidence": 0.8,
+            "requires_confirmation": True,
+            "cooldown_days": 14,
+        })
+        retired = MODULE.retire_autonomous_research_proposals(connection)
+        self.assertEqual(retired, [proposal["id"]])
+        self.assertEqual(
+            MODULE.proposal_by_id(connection, proposal["id"])["status"], "completed",
+        )
 
     def test_schema_upgrade_repairs_pending_silent_research_proposals(self):
         connection = self.connection()

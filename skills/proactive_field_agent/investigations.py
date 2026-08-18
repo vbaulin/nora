@@ -1358,12 +1358,12 @@ ANOMALY_TEXTS = {
         "sample": "He analitzat {samples} mostres.",
         "open": "El que no puc resoldre sol és {question}.",
         "options_intro": "Opcions:",
-        "closing": "Voleu que hi continuï? Si no us interessa, responeu «cap» i ho tanco.",
+        "closing": "Responeu amb l'opció que podeu aportar. Si cap no us encaixa, responeu «cap» i ho tanco.",
         "data_gap": "La font va deixar d'enregistrar el {last_day} i encara no ha tornat.",
         "level_shift": "El nivell va passar de {before} a {after}, molt més del que varia normalment.",
         "ceiling_saturation": "Els valors s'acumulen contra {top} en lloc de superar-lo, cosa que sol indicar un límit de l'aparell.",
         "ceiling_criterion": "El canal no ha arribat mai al llindar de {criterion} tot i acostar-s'hi {approached} vegades.",
-        "source_disagreement": "Dues fonts que haurien de coincidir difereixen en {periods} períodes.",
+        "source_disagreement": "{primary} i {reference} difereixen més de la tolerància en {periods} de {shared} dies comparables. La diferència absoluta típica és {median_abs}{unit} i la màxima és {max_abs}{unit}.",
         "outcome_calibration": "Dels {alerts} avisos que he enviat, {negative} no van trobar res.",
         "relationship_forecast": "{driver} va superar el seu llindar alt el {crossed} ({value}). Per la relació que vau confirmar en aquest camp ({rho} sobre {samples} dies), això apuntaria a {response} cap al {predicted}; és una projecció d'aquesta relació, no una mesura.",
         "lagged_association": "{driver} va precedir {response} {lag} dies abans, de manera consistent al llarg de {samples} dies (correlació {rho}).",
@@ -1374,7 +1374,7 @@ ANOMALY_TEXTS = {
         "open_ceiling_saturation": "si l'aparell està arribant al seu límit",
         "open_ceiling_criterion": "si aquest llindar és assolible en aquest lloc",
         "open_data_gap": "si la font es va aturar o si l'experiment simplement es va acabar",
-        "open_source_disagreement": "quina de les dues fonts reflecteix el que passa aquí",
+        "open_source_disagreement": "quina comprovació de camp permet distingir entre {primary} i {reference}",
         "open_outcome_calibration": "quants avisos voleu rebre",
     },
     "es": {
@@ -1385,12 +1385,12 @@ ANOMALY_TEXTS = {
         "sample": "He analizado {samples} muestras.",
         "open": "Lo que no puedo resolver solo es {question}.",
         "options_intro": "Opciones:",
-        "closing": "¿Quiere que siga? Si no le interesa, responda «ninguna» y lo cierro.",
+        "closing": "Responda con la opción que pueda aportar. Si ninguna encaja, responda «ninguna» y lo cierro.",
         "data_gap": "La fuente dejó de registrar el {last_day} y aún no ha vuelto.",
         "level_shift": "El nivel pasó de {before} a {after}, mucho más de lo que varía normalmente.",
         "ceiling_saturation": "Los valores se acumulan contra {top} en lugar de superarlo, lo que suele indicar un límite del aparato.",
         "ceiling_criterion": "El canal nunca alcanzó el umbral de {criterion} pese a acercarse {approached} veces.",
-        "source_disagreement": "Dos fuentes que deberían coincidir difieren en {periods} períodos.",
+        "source_disagreement": "{primary} y {reference} difieren más de la tolerancia en {periods} de {shared} días comparables. La diferencia absoluta típica es {median_abs}{unit} y la máxima es {max_abs}{unit}.",
         "outcome_calibration": "De los {alerts} avisos que he enviado, {negative} no encontraron nada.",
         "relationship_forecast": "{driver} superó su umbral alto el {crossed} ({value}). Por la relación que confirmó en este campo ({rho} sobre {samples} días), esto apuntaría a {response} hacia el {predicted}; es una proyección de esa relación, no una medida.",
         "lagged_association": "{driver} precedió a {response} {lag} días antes, de forma consistente a lo largo de {samples} días (correlación {rho}).",
@@ -1401,7 +1401,7 @@ ANOMALY_TEXTS = {
         "open_ceiling_saturation": "si el aparato está llegando a su límite",
         "open_ceiling_criterion": "si ese umbral es alcanzable en este sitio",
         "open_data_gap": "si la fuente se detuvo o si el experimento simplemente terminó",
-        "open_source_disagreement": "cuál de las dos fuentes refleja lo que pasa aquí",
+        "open_source_disagreement": "qué comprobación de campo permite distinguir entre {primary} y {reference}",
         "open_outcome_calibration": "cuántos avisos quiere recibir",
     },
     "en": {
@@ -1412,12 +1412,12 @@ ANOMALY_TEXTS = {
         "sample": "I analysed {samples} samples.",
         "open": "What I cannot settle alone is {question}.",
         "options_intro": "Options:",
-        "closing": "Would you like me to carry on? If it does not interest you, reply \"none\" and I will close it.",
+        "closing": "Reply with the observation you can provide. If none fits, reply \"none\" and I will close it.",
         "data_gap": "The source stopped recording on {last_day} and has not come back.",
         "level_shift": "The level moved from {before} to {after}, far more than it normally varies.",
         "ceiling_saturation": "Values pile up against {top} instead of passing it, which usually means a limit of the device.",
         "ceiling_criterion": "The channel never reached the {criterion} threshold despite approaching it {approached} times.",
-        "source_disagreement": "Two sources that should agree differ across {periods} periods.",
+        "source_disagreement": "{primary} and {reference} differ beyond tolerance on {periods} of {shared} comparable days. The typical absolute difference is {median_abs}{unit}, and the maximum is {max_abs}{unit}.",
         "outcome_calibration": "Of the {alerts} alerts I sent, {negative} found nothing.",
         "relationship_forecast": "{driver} crossed its high threshold on {crossed} ({value}). By the relationship you confirmed in this field ({rho} over {samples} days), that would point at {response} around {predicted}; it is a projection of that relationship, not a measurement.",
         "lagged_association": "{driver} preceded {response} by {lag} days, consistently across {samples} days (correlation {rho}).",
@@ -1428,7 +1428,7 @@ ANOMALY_TEXTS = {
         "open_ceiling_saturation": "whether the device is reaching its limit",
         "open_ceiling_criterion": "whether that threshold is reachable at this site",
         "open_data_gap": "whether the source stopped or the experiment simply ended",
-        "open_source_disagreement": "which of the two sources reflects what happens here",
+        "open_source_disagreement": "which field observation can distinguish {primary} from {reference}",
         "open_outcome_calibration": "how many alerts you want to receive",
     },
 }
@@ -1446,17 +1446,30 @@ def anomaly_open_question(language, finding):
     if analysis == "ceiling_saturation":
         criterion = (finding.get("metrics") or {}).get("criterion")
         analysis = "ceiling_criterion" if criterion is not None else "ceiling_saturation"
-    return texts.get(f"open_{analysis}")
+    template = texts.get(f"open_{analysis}")
+    if not template:
+        return None
+    if analysis == "source_disagreement":
+        metrics = finding.get("metrics") or {}
+        return template.format(
+            primary=localized_series(language, metrics.get("primary_source") or "?"),
+            reference=localized_series(language, metrics.get("reference_source") or "?"),
+        )
+    return template
 
 
 SERIES_LABELS = {
     "ca": {
         "season.rain_total_mm": "la pluja de la temporada",
         "indices.gdd_base10": "la calor acumulada",
+        "forecast temperature": "la temperatura prevista",
+        "observed station temperature": "la temperatura observada a l'estació",
     },
     "es": {
         "season.rain_total_mm": "la lluvia de la temporada",
         "indices.gdd_base10": "el calor acumulado",
+        "forecast temperature": "la temperatura prevista",
+        "observed station temperature": "la temperatura observada en la estación",
     },
     "en": {},
 }
@@ -1533,8 +1546,17 @@ def anomaly_summary(language, finding):
                 )
             return texts["ceiling_saturation"].format(top=metrics.get("observed_max"))
         if analysis == "source_disagreement":
+            unit = str(metrics.get("unit") or "")
+            if unit:
+                unit = f" {unit}"
             return texts["source_disagreement"].format(
+                primary=localized_series(language, metrics.get("primary_source") or "?"),
+                reference=localized_series(language, metrics.get("reference_source") or "?"),
                 periods=metrics.get("periods_beyond_tolerance", 0),
+                shared=metrics.get("shared_periods", finding.get("sample_size", 0)),
+                median_abs=metrics.get("median_absolute_difference", "?"),
+                max_abs=metrics.get("max_absolute_difference", "?"),
+                unit=unit,
             )
         if analysis == "outcome_calibration":
             return texts["outcome_calibration"].format(

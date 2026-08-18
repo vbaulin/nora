@@ -286,7 +286,7 @@ useful or merely busy.
 
 | Verdict | What happens |
 | --- | --- |
-| `material_unresolved` | Handed to an adapter, with options ordered by cost |
+| `material_unresolved` | Extended locally first; handed to an adapter only when a human observation or decision remains |
 | `not_material` | Stored; the question is marked answered |
 | `resolved_local` | Stored; the evidence already answered it |
 | `insufficient_data` | Stored as an internal gap; never a human message |

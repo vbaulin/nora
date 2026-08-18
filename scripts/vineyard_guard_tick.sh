@@ -22,6 +22,13 @@ mkdir -p "$STATE_DIR"
 
 local_date="$(date +%Y-%m-%d)"
 local_hm="$(date +%H%M)"
+local_hour="${local_hm%??}"
+local_minute="${local_hm#??}"
+local_hour="${local_hour#0}"
+local_minute="${local_minute#0}"
+[ -n "$local_hour" ] || local_hour=0
+[ -n "$local_minute" ] || local_minute=0
+local_minute_of_day=$((local_hour * 60 + local_minute))
 
 acquire_lock() {
     lock="$1"
@@ -62,6 +69,7 @@ run_once() {
     if ! acquire_lock "$lock"; then
         return 0
     fi
+    date +%s > "$STATE_DIR/.cron_${task}.attempt"
     {
         echo "=== $(date -Iseconds) ${task} start ==="
         if "$@"; then
@@ -74,13 +82,26 @@ run_once() {
             date -Iseconds > "$stamp"
         fi
         release_lock "$lock"
-        exit "$rc"
     } >> "$LOG" 2>&1
+    return "$rc"
 }
 
 done_stamp() {
     task="$1"
     [ -f "$STATE_DIR/.cron_${task}_${local_date}.done" ]
+}
+
+retry_due() {
+    task="$1"
+    interval="$2"
+    marker="$STATE_DIR/.cron_${task}.attempt"
+    [ -f "$marker" ] || return 0
+    last="$(cat "$marker" 2>/dev/null || echo 0)"
+    case "$last" in
+        ''|*[!0-9]*) return 0 ;;
+    esac
+    now="$(date +%s)"
+    [ "$((now - last))" -ge "$interval" ]
 }
 
 # Duties above happen once a day at a fixed time. run_interval is for work that
@@ -117,13 +138,22 @@ run_interval() {
             date +%s > "$marker"
         fi
         release_lock "$lock"
-        exit "$rc"
     } >> "$LOG" 2>&1
+    return "$rc"
 }
 
 task_locked() {
     task="$1"
     [ -d "$STATE_DIR/.cron_${task}.lock" ]
+}
+
+daily_pipeline_locked() {
+    for task in refresh alert proactive proactive_evening; do
+        if task_locked "$task"; then
+            return 0
+        fi
+    done
+    return 1
 }
 
 send_pending() {
@@ -143,43 +173,57 @@ send_pending() {
     "$SENDER" --once >> "$LOG" 2>&1 || true
 }
 
-case "$local_hm" in
-    075[5-9])
-        run_once supabase "$SCRIPT" supabase
-        ;;
-    080[0-9]|081[0-4])
-        run_once refresh "$SCRIPT" refresh
-        ;;
-    081[5-9]|082[0-9]|083[0-4])
-        if done_stamp refresh && ! task_locked refresh; then
-            run_once alert "$SCRIPT" alert
-        else
-            echo "=== $(date -Iseconds) alert deferred: refresh not complete ===" >> "$LOG"
-        fi
-        ;;
-    083[5-9]|084[0-9])
-        if done_stamp alert && ! task_locked alert; then
-            run_once proactive "$SCRIPT" proactive --research
-        else
-            echo "=== $(date -Iseconds) proactive deferred: alert evaluation not complete ===" >> "$LOG"
-        fi
-        ;;
-    170[0-9]|171[0-4])
-        run_once proactive_evening "$SCRIPT" proactive
-        ;;
-esac
+# Each duty remains eligible after its nominal start time. The daily stamps
+# make this idempotent, while retry markers prevent a persistent fault from
+# starting an expensive refresh every five minutes. This also catches up after
+# a late boot, a network outage, or a multi-field refresh that crosses 08:15.
+daily_task_ran=0
+if daily_pipeline_locked; then
+    daily_task_ran=1
+elif [ "$local_minute_of_day" -ge 475 ] && [ "$local_minute_of_day" -lt 480 ] \
+        && ! done_stamp supabase && retry_due supabase 900; then
+    daily_task_ran=1
+    run_once supabase "$SCRIPT" supabase
+elif [ "$local_minute_of_day" -ge 480 ] \
+        && ! done_stamp refresh && ! task_locked supabase \
+        && retry_due refresh 900; then
+    daily_task_ran=1
+    run_once refresh "$SCRIPT" refresh
+elif [ "$local_minute_of_day" -ge 495 ] \
+        && done_stamp refresh && ! task_locked refresh \
+        && ! done_stamp alert && retry_due alert 300; then
+    daily_task_ran=1
+    run_once alert "$SCRIPT" alert
+elif [ "$local_minute_of_day" -ge 515 ] \
+        && done_stamp alert && ! task_locked alert \
+        && ! done_stamp proactive && retry_due proactive 900; then
+    daily_task_ran=1
+    run_once proactive "$SCRIPT" proactive --research
+elif [ "$local_minute_of_day" -ge 475 ] \
+        && ! done_stamp supabase && retry_due supabase 900; then
+    daily_task_ran=1
+    run_once supabase "$SCRIPT" supabase
+elif task_locked supabase; then
+    daily_task_ran=1
+elif [ "$local_minute_of_day" -ge 1020 ] \
+        && ! done_stamp proactive_evening && retry_due proactive_evening 900; then
+    daily_task_ran=1
+    run_once proactive_evening "$SCRIPT" proactive
+fi
 
 # The scheduled duties occupy about an hour of the day. The rest of it is spent
 # researching evidence the board already holds: one budgeted cycle per hour,
 # never inside a duty window, and never sending anything itself.
-case "$local_hm" in
-    075[0-9]|08[0-4][0-9]|170[0-9]|171[0-4])
-        :
-        ;;
-    *)
-        run_interval research 3600 "$SCRIPT" research
-        ;;
-esac
+if [ "$daily_task_ran" -eq 0 ]; then
+    case "$local_hm" in
+        075[0-9]|08[0-4][0-9]|170[0-9]|171[0-4])
+            :
+            ;;
+        *)
+            run_interval research 3600 "$SCRIPT" research
+            ;;
+    esac
+fi
 
 send_pending
 

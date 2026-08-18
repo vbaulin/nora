@@ -27,11 +27,13 @@ class ProactiveDeploymentContractTest(unittest.TestCase):
         tick = (ROOT / "scripts" / "vineyard_guard_tick.sh").read_text(encoding="utf-8")
         self.assertIn("run_interval()", tick)
         self.assertIn("run_interval research 3600", tick)
-        # The research cycle must not compete with a duty window.
+        # The research cycle must not compete with a duty or catch-up run.
         window = tick.index("run_interval research")
         guard = tick[:window]
         self.assertIn("075[0-9]|08[0-4][0-9]", guard)
         self.assertIn("170[0-9]|171[0-4]", guard)
+        self.assertIn('daily_task_ran=0', guard)
+        self.assertIn('if [ "$daily_task_ran" -eq 0 ]', guard)
         cron = (ROOT / "scripts" / "vineyard_guard_cron.py").read_text(encoding="utf-8")
         self.assertIn('"research"', cron)
         self.assertIn("def mode_research", cron)
@@ -51,6 +53,18 @@ class ProactiveDeploymentContractTest(unittest.TestCase):
         self.assertIn("release_lock()", tick)
         self.assertIn('kill -0 "$owner"', tick)
         self.assertIn('if "$@"; then', tick)
+
+    def test_scheduler_catches_up_daily_refresh_and_alert_after_their_start_times(self):
+        tick = (ROOT / "scripts" / "vineyard_guard_tick.sh").read_text(encoding="utf-8")
+        self.assertIn("local_minute_of_day", tick)
+        self.assertIn('"$local_minute_of_day" -ge 480', tick)
+        self.assertIn('! done_stamp refresh && ! task_locked supabase', tick)
+        self.assertIn('&& retry_due refresh 900', tick)
+        self.assertIn('"$local_minute_of_day" -ge 495', tick)
+        self.assertIn('done_stamp refresh && ! task_locked refresh', tick)
+        self.assertIn('! done_stamp alert && retry_due alert 300', tick)
+        self.assertIn("daily_pipeline_locked()", tick)
+        self.assertIn("if daily_pipeline_locked; then", tick)
 
     def test_supabase_scheduler_checks_the_structured_skill_status(self):
         cron = (ROOT / "scripts" / "vineyard_guard_cron.py").read_text(encoding="utf-8")

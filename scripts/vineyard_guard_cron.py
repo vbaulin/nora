@@ -15,15 +15,30 @@ SKILLS = "/root/.picoclaw/workspace/skills"
 
 
 def run_json(command, payload=None, env=None, timeout=1200, cwd=None):
-    proc = subprocess.run(
-        command,
-        input=json.dumps(payload or {}).encode("utf-8") if payload is not None else None,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        env={**os.environ, **(env or {})},
-        timeout=timeout,
-        cwd=cwd,
-    )
+    try:
+        proc = subprocess.run(
+            command,
+            input=json.dumps(payload or {}).encode("utf-8") if payload is not None else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env={**os.environ, **(env or {})},
+            timeout=timeout,
+            cwd=cwd,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "ok": False,
+            "returncode": 124,
+            "stdout": {},
+            "stderr": f"command timed out after {timeout}s: {exc}",
+        }
+    except OSError as exc:
+        return {
+            "ok": False,
+            "returncode": 127,
+            "stdout": {},
+            "stderr": f"cannot execute {command[0]}: {exc}",
+        }
     text = proc.stdout.decode("utf-8", "replace").strip()
     try:
         data = json.loads(text) if text else {}
@@ -225,7 +240,7 @@ def call_research(params):
 
 def call_season_climate(params):
     return run_json(
-        [os.path.join(SKILLS, "vineyard_season_climate", "run.py")],
+        [os.path.join(SKILLS, "vineyard_season_climate", "run.sh")],
         payload=params,
         timeout=300,
     )

@@ -14,6 +14,17 @@ SPEC.loader.exec_module(MODULE)
 
 
 class VineyardGuardCronTest(unittest.TestCase):
+    def test_missing_executable_is_a_structured_failure(self):
+        result = MODULE.run_json(["/definitely/missing/vineyard-skill"])
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["returncode"], 127)
+        self.assertIn("cannot execute", result["stderr"])
+
+    def test_season_climate_uses_the_packaged_shell_entrypoint(self):
+        with mock.patch.object(MODULE, "run_json", return_value={"ok": True}) as run:
+            MODULE.call_season_climate({"mode": "report"})
+        self.assertTrue(run.call_args.args[0][0].endswith("vineyard_season_climate/run.sh"))
+
     def test_daily_refresh_trains_downy_and_powdery_after_cache_refresh(self):
         args = types.SimpleNamespace(
             days=31,

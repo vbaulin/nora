@@ -197,7 +197,7 @@ def render_page(pages: list[Page], page: Page) -> str:
     </main>
   </div>
   <footer class="site-footer">
-    <p>Built from repository-verified contracts and code. Chapter structure adapted from PocketFlow Tutorial Codebase Knowledge.</p>
+    <p>Built from tested examples and executable code. Chapter structure adapted from PocketFlow Tutorial Codebase Knowledge.</p>
   </footer>
   <script type="module" src="assets/site.js"></script>
 </body>

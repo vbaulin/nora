@@ -208,7 +208,7 @@ for a causal claim.
 
 The static Go executor builds for `riscv64`, `amd64`, and `arm64`. Skills
 that need hardware identify that requirement and remain inactive on a host
-without the device. The [off-board deployment guide](../../deploy/README.md)
+without the device. The [off-board deployment guide](https://github.com/vbaulin/nora/blob/main/deploy/README.md)
 covers systemd, containers, and cloud VMs.
 
 ## Continue

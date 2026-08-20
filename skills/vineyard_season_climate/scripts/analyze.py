@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import math
 import os
 import sqlite3
@@ -43,7 +44,8 @@ def read_params() -> dict:
     for key in (
         "mode", "repo_path", "db_path", "config_path", "field", "station",
         "start", "end", "season_year", "timezone", "harvest_date",
-        "huglin_k", "write_artifacts", "brix_model_path",
+        "huglin_k", "write_artifacts", "brix_model_path", "fetch_history",
+        "history_timeout",
     ):
         value = os.environ.get(env_name(key))
         if value not in (None, "") and key not in params:
@@ -724,6 +726,68 @@ def comparison_window(
     }
 
 
+def comparison_coverage_is_sufficient(window, threshold=70.0):
+    values = window.get("coverage") if isinstance(window.get("coverage"), dict) else {}
+    return all(
+        float(values.get(name) or 0.0) >= threshold
+        for name in ("temperature_pct", "humidity_pct", "precipitation_pct")
+    )
+
+
+def fetch_historical_observations(conn, repo_path, station, start, end, timeout=30):
+    """Fill only meteo_raw through the board's existing XEMA history loader."""
+    loader_path = Path(repo_path) / "board_fill_gaps.py"
+    if not loader_path.exists():
+        return {"ok": False, "reason": f"history loader missing: {loader_path}"}
+    spec = importlib.util.spec_from_file_location("vineyard_history_loader", loader_path)
+    if spec is None or spec.loader is None:
+        return {"ok": False, "reason": "history loader cannot be imported"}
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    rows = module.fetch_weather(station, start.isoformat(), end.isoformat(), int(timeout))
+    inserted = module.insert_weather(conn, rows)
+    conn.commit()
+    return {
+        "ok": True,
+        "provider": "meteocat_xema_observed_history",
+        "rows_fetched": len(rows),
+        "rows_inserted_attempted": inserted,
+    }
+
+
+def comparison_window_with_backfill(
+    conn, repo_path, station, start, end, local_tz, latitude, longitude,
+    row_cache, fetch_history=True, timeout=30,
+):
+    window = comparison_window(
+        conn, station, start, end, local_tz, latitude, longitude, row_cache,
+    )
+    if comparison_coverage_is_sufficient(window) or not fetch_history:
+        window["history_retrieval"] = {
+            "attempted": False,
+            "reason": "cached coverage sufficient" if comparison_coverage_is_sufficient(window)
+            else "history retrieval disabled",
+        }
+        return window
+    try:
+        retrieval = fetch_historical_observations(
+            conn, repo_path, station, start, end, timeout,
+        )
+        if row_cache is not None:
+            row_cache.clear()
+        window = comparison_window(
+            conn, station, start, end, local_tz, latitude, longitude, row_cache,
+        )
+        window["history_retrieval"] = dict(retrieval, attempted=True)
+    except Exception as exc:
+        window["history_retrieval"] = {
+            "attempted": True,
+            "ok": False,
+            "reason": str(exc)[:500],
+        }
+    return window
+
+
 def human_summary(report):
     season = report["season"]
     hourly = report["hourly"]
@@ -803,14 +867,20 @@ def analyze_field(conn, field, params, local_tz, today, row_cache=None):
     previous_30d_start = previous_30d_end - timedelta(days=29)
     previous_year_start = shifted_year(preharvest_start)
     previous_year_end = shifted_year(end)
+    fetch_history = as_bool(params.get("fetch_history"), True)
+    history_timeout = int(params.get("history_timeout") or 30)
     comparison_windows = {
-        "preceding_30d": comparison_window(
-            conn, station, previous_30d_start, previous_30d_end,
+        "preceding_30d": comparison_window_with_backfill(
+            conn, params["repo_path"], station,
+            previous_30d_start, previous_30d_end,
             local_tz, latitude, longitude, row_cache,
+            fetch_history, history_timeout,
         ),
-        "same_30d_previous_year": comparison_window(
-            conn, station, previous_year_start, previous_year_end,
+        "same_30d_previous_year": comparison_window_with_backfill(
+            conn, params["repo_path"], station,
+            previous_year_start, previous_year_end,
             local_tz, latitude, longitude, row_cache,
+            fetch_history, history_timeout,
         ),
     }
     summary = {"season": season, "hourly": hourly, "indices": indices}

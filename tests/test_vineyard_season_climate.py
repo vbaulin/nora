@@ -3,6 +3,7 @@ import json
 import sqlite3
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from unittest import mock
 from zoneinfo import ZoneInfo
 
 
@@ -104,6 +105,56 @@ def test_comparison_window_preserves_period_coverage_and_observed_statistics():
 
 def test_previous_year_shift_keeps_leap_day_windows_valid():
     assert MODULE.shifted_year(date(2024, 2, 29)) == date(2023, 2, 28)
+
+
+def test_missing_comparison_window_uses_history_loader_then_recomputes():
+    connection = weather_db()
+
+    def fill_history(conn, repo_path, station, start, end, timeout):
+        cursor = start
+        offset = 0
+        while cursor <= end:
+            for hour in range(24):
+                add_weather(
+                    conn,
+                    f"{cursor.isoformat()}T{hour:02d}:00:00+02:00",
+                    19.0 + offset,
+                    75.0,
+                    1.0 if hour == 0 else 0.0,
+                    400.0 if 7 <= hour <= 19 else 0.0,
+                    f"history-{offset}-{hour}",
+                )
+            cursor += timedelta(days=1)
+            offset += 1
+        conn.commit()
+        return {"ok": True, "provider": "test_history", "rows_fetched": offset * 96}
+
+    with mock.patch.object(MODULE, "fetch_historical_observations", side_effect=fill_history):
+        window = MODULE.comparison_window_with_backfill(
+            connection, "/repo", "D9",
+            date(2025, 7, 1), date(2025, 7, 3),
+            ZoneInfo("Europe/Madrid"), 41.2, 1.5, {}, True, 30,
+        )
+    assert window["history_retrieval"]["attempted"] is True
+    assert window["history_retrieval"]["ok"] is True
+    assert window["coverage"]["temperature_pct"] == 100.0
+    assert window["daily"]["rain_total_mm"] == 3.0
+
+
+def test_history_retrieval_failure_does_not_abort_comparison_report():
+    connection = weather_db()
+    with mock.patch.object(
+        MODULE, "fetch_historical_observations", side_effect=OSError("offline"),
+    ):
+        window = MODULE.comparison_window_with_backfill(
+            connection, "/repo", "D9",
+            date(2025, 7, 1), date(2025, 7, 3),
+            ZoneInfo("Europe/Madrid"), 41.2, 1.5, {}, True, 30,
+        )
+    assert window["history_retrieval"] == {
+        "attempted": True, "ok": False, "reason": "offline",
+    }
+    assert window["daily"]["temperature_mean_c"] is None
 
 
 def test_brix_requires_validated_field_model(tmp_path):

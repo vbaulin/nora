@@ -34,6 +34,12 @@ parameters:
     default: true
   - name: brix_model_path
     type: string
+  - name: fetch_history
+    type: boolean
+    default: true
+  - name: history_timeout
+    type: integer
+    default: 30
 returns:
   - status
   - field_reports
@@ -62,7 +68,14 @@ The result includes:
 - `harvest_readiness`, which states whether local evidence can support a date;
 - compact observed day-level weather history in `season_climate_metrics`,
   discoverable by the domain-neutral autonomous research engine; cumulative
-  seasonal summaries remain in the JSON and Markdown artifacts.
+seasonal summaries remain in the JSON and Markdown artifacts.
+
+Comparison windows first use `meteo_raw`. When coverage is incomplete and
+`fetch_history=true`, the skill calls the board's existing Meteocat/XEMA
+observed-history loader and inserts only the missing weather rows. It does not
+run a disease model during this retrieval. Network or archive failure is stored
+under `history_retrieval`; the current report still succeeds and simply omits
+unsupported comparisons.
 
 Use `mode=model_info` to return definitions without reading the database. Read
 [references/metrics.md](references/metrics.md) before interpreting indices or

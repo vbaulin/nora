@@ -103,7 +103,7 @@ signals and human feedback
   -> questions (claim + analysis + parameters)
   -> bounded analysis over local evidence
   -> finding (method, sample, verdict, limitations, options)
-  -> human decisions and completed-result bulletins are separated by an adapter
+  -> concrete human decisions are separated from internal technical findings
   -> the decision is recorded, and may arm a watch for next time
 ```
 
@@ -118,8 +118,8 @@ signals and human feedback
   (`analysis` + `params`), or the next few open questions.
 - `questions` / `findings` / `reportable`: read stored state. `reportable`
   returns only open findings that require human knowledge. Completed and
-  negative findings remain available through `findings`; an adapter may place
-  newly changed results in a bounded informational bulletin.
+  negative findings remain available through `findings` and the dashboard;
+  they are not a generic farmer notification.
 - `record_decision`: store `accepted`, `rejected`, `deferred` or `corrected`
   for a finding, with the chosen `option_id`. `watch=true` on an acceptance
   arms a watch. An adapter that delivered a finding elsewhere echoes the answer

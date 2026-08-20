@@ -5,8 +5,8 @@
   # A sampling board is idle almost all the time. This task spends a few of
   # those seconds every quarter hour reading the journals the other tasks
   # wrote, raising questions from what changed, and answering the oldest ones.
-  # The engine sends nothing directly. An adapter separates human decisions
-  # from a bounded digest of newly completed results.
+  # The engine sends nothing directly. Technical findings remain in evidence
+  # memory; an adapter exposes only a concrete decision requiring human input.
   steps:
     - id: research_cycle
       action: call_skill

@@ -50,6 +50,9 @@ or seasonal exposure.
 The result includes:
 
 - season and monthly rainfall, rain days, maximum daily rain and dry spells;
+- matched comparisons against the preceding 30 days and the same calendar
+  window one year earlier, each carrying source-specific coverage so sparse
+  history is omitted rather than interpreted;
 - mean/minimum/maximum, daily range, day/night temperature and heat events;
 - day/night humidity, high-humidity duration and VPD;
 - measured global solar irradiation and explicitly defined high-solar days;

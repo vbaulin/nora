@@ -82,17 +82,26 @@ question. `proactive-field-agent mode=investigate` runs the bounded analyses
 over stored evidence (model series, peer board signals, the board's own alert
 record) and returns each finding's question, method, sample size, verdict,
 limitations and options. Only a `material_unresolved` verdict may reach the
-farmer as a question or decision proposal. `not_material`, `resolved_local`
-and `insufficient_data` stay in evidence memory, but changed results may be
-summarized once in a bounded `research_result` bulletin. That bulletin is
-informational: it has no `PF-*` reference, asks no question, and closes itself
-after delivery. Report findings with their numbers, not as impressions.
+farmer as a question or decision proposal. `not_material`, `resolved_local`,
+`insufficient_data`, hypothesis counts, source-quality audits and research
+queue statistics stay in the dashboard and evidence memory. They are never a
+generic Telegram bulletin. Report a finding only when it leaves a concrete
+field observation or decision that the farmer can supply.
+
+The separate `field_condition_result` is an applied agronomic synthesis, not a
+research audit. It may be sent at most once per six days from fresh observed
+`vineyard-season-climate` artifacts. It names the field and variety, describes
+rain, dry spell, heat, night temperature and humidity, compares the latest 30
+days with the preceding 30 days and the matched prior-year window when coverage
+is adequate, and states which berry measurements are still required. It never
+reports question counts, hypothesis counts or internal table names.
 
 For board-wide research that is not vineyard-specific, use `research-agent`.
 `mode=cycle` is the scheduled idle-time loop, `mode=reportable` lists the
 open findings that require human knowledge, and `mode=findings` returns the
 stored evidence for any subject. The engine never sends a message: an adapter
-delivers decision proposals and a bounded digest of newly completed work.
+delivers only concrete decision proposals; domain adapters may independently
+publish applied summaries from validated domain artifacts.
 When answering
 "what has the board been looking at", read `research-agent mode=findings` and
 `proactive-field-agent mode=status` — never session memory.

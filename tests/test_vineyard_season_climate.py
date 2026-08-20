@@ -70,6 +70,42 @@ def test_missing_precipitation_is_not_reported_as_zero():
     assert summary["days_with_precipitation"] == 0
 
 
+def test_comparison_window_preserves_period_coverage_and_observed_statistics():
+    connection = weather_db()
+    for offset in range(3):
+        day = date(2025, 7, 1) + timedelta(days=offset)
+        for hour in range(24):
+            add_weather(
+                connection,
+                f"{day.isoformat()}T{hour:02d}:00:00+02:00",
+                20.0 + offset,
+                70.0 + offset,
+                0.5 if hour == 0 else 0.0,
+                500.0 if 7 <= hour <= 19 else 0.0,
+                f"{offset}-{hour}",
+            )
+    window = MODULE.comparison_window(
+        connection,
+        "D9",
+        date(2025, 7, 1),
+        date(2025, 7, 3),
+        ZoneInfo("Europe/Madrid"),
+        41.2,
+        1.5,
+        {},
+    )
+    assert window["start"] == "2025-07-01"
+    assert window["end"] == "2025-07-03"
+    assert window["coverage"]["temperature_pct"] == 100.0
+    assert window["daily"]["rain_total_mm"] == 1.5
+    assert window["daily"]["temperature_mean_c"] == 21.0
+    assert window["hourly"]["night_humidity_mean_pct"] is not None
+
+
+def test_previous_year_shift_keeps_leap_day_windows_valid():
+    assert MODULE.shifted_year(date(2024, 2, 29)) == date(2023, 2, 28)
+
+
 def test_brix_requires_validated_field_model(tmp_path):
     features = {name: 1.0 for name in MODULE.MODEL_FEATURES}
     unavailable = MODULE.sugar_estimate("field-1", features, None)

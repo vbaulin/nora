@@ -186,20 +186,23 @@ Verdicts decide what happens next:
   from its own data. This is the only verdict that may reach the farmer as a
   question or decision proposal.
 - `not_material`: the ambiguity exists but changed no decision. It stays in
-  evidence memory and may appear once in the bounded research-results bulletin.
+  evidence memory and the technical dashboard.
 - `resolved_local`: the board's own data already answers it, for example a
-  field that records measured wetness hours. A changed result may appear once
-  in the same bulletin.
+  field that records measured wetness hours. It remains in evidence memory.
 - `insufficient_data`: the analysis could not run. This creates an internal
-  gap. It may be counted as a data limitation, never converted into a farmer
-  task or a hardware suggestion.
+  gap. It is never converted into a farmer task, bulletin, or hardware
+  suggestion.
 
-`research_result` is a board-wide informational bulletin emitted at most once
-per 20 hours and only when research evidence changed. It reports completed
-source checks, robust negative results, locally resolved questions and data
-limitations. It carries no `PF-*` reference, requires no reply and is marked
-complete after delivery. Human observations remain separate confirmable
-proposals.
+Technical research summaries stay in `research-agent mode=findings`, status
+views and the dashboard. Counts of tested hypotheses, source disagreements and
+unfinished analyses are operating evidence, not farmer-facing field condition.
+
+`field_condition_result` is a separate board-wide agronomic synthesis emitted
+at most once per six days from fresh observed `vineyard-season-climate`
+artifacts. It reports the climatic conditions experienced by named fields,
+month-to-month evolution, matched 30-day and prior-year comparisons when data
+coverage is adequate, and the berry measurements required to interpret actual
+ripening. It does not expose research-engine bookkeeping.
 
 A farmer-facing finding must report what was checked, over how much data, what
 came out, and what remains open, using its own numbers. Options are ordered by
@@ -232,8 +235,9 @@ action proposal must contain the field name, concrete model/measurement signal,
 clear uncertainty, and a `PF-<id>` reference. It asks for one useful next response,
 for example an inspection outcome, recent protection record, missing stable
 field attribute, or a choice between the options of a finished investigation.
-An informational `research_result` bulletin is not an action proposal and has
-no reference or confirmation question.
+An informational `field_condition_result` is not an action proposal and has no
+reference or confirmation question. It is based on observed climate artifacts,
+not on research-engine counts.
 
 A reply to an `investigation:<topic>` proposal resolves through
 `proposal_context` to `next_mode=record_decision` and carries the finding's

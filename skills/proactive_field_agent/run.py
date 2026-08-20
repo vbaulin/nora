@@ -43,8 +43,8 @@ DEFAULT_NOTIFICATION_THRESHOLD = 70
 # the adapter. Once it becomes a farmer-facing proposal, placing it below the
 # delivery threshold makes the entire research loop observationally silent.
 RESEARCH_NOTIFICATION_PRIORITY = DEFAULT_NOTIFICATION_THRESHOLD
-RESEARCH_RESULT_PRIORITY = DEFAULT_NOTIFICATION_THRESHOLD
-RESEARCH_RESULT_INTERVAL_HOURS = 20
+FIELD_CONDITION_PRIORITY = DEFAULT_NOTIFICATION_THRESHOLD
+FIELD_CONDITION_INTERVAL_HOURS = 6 * 24
 ALLOWED_DECISIONS = {"accepted", "rejected", "deferred", "corrected"}
 INVESTIGATION_KIND_PREFIX = "investigation:"
 # A rejected proposal is a decision, not a delay. The topic stays closed for a
@@ -1780,255 +1780,369 @@ def research_findings(params, limit=5):
     return findings[:limit]
 
 
-def _research_result_range(values, suffix=""):
-    numbers = [float(value) for value in values if value is not None]
-    if not numbers:
-        return "?"
-
-    def display(value):
-        return str(int(value)) if float(value).is_integer() else f"{value:.1f}"
-
-    low, high = min(numbers), max(numbers)
-    if abs(high - low) < 0.05:
-        return f"{display(low)}{suffix}"
-    return f"{display(low)}-{display(high)}{suffix}"
-
-
-def render_research_result(language, findings):
-    """Turn completed board work into one concise, non-interactive bulletin."""
-    if not findings:
+def display_measurement(value, digits=1):
+    if value is None:
         return None
-    lang = str(language or "en").lower()[:2]
-    # One changed finding may be written repeatedly for the same standing
-    # question. Count scientific questions rather than database revisions.
-    latest_by_question = {}
-    for finding in sorted(
-        findings, key=lambda item: str(item.get("created_at") or ""), reverse=True,
-    ):
-        key = finding.get("question_id") or finding.get("id")
-        latest_by_question.setdefault(key, finding)
-    selected = list(latest_by_question.values())
-    dated = [
-        str(item.get("created_at") or "")[:10]
-        for item in selected if item.get("created_at")
-    ]
-    start = min(dated) if dated else "?"
-    end = max(dated) if dated else "?"
+    number = round(float(value), digits)
+    return str(int(number)) if number.is_integer() else f"{number:.{digits}f}"
 
-    source_quality = {}
-    for finding in selected:
-        if finding.get("analysis") != "source_disagreement":
+
+def report_metric(report, section, key):
+    holder = report.get(section) if isinstance(report.get(section), dict) else {}
+    return as_float(holder.get(key))
+
+
+def metric_range(reports, section, key, digits=1):
+    values = [report_metric(report, section, key) for report in reports]
+    values = [value for value in values if value is not None]
+    if not values:
+        return None
+    low, high = min(values), max(values)
+    if abs(high - low) < 10 ** (-digits):
+        return display_measurement(low, digits)
+    return f"{display_measurement(low, digits)}-{display_measurement(high, digits)}"
+
+
+def latest_season_condition_reports(repo_path, profiles):
+    """Read current observed-season artifacts; never use forecast data here."""
+    results_dir = Path(repo_path) / "results"
+    reports = []
+    for profile in profiles:
+        candidates = list(results_dir.glob(
+            f"season_climate_{profile['field_id']}_*.json"
+        ))
+        parsed = []
+        for path in candidates:
+            try:
+                report = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if report.get("status") not in {None, "success"}:
+                continue
+            end = parse_date(report.get("end"))
+            if not end:
+                continue
+            parsed.append((end, path.stat().st_mtime, path, report))
+        if not parsed:
             continue
-        metrics = finding.get("metrics") or {}
-        if metrics.get("shared_periods") is not None:
-            source_quality[str(finding.get("subject") or finding.get("id"))] = finding
-    quality = list(source_quality.values())
-    quality_ids = {item.get("id") for item in quality}
-    lagged_negative = [
-        item for item in selected
-        if item.get("analysis") == "lagged_association"
-        and item.get("verdict") == "not_material"
-    ]
-    resolved = [
-        item for item in selected
-        if item.get("verdict") == "resolved_local" and item.get("id") not in quality_ids
-    ]
-    insufficient = [
-        item for item in selected
-        if item.get("verdict") == "insufficient_data" and item.get("id") not in quality_ids
-    ]
-    other_negative = [
-        item for item in selected
-        if item.get("verdict") == "not_material"
-        and item.get("analysis") not in {"lagged_association", "source_disagreement"}
-    ]
-    ongoing = [
-        item for item in selected
-        if item.get("verdict") == "material_unresolved"
-        and item.get("id") not in quality_ids
-    ]
+        end, _, path, report = max(parsed, key=lambda item: (item[0], item[1]))
+        if end < utcnow().date() - dt.timedelta(days=3):
+            continue
+        report["_profile"] = profile
+        report["_source_path"] = str(path)
+        reports.append(report)
+    return reports
 
+
+def condition_interpretation(language, reports):
+    lang = str(language or "en").lower()[:2]
+    recent = "preharvest_or_recent_30d"
+    hourly = "preharvest_or_recent_30d_hourly"
+    days = max(report_metric(report, recent, "days") or 0 for report in reports)
+    rain = max(report_metric(report, recent, "rain_total_mm") or 0 for report in reports)
+    dry_spell = max(
+        report_metric(report, recent, "longest_dry_spell_days") or 0
+        for report in reports
+    )
+    heat_days = max(
+        report_metric(report, recent, "heat_days_ge_30c") or 0
+        for report in reports
+    )
+    tropical_nights = max(
+        report_metric(report, recent, "tropical_nights_ge_20c") or 0
+        for report in reports
+    )
+    night_temperature = max(
+        report_metric(report, hourly, "night_temperature_mean_c") or -99
+        for report in reports
+    )
+    night_humidity = max(
+        report_metric(report, hourly, "night_humidity_mean_pct") or 0
+        for report in reports
+    )
+    dry = rain <= 5.0 or dry_spell >= 14
+    hot = bool(days) and heat_days >= max(3, days * 0.2)
+    warm_nights = night_temperature >= 20.0 or (
+        bool(days) and tropical_nights >= max(5, days * 0.25)
+    )
+    humid_nights = night_humidity >= 80.0
     texts = {
         "ca": {
-            "title": "Resultats de recerca autònoma",
-            "intro": "El tauler ha avaluat {count} preguntes noves entre {start} i {end}.",
-            "lagged": "Relacions temporals: s'han provat {count} hipòtesis; cap no ha superat el criteri de consistència. No s'ha incorporat cap predictor nou.",
-            "negative": "Altres proves sense efecte material: {count}. No modifiquen les alertes actuals.",
-            "resolved": "Preguntes resoltes amb les dades locals disponibles: {count}; no cal cap aportació del productor.",
-            "insufficient": "Anàlisis encara sense prou historial per concloure: {count}. Queden obertes fins que s'acumulin més dades.",
-            "ongoing": "Preguntes que el tauler està ampliant amb més dades locals: {count}. La recerca continua automàticament i no requereix cap acció del productor.",
-            "field_singular": "1 camp",
-            "field_plural": "{count} camps",
-            "quality_hotter": "Control de qualitat meteorològica: en {field_scope}, la temperatura prevista va ser {difference} més alta que l'observada a l'estació; {beyond} de {shared} dies comparables van superar una diferència de {tolerance}. El resultat queda registrat com a limitació de la previsió.",
-            "quality_cooler": "Control de qualitat meteorològica: en {field_scope}, la temperatura prevista va ser {difference} més baixa que l'observada a l'estació; {beyond} de {shared} dies comparables van superar una diferència de {tolerance}. El resultat queda registrat com a limitació de la previsió.",
-            "quality_mixed": "Control de qualitat meteorològica: en {field_scope}, la temperatura prevista i l'observada a l'estació van diferir típicament {difference}; {beyond} de {shared} dies comparables van superar una diferència de {tolerance}. El resultat queda registrat com a limitació de la previsió.",
-            "closing": "Aquests resultats no canvien automàticament cap model, alerta ni decisió de tractament.",
+            "dry_hot": "El període ha estat sec i càlid. En secà, és compatible amb una maduració ràpida i amb menys creixement de la baia si la vinya pateix estrès hídric; el clima sol no confirma aquest estrès.",
+            "dry": "El període ha estat molt sec. En secà, la manca d'aigua pot limitar el creixement de la baia si la vinya mostra estrès; cal comprovar-ho al camp.",
+            "hot": "El període ha estat càlid i pot accelerar la maduració. Cal comprovar sucre i acidesa a la baia abans de concloure que el raïm està més madur.",
+            "warm_nights": "Les nits han estat càlides; això pot dificultar la conservació de l'acidesa, però no substitueix una mesura d'acidesa i pH.",
+            "humid_nights": "Les nits han estat humides i poden mantenir un microclima favorable als fongs dins del dosser; les alertes de malaltia es calculen per separat.",
+            "neutral": "Les dades no mostren una pressió climàtica extrema en els darrers 30 dies. La condició real del raïm encara s'ha de comprovar amb mostres de baia.",
         },
         "es": {
-            "title": "Resultados de investigación autónoma",
-            "intro": "El tablero ha evaluado {count} preguntas nuevas entre {start} y {end}.",
-            "lagged": "Relaciones temporales: se han probado {count} hipótesis; ninguna superó el criterio de consistencia. No se incorporó ningún predictor nuevo.",
-            "negative": "Otras pruebas sin efecto material: {count}. No modifican las alertas actuales.",
-            "resolved": "Preguntas resueltas con los datos locales disponibles: {count}; no se necesita información del productor.",
-            "insufficient": "Análisis todavía sin historial suficiente para concluir: {count}. Permanecen abiertos hasta acumular más datos.",
-            "ongoing": "Preguntas que el tablero está ampliando con más datos locales: {count}. La investigación continúa automáticamente y no requiere ninguna acción del productor.",
-            "field_singular": "1 campo",
-            "field_plural": "{count} campos",
-            "quality_hotter": "Control de calidad meteorológica: en {field_scope}, la temperatura prevista fue {difference} más alta que la observada en la estación; {beyond} de {shared} días comparables superaron una diferencia de {tolerance}. El resultado queda registrado como limitación de la previsión.",
-            "quality_cooler": "Control de calidad meteorológica: en {field_scope}, la temperatura prevista fue {difference} más baja que la observada en la estación; {beyond} de {shared} días comparables superaron una diferencia de {tolerance}. El resultado queda registrado como limitación de la previsión.",
-            "quality_mixed": "Control de calidad meteorológica: en {field_scope}, la temperatura prevista y la observada en la estación difirieron típicamente {difference}; {beyond} de {shared} días comparables superaron una diferencia de {tolerance}. El resultado queda registrado como limitación de la previsión.",
-            "closing": "Estos resultados no cambian automáticamente ningún modelo, alerta ni decisión de tratamiento.",
+            "dry_hot": "El periodo ha sido seco y cálido. En secano, es compatible con una maduración rápida y con menor crecimiento de la baya si la vid sufre estrés hídrico; el clima por sí solo no confirma ese estrés.",
+            "dry": "El periodo ha sido muy seco. En secano, la falta de agua puede limitar el crecimiento de la baya si la vid muestra estrés; debe comprobarse en campo.",
+            "hot": "El periodo ha sido cálido y puede acelerar la maduración. Hay que comprobar azúcar y acidez en la baya antes de concluir que la uva está más madura.",
+            "warm_nights": "Las noches han sido cálidas; esto puede dificultar la conservación de la acidez, pero no sustituye una medida de acidez y pH.",
+            "humid_nights": "Las noches han sido húmedas y pueden mantener un microclima favorable a hongos en el dosel; las alertas de enfermedad se calculan por separado.",
+            "neutral": "Los datos no muestran una presión climática extrema en los últimos 30 días. La condición real de la uva debe comprobarse con muestras de baya.",
         },
         "en": {
-            "title": "Autonomous research results",
-            "intro": "The board evaluated {count} new questions between {start} and {end}.",
-            "lagged": "Time-lag relationships: {count} hypotheses were tested; none passed the consistency criterion. No new predictor was promoted.",
-            "negative": "Other tests with no material effect: {count}. They do not alter current alerts.",
-            "resolved": "Questions resolved from available local evidence: {count}; no producer input is needed.",
-            "insufficient": "Analyses still lacking enough history for a conclusion: {count}. They remain open while evidence accumulates.",
-            "ongoing": "Questions being extended with more local evidence: {count}. Research continues automatically and requires no producer action.",
-            "field_singular": "1 field",
-            "field_plural": "{count} fields",
-            "quality_hotter": "Weather quality control: across {field_scope}, forecast temperature was {difference} higher than the later station observation; {beyond} of {shared} comparable days exceeded a difference of {tolerance}. The result is retained as a forecast limitation.",
-            "quality_cooler": "Weather quality control: across {field_scope}, forecast temperature was {difference} lower than the later station observation; {beyond} of {shared} comparable days exceeded a difference of {tolerance}. The result is retained as a forecast limitation.",
-            "quality_mixed": "Weather quality control: across {field_scope}, forecast and later station temperature typically differed by {difference}; {beyond} of {shared} comparable days exceeded a difference of {tolerance}. The result is retained as a forecast limitation.",
-            "closing": "These results do not automatically change a model, alert, or treatment decision.",
+            "dry_hot": "The period was dry and warm. In a dry-farmed parcel this is consistent with faster ripening and reduced berry growth if vines are water-stressed; weather alone does not confirm that stress.",
+            "dry": "The period was very dry. In a dry-farmed parcel, limited water can restrict berry growth if vines show stress; this requires a field check.",
+            "hot": "The period was warm and may accelerate ripening. Berry sugar and acidity must be measured before concluding that grapes are more mature.",
+            "warm_nights": "Nights were warm; this may constrain acid retention, but it does not replace acidity and pH measurements.",
+            "humid_nights": "Nights were humid and may sustain a fungal microclimate within the canopy; disease alerts are calculated separately.",
+            "neutral": "The observations show no extreme climate pressure over the last 30 days. Actual grape condition still requires berry measurements.",
         },
     }
     text = texts.get(lang, texts["en"])
-    lines = [text["intro"].format(count=len(selected), start=start, end=end)]
-    if quality:
-        metrics = [item.get("metrics") or {} for item in quality]
-        unit = str(next((item.get("unit") for item in metrics if item.get("unit")), "°C"))
-        absolute_differences = []
-        for item in metrics:
-            value = item.get("median_absolute_difference")
-            if value is None and item.get("median_difference") is not None:
-                value = abs(float(item["median_difference"]))
-            absolute_differences.append(value)
-        signed = [item.get("median_difference") for item in metrics]
-        signed = [float(value) for value in signed if value is not None]
-        direction = "mixed"
-        if signed and all(value >= 0 for value in signed):
-            direction = "hotter"
-        elif signed and all(value <= 0 for value in signed):
-            direction = "cooler"
-        lines.append(text[f"quality_{direction}"].format(
-            field_scope=(
-                text["field_singular"] if len(quality) == 1
-                else text["field_plural"].format(count=len(quality))
-            ),
-            difference=_research_result_range(
-                absolute_differences, f" {unit}",
-            ),
-            beyond=_research_result_range(
-                [item.get("periods_beyond_tolerance") for item in metrics],
-            ),
-            shared=_research_result_range([item.get("shared_periods") for item in metrics]),
-            tolerance=_research_result_range(
-                [item.get("tolerance") for item in metrics], f" {unit}",
-            ),
+    messages = []
+    if dry and hot:
+        messages.append(text["dry_hot"])
+    elif dry:
+        messages.append(text["dry"])
+    elif hot:
+        messages.append(text["hot"])
+    if warm_nights:
+        messages.append(text["warm_nights"])
+    if humid_nights:
+        messages.append(text["humid_nights"])
+    return " ".join(messages or [text["neutral"]])
+
+
+def comparison_metric(report, window_name, section, key, coverage_key):
+    windows = report.get("comparison_windows") or {}
+    window = windows.get(window_name) if isinstance(windows, dict) else None
+    if not isinstance(window, dict):
+        return None
+    coverage = window.get("coverage") if isinstance(window.get("coverage"), dict) else {}
+    if as_float(coverage.get(coverage_key)) is None or float(coverage[coverage_key]) < 70.0:
+        return None
+    section_data = window.get(section) if isinstance(window.get(section), dict) else {}
+    return as_float(section_data.get(key))
+
+
+def signed_change(value, digits=1):
+    shown = display_measurement(abs(value), digits)
+    return f"+{shown}" if value > 0 else (f"-{shown}" if value < 0 else "0")
+
+
+def render_comparison(language, report, window_name):
+    lang = str(language or "en").lower()[:2]
+    recent = report.get("preharvest_or_recent_30d") or {}
+    recent_hourly = report.get("preharvest_or_recent_30d_hourly") or {}
+    metrics = []
+    pairs = (
+        ("temperature", as_float(recent.get("temperature_mean_c")),
+         comparison_metric(report, window_name, "daily", "temperature_mean_c", "temperature_pct")),
+        ("rain", as_float(recent.get("rain_total_mm")),
+         comparison_metric(report, window_name, "daily", "rain_total_mm", "precipitation_pct")),
+        ("night_temperature", as_float(recent_hourly.get("night_temperature_mean_c")),
+         comparison_metric(report, window_name, "hourly", "night_temperature_mean_c", "temperature_pct")),
+        ("night_humidity", as_float(recent_hourly.get("night_humidity_mean_pct")),
+         comparison_metric(report, window_name, "hourly", "night_humidity_mean_pct", "humidity_pct")),
+    )
+    labels = {
+        "ca": {
+            "preceding_30d": "Respecte als 30 dies anteriors",
+            "same_30d_previous_year": "Respecte al mateix període de l'any passat",
+            "temperature": "temperatura mitjana {change} °C",
+            "rain": "pluja {current} mm davant de {baseline} mm",
+            "night_temperature": "temperatura nocturna {change} °C",
+            "night_humidity": "humitat nocturna {change} punts",
+        },
+        "es": {
+            "preceding_30d": "Respecto a los 30 días anteriores",
+            "same_30d_previous_year": "Respecto al mismo periodo del año pasado",
+            "temperature": "temperatura media {change} °C",
+            "rain": "lluvia {current} mm frente a {baseline} mm",
+            "night_temperature": "temperatura nocturna {change} °C",
+            "night_humidity": "humedad nocturna {change} puntos",
+        },
+        "en": {
+            "preceding_30d": "Compared with the preceding 30 days",
+            "same_30d_previous_year": "Compared with the same period last year",
+            "temperature": "mean temperature {change} °C",
+            "rain": "rain {current} mm versus {baseline} mm",
+            "night_temperature": "night temperature {change} °C",
+            "night_humidity": "night humidity {change} points",
+        },
+    }
+    text = labels.get(lang, labels["en"])
+    for name, current, baseline in pairs:
+        if current is None or baseline is None:
+            continue
+        if name == "rain":
+            metrics.append(text[name].format(
+                current=display_measurement(current),
+                baseline=display_measurement(baseline),
+            ))
+        else:
+            metrics.append(text[name].format(change=signed_change(current - baseline)))
+    if not metrics:
+        return None
+    return text[window_name] + ": " + "; ".join(metrics) + "."
+
+
+def render_monthly_context(language, report):
+    lang = str(language or "en").lower()[:2]
+    rows = []
+    for month, values in sorted((report.get("monthly") or {}).items())[-3:]:
+        if not isinstance(values, dict):
+            continue
+        days = as_float(values.get("days")) or 0
+        if not days:
+            continue
+        temperature = as_float(values.get("temperature_mean_c"))
+        rain = as_float(values.get("rain_total_mm"))
+        if (
+            temperature is None or rain is None
+            or (as_float(values.get("days_with_temperature")) or 0) / days < 0.7
+            or (as_float(values.get("days_with_precipitation")) or 0) / days < 0.7
+        ):
+            continue
+        rows.append(
+            f"{month}: {display_measurement(temperature)} °C, "
+            f"{display_measurement(rain)} mm"
+        )
+    if len(rows) < 2:
+        return None
+    prefix = {
+        "ca": "Evolució mensual (temperatura mitjana, pluja)",
+        "es": "Evolución mensual (temperatura media, lluvia)",
+        "en": "Monthly evolution (mean temperature, rain)",
+    }.get(lang, "Monthly evolution (mean temperature, rain)")
+    return prefix + ": " + "; ".join(rows) + "."
+
+
+def render_field_condition_result(language, reports):
+    """Describe grape-growing conditions, not the research engine's ledger."""
+    if not reports:
+        return None
+    lang = str(language or "en").lower()[:2]
+    texts = {
+        "ca": {
+            "title": "Condicions de maduració de la vinya",
+            "observed": "Dades observades fins al {end}.",
+            "group": "{fields} ({varieties}; estació {station})\nDarrers 30 dies: {rain} mm de pluja; ratxa seca màxima de {dry_spell} dies; temperatura mitjana de {temperature} °C; {heat_days} dies amb màxima >=30 °C; temperatura nocturna mitjana de {night_temperature} °C ({tropical_nights} nits tropicals); humitat nocturna mitjana del {night_humidity}%.{solar}",
+            "solar": " Radiació solar mitjana: {value} MJ/m²/dia.",
+            "shared": "Aquests camps comparteixen la mateixa estació; el resum climàtic és comú. Les diferències de vigor o maduració s'han de mesurar per camp.",
+            "composition": "Condició real del raïm: el tauler no pot afirmar sucre, acidesa o data de verema perquè no hi ha mostres recents de baia. La meteorologia descriu la pressió de maduració, no la composició del raïm.",
+            "next": "Dada de camp més útil: una mostra per camp amb Brix, pH, acidesa total i pes mitjà de baia, amb data. Això permetrà relacionar aquestes condicions amb la maduració real.",
+        },
+        "es": {
+            "title": "Condiciones de maduración del viñedo",
+            "observed": "Datos observados hasta el {end}.",
+            "group": "{fields} ({varieties}; estación {station})\nÚltimos 30 días: {rain} mm de lluvia; racha seca máxima de {dry_spell} días; temperatura media de {temperature} °C; {heat_days} días con máxima >=30 °C; temperatura nocturna media de {night_temperature} °C ({tropical_nights} noches tropicales); humedad nocturna media del {night_humidity}%.{solar}",
+            "solar": " Radiación solar media: {value} MJ/m²/día.",
+            "shared": "Estos campos comparten la misma estación; el resumen climático es común. Las diferencias de vigor o maduración deben medirse por campo.",
+            "composition": "Condición real de la uva: el tablero no puede afirmar azúcar, acidez o fecha de vendimia porque no hay muestras recientes de baya. La meteorología describe la presión de maduración, no la composición de la uva.",
+            "next": "Dato de campo más útil: una muestra por campo con Brix, pH, acidez total y peso medio de baya, con fecha. Esto permitirá relacionar estas condiciones con la maduración real.",
+        },
+        "en": {
+            "title": "Vineyard ripening conditions",
+            "observed": "Observed data through {end}.",
+            "group": "{fields} ({varieties}; station {station})\nLast 30 days: {rain} mm rain; longest dry spell {dry_spell} days; mean temperature {temperature} °C; {heat_days} days with maximum >=30 °C; mean night temperature {night_temperature} °C ({tropical_nights} tropical nights); mean night humidity {night_humidity}%.{solar}",
+            "solar": " Mean solar exposure: {value} MJ/m²/day.",
+            "shared": "These fields share one station, so their climate summary is common. Differences in vigour or ripening must be measured by field.",
+            "composition": "Actual grape condition: the board cannot state sugar, acidity, or harvest date because no recent berry samples are stored. Weather describes ripening pressure, not grape composition.",
+            "next": "Most useful field evidence: one dated sample per field with Brix, pH, titratable acidity, and mean berry weight. This would link these conditions to actual ripening.",
+        },
+    }
+    text = texts.get(lang, texts["en"])
+    groups = {}
+    for report in reports:
+        groups.setdefault(str(report.get("station") or "?"), []).append(report)
+    ends = [str(report.get("end")) for report in reports if report.get("end")]
+    lines = [text["observed"].format(end=max(ends) if ends else "?")]
+    for station, grouped in sorted(groups.items()):
+        names = [str(report.get("field_name") or report.get("field_id")) for report in grouped]
+        varieties = sorted({
+            str(report.get("variety") or "").strip()
+            for report in grouped if str(report.get("variety") or "").strip()
+        })
+        solar_value = metric_range(
+            grouped, "preharvest_or_recent_30d", "solar_energy_mean_daily_mj_m2",
+        )
+        solar_number = min([
+            report_metric(report, "preharvest_or_recent_30d", "solar_energy_mean_daily_mj_m2")
+            for report in grouped
+            if report_metric(report, "preharvest_or_recent_30d", "solar_energy_mean_daily_mj_m2") is not None
+        ] or [0])
+        solar = (
+            text["solar"].format(value=solar_value)
+            if solar_value is not None and 8.0 <= solar_number <= 35.0 else ""
+        )
+        lines.append(text["group"].format(
+            fields=", ".join(names),
+            varieties=", ".join(varieties) or "?",
+            station=station,
+            rain=metric_range(grouped, "preharvest_or_recent_30d", "rain_total_mm"),
+            dry_spell=metric_range(grouped, "preharvest_or_recent_30d", "longest_dry_spell_days", 0),
+            temperature=metric_range(grouped, "preharvest_or_recent_30d", "temperature_mean_c"),
+            heat_days=metric_range(grouped, "preharvest_or_recent_30d", "heat_days_ge_30c", 0),
+            night_temperature=metric_range(grouped, "preharvest_or_recent_30d_hourly", "night_temperature_mean_c"),
+            tropical_nights=metric_range(grouped, "preharvest_or_recent_30d", "tropical_nights_ge_20c", 0),
+            night_humidity=metric_range(grouped, "preharvest_or_recent_30d_hourly", "night_humidity_mean_pct"),
+            solar=solar,
         ))
-    if lagged_negative:
-        lines.append(text["lagged"].format(count=len(lagged_negative)))
-    if other_negative:
-        lines.append(text["negative"].format(count=len(other_negative)))
-    if resolved:
-        lines.append(text["resolved"].format(count=len(resolved)))
-    if insufficient:
-        lines.append(text["insufficient"].format(count=len(insufficient)))
-    if ongoing:
-        lines.append(text["ongoing"].format(count=len(ongoing)))
-    lines.append(text["closing"])
+        lines.append(condition_interpretation(language, grouped))
+        for window_name in ("preceding_30d", "same_30d_previous_year"):
+            comparison = render_comparison(language, grouped[0], window_name)
+            if comparison:
+                lines.append(comparison)
+        monthly = render_monthly_context(language, grouped[0])
+        if monthly:
+            lines.append(monthly)
+        if len(grouped) > 1:
+            lines.append(text["shared"])
+    lines.extend([text["composition"], text["next"]])
     return {
         "title": text["title"],
         "message": "\n\n".join(lines),
-        "finding_ids": sorted(
-            int(item["id"]) for item in selected if item.get("id") is not None
-        ),
-        "counts": {
-            "analyses": len(selected),
-            "source_quality": len(quality),
-            "lagged_negative": len(lagged_negative),
-            "other_negative": len(other_negative),
-            "resolved": len(resolved),
-            "insufficient": len(insufficient),
-            "ongoing": len(ongoing),
-        },
+        "sources": [
+            {
+                "field_id": report.get("field_id"),
+                "path": report.get("_source_path"),
+                "end": report.get("end"),
+                "station": report.get("station"),
+            }
+            for report in reports
+        ],
     }
 
 
-def research_result_findings(params, since, limit=400):
-    state_dir = (
-        params.get("research_state_dir")
-        or os.environ.get("NORA_STATE_DIR")
-        or "/root/.picoclaw/workspace/research"
-    )
-    if not Path(state_dir, "research.db").exists():
-        return []
-    try:
-        import engine as research_engine
-        research_connection = research_engine.connect(state_dir)
-        try:
-            findings = research_engine.list_findings(
-                research_connection, limit=limit,
-            )
-        finally:
-            research_connection.close()
-    except Exception:
-        return []
-    selected = []
-    for finding in findings:
-        created = parse_datetime(finding.get("created_at"))
-        if created and created <= since:
-            continue
-        verdict = str(finding.get("verdict") or "")
-        if verdict in {"not_material", "resolved_local", "insufficient_data"}:
-            selected.append(finding)
-        elif verdict == "material_unresolved" and research_engine.autonomous_only_finding(finding):
-            selected.append(finding)
-    return selected
-
-
-def research_result_candidate(connection, profiles, params):
-    """Publish new completed work at most once per board day."""
+def field_condition_result_candidate(connection, profiles, params):
+    """Publish an agronomic condition synthesis at most once per six days."""
     if not profiles:
         return None
     now = utcnow()
     row = connection.execute(
-        "SELECT created_at FROM proposals WHERE kind='research_result' "
+        "SELECT created_at FROM proposals WHERE kind='field_condition_result' "
         "ORDER BY created_at DESC LIMIT 1"
     ).fetchone()
     last = parse_datetime(row["created_at"]) if row else None
     interval = float(
-        params.get("research_result_interval_hours")
-        or RESEARCH_RESULT_INTERVAL_HOURS
+        params.get("field_condition_interval_hours")
+        or FIELD_CONDITION_INTERVAL_HOURS
     )
     if last and (now - last).total_seconds() < interval * 3600:
         return None
-    since = last or (now - dt.timedelta(days=7))
-    findings = research_result_findings(params, since)
-    rendered = render_research_result(profiles[0]["language"], findings)
+    repo_path = params.get("repo_path") or DEFAULT_REPO
+    reports = latest_season_condition_reports(repo_path, profiles)
+    rendered = render_field_condition_result(profiles[0]["language"], reports)
     if not rendered:
         return None
     return {
         "field_id": profiles[0]["field_id"],
-        "kind": "research_result",
+        "kind": "field_condition_result",
         "target": "farmer",
-        "priority": RESEARCH_RESULT_PRIORITY,
+        "priority": FIELD_CONDITION_PRIORITY,
         "title": rendered["title"],
         "message": rendered["message"],
         "rationale": (
-            "A bounded synthesis makes completed local research visible without "
-            "turning internal computation into a question for the producer."
+            "Observed field climate is translated into ripening conditions while "
+            "keeping technical research diagnostics internal."
         ),
-        "evidence": [{
-            "research_finding_ids": rendered["finding_ids"],
-            "counts": rendered["counts"],
-            "window_start": since.isoformat(),
-            "window_end": now.isoformat(),
-        }],
-        "confidence": 1.0,
+        "evidence": rendered["sources"],
+        "confidence": 0.9,
         "requires_confirmation": False,
         "cooldown_days": 0,
     }
@@ -2253,9 +2367,9 @@ def generate_proposals(connection, profiles, investigation_records=None, params=
                     connection.commit()
                 created.append(proposal)
                 break
-    research_result = research_result_candidate(connection, profiles, params)
-    if research_result:
-        proposal = create_proposal(connection, research_result)
+    field_condition = field_condition_result_candidate(connection, profiles, params)
+    if field_condition:
+        proposal = create_proposal(connection, field_condition)
         if proposal:
             created.append(proposal)
     return created
@@ -2922,7 +3036,12 @@ def notify_proposal(
         "media": media,
         "dispatch_role": (
             "proactive_field_proposal"
-            if proposal["requires_confirmation"] else "proactive_research_result"
+            if proposal["requires_confirmation"]
+            else (
+                "proactive_field_condition"
+                if proposal.get("kind") == "field_condition_result"
+                else "proactive_research_result"
+            )
         ),
         "field": proposal.get("field_id"),
         "alert_diseases": alert_diseases,

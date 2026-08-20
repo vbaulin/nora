@@ -287,20 +287,26 @@ useful or merely busy.
 | Verdict | What happens |
 | --- | --- |
 | `material_unresolved` | Extended locally first; handed to an adapter only when a human observation or decision remains |
-| `not_material` | Stored and marked answered; may enter one changed-results bulletin as a negative result |
-| `resolved_local` | Stored; may enter the bulletin because the evidence already answered it |
-| `insufficient_data` | Stored as an internal gap; it may be counted as a limitation but never becomes a task for the human |
+| `not_material` | Stored and marked answered; visible in technical status, not sent to the farmer |
+| `resolved_local` | Stored as an answer in evidence memory and the dashboard |
+| `insufficient_data` | Stored as an internal gap; it never becomes a bulletin or task for the human |
 
 An analysis that could not run is not a discovery. A board that lacks the data
 to check something must not convert its blind spot into a request for
 attention, budget, or hardware.
 
-The proactive adapter publishes a compact `research_result` bulletin at most
-once per 20 hours when this evidence changes. The bulletin gives the number of
-hypotheses tested, records robust negative results, names concrete source-quality
-differences and states which questions still lack enough history. It has no
-reference code and asks for no reply. Findings that need a field observation
-remain separate confirmable proposals.
+Research bookkeeping stays in the technical dashboard. The proactive adapter
+does not send hypothesis counts, source-audit summaries or unfinished-analysis
+counts to the farmer.
+
+Vineyard deployments instead produce a separate `field_condition_result` at
+most once per six days. It reads fresh observed seasonal-climate artifacts and
+answers an agronomic question: what rain, heat, night temperature, humidity and
+solar exposure the vines experienced; how the latest 30 days differ from the
+preceding month and the matched prior-year period when coverage permits; and
+which berry measurements are needed before making a claim about ripening,
+acidity or harvest readiness. This applied synthesis is independent of the
+generic research engine.
 
 ## Budget
 

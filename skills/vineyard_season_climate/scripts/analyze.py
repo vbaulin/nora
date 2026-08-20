@@ -700,6 +700,30 @@ def coverage(source_counts, start, end):
     }
 
 
+def shifted_year(day, years=-1):
+    """Shift a date while keeping leap-day windows valid."""
+    try:
+        return day.replace(year=day.year + years)
+    except ValueError:
+        return day.replace(year=day.year + years, day=28)
+
+
+def comparison_window(
+    conn, station, start, end, local_tz, latitude, longitude, row_cache,
+):
+    observations, source_counts = fetch_observations(
+        conn, station, start, end, local_tz, latitude, longitude, row_cache,
+    )
+    records = daily_records(observations, start, end, latitude)
+    return {
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "coverage": coverage(source_counts, start, end),
+        "daily": subset_statistics(records),
+        "hourly": hourly_statistics(observations),
+    }
+
+
 def human_summary(report):
     season = report["season"]
     hourly = report["hourly"]
@@ -775,6 +799,20 @@ def analyze_field(conn, field, params, local_tz, today, row_cache=None):
     }
     preharvest = subset_statistics(preharvest_records)
     preharvest_hourly = hourly_statistics(preharvest_observations)
+    previous_30d_end = preharvest_start - timedelta(days=1)
+    previous_30d_start = previous_30d_end - timedelta(days=29)
+    previous_year_start = shifted_year(preharvest_start)
+    previous_year_end = shifted_year(end)
+    comparison_windows = {
+        "preceding_30d": comparison_window(
+            conn, station, previous_30d_start, previous_30d_end,
+            local_tz, latitude, longitude, row_cache,
+        ),
+        "same_30d_previous_year": comparison_window(
+            conn, station, previous_year_start, previous_year_end,
+            local_tz, latitude, longitude, row_cache,
+        ),
+    }
     summary = {"season": season, "hourly": hourly, "indices": indices}
     feature_vector = quality_feature_vector(summary, preharvest, preharvest_hourly)
     configured_model = params.get("brix_model_path")
@@ -798,6 +836,7 @@ def analyze_field(conn, field, params, local_tz, today, row_cache=None):
         "indices": indices,
         "preharvest_or_recent_30d": dict(preharvest, start=preharvest_start.isoformat(), end=end.isoformat()),
         "preharvest_or_recent_30d_hourly": preharvest_hourly,
+        "comparison_windows": comparison_windows,
         "monthly": monthly_statistics(records),
         "monthly_day_night": monthly_day_night_statistics(observations),
         "quality_context_features": feature_vector,

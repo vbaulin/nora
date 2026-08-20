@@ -1823,17 +1823,29 @@ def render_research_result(language, findings):
         if metrics.get("shared_periods") is not None:
             source_quality[str(finding.get("subject") or finding.get("id"))] = finding
     quality = list(source_quality.values())
+    quality_ids = {item.get("id") for item in quality}
     lagged_negative = [
         item for item in selected
         if item.get("analysis") == "lagged_association"
         and item.get("verdict") == "not_material"
     ]
-    resolved = [item for item in selected if item.get("verdict") == "resolved_local"]
-    insufficient = [item for item in selected if item.get("verdict") == "insufficient_data"]
+    resolved = [
+        item for item in selected
+        if item.get("verdict") == "resolved_local" and item.get("id") not in quality_ids
+    ]
+    insufficient = [
+        item for item in selected
+        if item.get("verdict") == "insufficient_data" and item.get("id") not in quality_ids
+    ]
     other_negative = [
         item for item in selected
         if item.get("verdict") == "not_material"
-        and item.get("analysis") != "lagged_association"
+        and item.get("analysis") not in {"lagged_association", "source_disagreement"}
+    ]
+    ongoing = [
+        item for item in selected
+        if item.get("verdict") == "material_unresolved"
+        and item.get("id") not in quality_ids
     ]
 
     texts = {
@@ -1844,6 +1856,7 @@ def render_research_result(language, findings):
             "negative": "Altres proves sense efecte material: {count}. No modifiquen les alertes actuals.",
             "resolved": "Preguntes resoltes amb les dades locals disponibles: {count}; no cal cap aportació del productor.",
             "insufficient": "Anàlisis encara sense prou historial per concloure: {count}. Queden obertes fins que s'acumulin més dades.",
+            "ongoing": "Preguntes que el tauler està ampliant amb més dades locals: {count}. La recerca continua automàticament i no requereix cap acció del productor.",
             "quality_hotter": "Control de qualitat meteorològica: en {fields} camps, la temperatura prevista va ser {difference} més alta que l'observada a l'estació; {beyond} de {shared} dies comparables van superar una diferència de {tolerance}. El resultat queda registrat com a limitació de la previsió.",
             "quality_cooler": "Control de qualitat meteorològica: en {fields} camps, la temperatura prevista va ser {difference} més baixa que l'observada a l'estació; {beyond} de {shared} dies comparables van superar una diferència de {tolerance}. El resultat queda registrat com a limitació de la previsió.",
             "quality_mixed": "Control de qualitat meteorològica: la temperatura prevista i l'observada a l'estació van diferir típicament {difference}; {beyond} de {shared} dies comparables van superar una diferència de {tolerance}. El resultat queda registrat com a limitació de la previsió.",
@@ -1856,6 +1869,7 @@ def render_research_result(language, findings):
             "negative": "Otras pruebas sin efecto material: {count}. No modifican las alertas actuales.",
             "resolved": "Preguntas resueltas con los datos locales disponibles: {count}; no se necesita información del productor.",
             "insufficient": "Análisis todavía sin historial suficiente para concluir: {count}. Permanecen abiertos hasta acumular más datos.",
+            "ongoing": "Preguntas que el tablero está ampliando con más datos locales: {count}. La investigación continúa automáticamente y no requiere ninguna acción del productor.",
             "quality_hotter": "Control de calidad meteorológica: en {fields} campos, la temperatura prevista fue {difference} más alta que la observada en la estación; {beyond} de {shared} días comparables superaron una diferencia de {tolerance}. El resultado queda registrado como limitación de la previsión.",
             "quality_cooler": "Control de calidad meteorológica: en {fields} campos, la temperatura prevista fue {difference} más baja que la observada en la estación; {beyond} de {shared} días comparables superaron una diferencia de {tolerance}. El resultado queda registrado como limitación de la previsión.",
             "quality_mixed": "Control de calidad meteorológica: la temperatura prevista y la observada en la estación difirieron típicamente {difference}; {beyond} de {shared} días comparables superaron una diferencia de {tolerance}. El resultado queda registrado como limitación de la previsión.",
@@ -1868,6 +1882,7 @@ def render_research_result(language, findings):
             "negative": "Other tests with no material effect: {count}. They do not alter current alerts.",
             "resolved": "Questions resolved from available local evidence: {count}; no producer input is needed.",
             "insufficient": "Analyses still lacking enough history for a conclusion: {count}. They remain open while evidence accumulates.",
+            "ongoing": "Questions being extended with more local evidence: {count}. Research continues automatically and requires no producer action.",
             "quality_hotter": "Weather quality control: across {fields} fields, forecast temperature was {difference} higher than the later station observation; {beyond} of {shared} comparable days exceeded a difference of {tolerance}. The result is retained as a forecast limitation.",
             "quality_cooler": "Weather quality control: across {fields} fields, forecast temperature was {difference} lower than the later station observation; {beyond} of {shared} comparable days exceeded a difference of {tolerance}. The result is retained as a forecast limitation.",
             "quality_mixed": "Weather quality control: forecast and later station temperature typically differed by {difference}; {beyond} of {shared} comparable days exceeded a difference of {tolerance}. The result is retained as a forecast limitation.",
@@ -1907,6 +1922,8 @@ def render_research_result(language, findings):
         lines.append(text["resolved"].format(count=len(resolved)))
     if insufficient:
         lines.append(text["insufficient"].format(count=len(insufficient)))
+    if ongoing:
+        lines.append(text["ongoing"].format(count=len(ongoing)))
     lines.append(text["closing"])
     return {
         "title": text["title"],
@@ -1921,6 +1938,7 @@ def render_research_result(language, findings):
             "other_negative": len(other_negative),
             "resolved": len(resolved),
             "insufficient": len(insufficient),
+            "ongoing": len(ongoing),
         },
     }
 

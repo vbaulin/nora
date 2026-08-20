@@ -860,14 +860,24 @@ class ProactiveFieldAgentTest(unittest.TestCase):
                 "verdict": "insufficient_data",
                 "created_at": "2026-08-19T08:01:00+00:00",
             },
+            {
+                "id": 35,
+                "question_id": 105,
+                "subject": "vineyard:field_1",
+                "analysis": "threshold_materiality",
+                "verdict": "material_unresolved",
+                "created_at": "2026-08-19T08:02:00+00:00",
+                "options": [{"id": "deeper_analysis", "cost": "none"}],
+            },
         ]
         rendered = MODULE.render_research_result("ca", findings)
         self.assertEqual(rendered["title"], "Resultats de recerca autònoma")
-        self.assertIn("4 preguntes noves", rendered["message"])
+        self.assertIn("5 preguntes noves", rendered["message"])
         self.assertIn("3.4-4.2 °C", rendered["message"])
         self.assertIn("61-63 de 65 dies", rendered["message"])
         self.assertIn("cap predictor nou", rendered["message"])
         self.assertIn("sense prou historial", rendered["message"])
+        self.assertIn("continua automàticament", rendered["message"])
         self.assertNotIn("Voleu", rendered["message"])
         self.assertNotIn("Ref:", rendered["message"])
 

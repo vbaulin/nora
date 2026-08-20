@@ -769,22 +769,39 @@ def comparison_window_with_backfill(
             else "history retrieval disabled",
         }
         return window
+    retrieval_cache = None
+    retrieval_key = (station, start.isoformat(), end.isoformat())
+    if row_cache is not None:
+        retrieval_cache = row_cache.setdefault(("__history_retrieval__",), {})
+        prior_retrieval = retrieval_cache.get(retrieval_key)
+        if prior_retrieval is not None:
+            window["history_retrieval"] = dict(
+                prior_retrieval, attempted=False, reused=True,
+            )
+            return window
     try:
         retrieval = fetch_historical_observations(
             conn, repo_path, station, start, end, timeout,
         )
         if row_cache is not None:
-            row_cache.clear()
+            query_start = (start - timedelta(days=1)).isoformat()
+            query_end = (end + timedelta(days=2)).isoformat()
+            row_cache.pop((station, query_start, query_end, str(local_tz)), None)
+        if retrieval_cache is not None:
+            retrieval_cache[retrieval_key] = retrieval
         window = comparison_window(
             conn, station, start, end, local_tz, latitude, longitude, row_cache,
         )
         window["history_retrieval"] = dict(retrieval, attempted=True)
     except Exception as exc:
-        window["history_retrieval"] = {
+        retrieval = {
             "attempted": True,
             "ok": False,
             "reason": str(exc)[:500],
         }
+        window["history_retrieval"] = retrieval
+        if retrieval_cache is not None:
+            retrieval_cache[retrieval_key] = retrieval
     return window
 
 

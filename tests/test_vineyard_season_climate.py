@@ -143,17 +143,27 @@ def test_missing_comparison_window_uses_history_loader_then_recomputes():
 
 def test_history_retrieval_failure_does_not_abort_comparison_report():
     connection = weather_db()
+    row_cache = {}
     with mock.patch.object(
         MODULE, "fetch_historical_observations", side_effect=OSError("offline"),
-    ):
+    ) as fetch:
         window = MODULE.comparison_window_with_backfill(
             connection, "/repo", "D9",
             date(2025, 7, 1), date(2025, 7, 3),
-            ZoneInfo("Europe/Madrid"), 41.2, 1.5, {}, True, 30,
+            ZoneInfo("Europe/Madrid"), 41.2, 1.5, row_cache, True, 30,
         )
+        repeated = MODULE.comparison_window_with_backfill(
+            connection, "/repo", "D9",
+            date(2025, 7, 1), date(2025, 7, 3),
+            ZoneInfo("Europe/Madrid"), 41.2, 1.5, row_cache, True, 30,
+        )
+    assert fetch.call_count == 1
     assert window["history_retrieval"] == {
         "attempted": True, "ok": False, "reason": "offline",
     }
+    assert repeated["history_retrieval"]["attempted"] is False
+    assert repeated["history_retrieval"]["reused"] is True
+    assert repeated["history_retrieval"]["reason"] == "offline"
     assert window["daily"]["temperature_mean_c"] is None
 
 

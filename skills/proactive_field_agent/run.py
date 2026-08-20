@@ -1857,9 +1857,11 @@ def render_research_result(language, findings):
             "resolved": "Preguntes resoltes amb les dades locals disponibles: {count}; no cal cap aportació del productor.",
             "insufficient": "Anàlisis encara sense prou historial per concloure: {count}. Queden obertes fins que s'acumulin més dades.",
             "ongoing": "Preguntes que el tauler està ampliant amb més dades locals: {count}. La recerca continua automàticament i no requereix cap acció del productor.",
-            "quality_hotter": "Control de qualitat meteorològica: en {fields} camps, la temperatura prevista va ser {difference} més alta que l'observada a l'estació; {beyond} de {shared} dies comparables van superar una diferència de {tolerance}. El resultat queda registrat com a limitació de la previsió.",
-            "quality_cooler": "Control de qualitat meteorològica: en {fields} camps, la temperatura prevista va ser {difference} més baixa que l'observada a l'estació; {beyond} de {shared} dies comparables van superar una diferència de {tolerance}. El resultat queda registrat com a limitació de la previsió.",
-            "quality_mixed": "Control de qualitat meteorològica: la temperatura prevista i l'observada a l'estació van diferir típicament {difference}; {beyond} de {shared} dies comparables van superar una diferència de {tolerance}. El resultat queda registrat com a limitació de la previsió.",
+            "field_singular": "1 camp",
+            "field_plural": "{count} camps",
+            "quality_hotter": "Control de qualitat meteorològica: en {field_scope}, la temperatura prevista va ser {difference} més alta que l'observada a l'estació; {beyond} de {shared} dies comparables van superar una diferència de {tolerance}. El resultat queda registrat com a limitació de la previsió.",
+            "quality_cooler": "Control de qualitat meteorològica: en {field_scope}, la temperatura prevista va ser {difference} més baixa que l'observada a l'estació; {beyond} de {shared} dies comparables van superar una diferència de {tolerance}. El resultat queda registrat com a limitació de la previsió.",
+            "quality_mixed": "Control de qualitat meteorològica: en {field_scope}, la temperatura prevista i l'observada a l'estació van diferir típicament {difference}; {beyond} de {shared} dies comparables van superar una diferència de {tolerance}. El resultat queda registrat com a limitació de la previsió.",
             "closing": "Aquests resultats no canvien automàticament cap model, alerta ni decisió de tractament.",
         },
         "es": {
@@ -1870,9 +1872,11 @@ def render_research_result(language, findings):
             "resolved": "Preguntas resueltas con los datos locales disponibles: {count}; no se necesita información del productor.",
             "insufficient": "Análisis todavía sin historial suficiente para concluir: {count}. Permanecen abiertos hasta acumular más datos.",
             "ongoing": "Preguntas que el tablero está ampliando con más datos locales: {count}. La investigación continúa automáticamente y no requiere ninguna acción del productor.",
-            "quality_hotter": "Control de calidad meteorológica: en {fields} campos, la temperatura prevista fue {difference} más alta que la observada en la estación; {beyond} de {shared} días comparables superaron una diferencia de {tolerance}. El resultado queda registrado como limitación de la previsión.",
-            "quality_cooler": "Control de calidad meteorológica: en {fields} campos, la temperatura prevista fue {difference} más baja que la observada en la estación; {beyond} de {shared} días comparables superaron una diferencia de {tolerance}. El resultado queda registrado como limitación de la previsión.",
-            "quality_mixed": "Control de calidad meteorológica: la temperatura prevista y la observada en la estación difirieron típicamente {difference}; {beyond} de {shared} días comparables superaron una diferencia de {tolerance}. El resultado queda registrado como limitación de la previsión.",
+            "field_singular": "1 campo",
+            "field_plural": "{count} campos",
+            "quality_hotter": "Control de calidad meteorológica: en {field_scope}, la temperatura prevista fue {difference} más alta que la observada en la estación; {beyond} de {shared} días comparables superaron una diferencia de {tolerance}. El resultado queda registrado como limitación de la previsión.",
+            "quality_cooler": "Control de calidad meteorológica: en {field_scope}, la temperatura prevista fue {difference} más baja que la observada en la estación; {beyond} de {shared} días comparables superaron una diferencia de {tolerance}. El resultado queda registrado como limitación de la previsión.",
+            "quality_mixed": "Control de calidad meteorológica: en {field_scope}, la temperatura prevista y la observada en la estación difirieron típicamente {difference}; {beyond} de {shared} días comparables superaron una diferencia de {tolerance}. El resultado queda registrado como limitación de la previsión.",
             "closing": "Estos resultados no cambian automáticamente ningún modelo, alerta ni decisión de tratamiento.",
         },
         "en": {
@@ -1883,9 +1887,11 @@ def render_research_result(language, findings):
             "resolved": "Questions resolved from available local evidence: {count}; no producer input is needed.",
             "insufficient": "Analyses still lacking enough history for a conclusion: {count}. They remain open while evidence accumulates.",
             "ongoing": "Questions being extended with more local evidence: {count}. Research continues automatically and requires no producer action.",
-            "quality_hotter": "Weather quality control: across {fields} fields, forecast temperature was {difference} higher than the later station observation; {beyond} of {shared} comparable days exceeded a difference of {tolerance}. The result is retained as a forecast limitation.",
-            "quality_cooler": "Weather quality control: across {fields} fields, forecast temperature was {difference} lower than the later station observation; {beyond} of {shared} comparable days exceeded a difference of {tolerance}. The result is retained as a forecast limitation.",
-            "quality_mixed": "Weather quality control: forecast and later station temperature typically differed by {difference}; {beyond} of {shared} comparable days exceeded a difference of {tolerance}. The result is retained as a forecast limitation.",
+            "field_singular": "1 field",
+            "field_plural": "{count} fields",
+            "quality_hotter": "Weather quality control: across {field_scope}, forecast temperature was {difference} higher than the later station observation; {beyond} of {shared} comparable days exceeded a difference of {tolerance}. The result is retained as a forecast limitation.",
+            "quality_cooler": "Weather quality control: across {field_scope}, forecast temperature was {difference} lower than the later station observation; {beyond} of {shared} comparable days exceeded a difference of {tolerance}. The result is retained as a forecast limitation.",
+            "quality_mixed": "Weather quality control: across {field_scope}, forecast and later station temperature typically differed by {difference}; {beyond} of {shared} comparable days exceeded a difference of {tolerance}. The result is retained as a forecast limitation.",
             "closing": "These results do not automatically change a model, alert, or treatment decision.",
         },
     }
@@ -1894,6 +1900,12 @@ def render_research_result(language, findings):
     if quality:
         metrics = [item.get("metrics") or {} for item in quality]
         unit = str(next((item.get("unit") for item in metrics if item.get("unit")), "°C"))
+        absolute_differences = []
+        for item in metrics:
+            value = item.get("median_absolute_difference")
+            if value is None and item.get("median_difference") is not None:
+                value = abs(float(item["median_difference"]))
+            absolute_differences.append(value)
         signed = [item.get("median_difference") for item in metrics]
         signed = [float(value) for value in signed if value is not None]
         direction = "mixed"
@@ -1902,9 +1914,12 @@ def render_research_result(language, findings):
         elif signed and all(value <= 0 for value in signed):
             direction = "cooler"
         lines.append(text[f"quality_{direction}"].format(
-            fields=len(quality),
+            field_scope=(
+                text["field_singular"] if len(quality) == 1
+                else text["field_plural"].format(count=len(quality))
+            ),
             difference=_research_result_range(
-                [item.get("median_absolute_difference") for item in metrics], f" {unit}",
+                absolute_differences, f" {unit}",
             ),
             beyond=_research_result_range(
                 [item.get("periods_beyond_tolerance") for item in metrics],

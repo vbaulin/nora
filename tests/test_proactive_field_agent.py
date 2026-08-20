@@ -881,6 +881,27 @@ class ProactiveFieldAgentTest(unittest.TestCase):
         self.assertNotIn("Voleu", rendered["message"])
         self.assertNotIn("Ref:", rendered["message"])
 
+    def test_research_result_supports_older_signed_source_metrics(self):
+        rendered = MODULE.render_research_result("ca", [{
+            "id": 36,
+            "question_id": 106,
+            "subject": "vineyard:field_1",
+            "analysis": "source_disagreement",
+            "verdict": "material_unresolved",
+            "created_at": "2026-08-20T08:00:00+00:00",
+            "metrics": {
+                "shared_periods": 86,
+                "periods_beyond_tolerance": 39,
+                "median_difference": 2.7,
+                "tolerance": 2.0,
+                "unit": "°C",
+            },
+            "options": [{"id": "deeper_analysis", "cost": "none"}],
+        }])
+        self.assertIn("en 1 camp", rendered["message"])
+        self.assertIn("2.7 °C", rendered["message"])
+        self.assertNotIn("?", rendered["message"])
+
     def test_research_result_notification_is_informational_and_closes_itself(self):
         connection = self.connection()
         proposal = MODULE.create_proposal(connection, {

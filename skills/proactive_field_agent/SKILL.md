@@ -183,14 +183,23 @@ Registered topics:
 Verdicts decide what happens next:
 
 - `material_unresolved`: a decision-relevant question the board cannot close
-  from its own data. This is the only verdict that may reach the farmer.
+  from its own data. This is the only verdict that may reach the farmer as a
+  question or decision proposal.
 - `not_material`: the ambiguity exists but changed no decision. It stays in
-  evidence memory. It is sent once, as a closure, only if the farmer was
-  already asked about that topic.
+  evidence memory and may appear once in the bounded research-results bulletin.
 - `resolved_local`: the board's own data already answers it, for example a
-  field that records measured wetness hours.
+  field that records measured wetness hours. A changed result may appear once
+  in the same bulletin.
 - `insufficient_data`: the analysis could not run. This creates an internal
-  gap, never a farmer message and never a hardware suggestion.
+  gap. It may be counted as a data limitation, never converted into a farmer
+  task or a hardware suggestion.
+
+`research_result` is a board-wide informational bulletin emitted at most once
+per 20 hours and only when research evidence changed. It reports completed
+source checks, robust negative results, locally resolved questions and data
+limitations. It carries no `PF-*` reference, requires no reply and is marked
+complete after delivery. Human observations remain separate confirmable
+proposals.
 
 A farmer-facing finding must report what was checked, over how much data, what
 came out, and what remains open, using its own numbers. Options are ordered by
@@ -219,10 +228,12 @@ Scheduled use is deterministic:
 ```
 
 The cycle creates no more than one new proposal per field. A farmer-facing
-proposal must contain the field name, concrete model/measurement signal, clear
-uncertainty, and a `PF-<id>` reference. It asks for one useful next response,
+action proposal must contain the field name, concrete model/measurement signal,
+clear uncertainty, and a `PF-<id>` reference. It asks for one useful next response,
 for example an inspection outcome, recent protection record, missing stable
 field attribute, or a choice between the options of a finished investigation.
+An informational `research_result` bulletin is not an action proposal and has
+no reference or confirmation question.
 
 A reply to an `investigation:<topic>` proposal resolves through
 `proposal_context` to `next_mode=record_decision` and carries the finding's
@@ -311,9 +322,10 @@ file paths in the farmer-facing text.
   `farmer-feedback-capture` route.
 - Stale/missing dashboards generate an internal refresh request, not farmer
   advice.
-- An analysis that could not run is an internal gap, not a farmer message.
-- Every farmer-facing proposal requires confirmation and includes its evidence
-  references.
+- An analysis that could not conclude is an internal gap, not a farmer task;
+  the bounded result bulletin may count it as a limitation.
+- Every farmer-facing action proposal requires confirmation and includes its
+  evidence references. Informational research bulletins close automatically.
 
 ## Grapevine Black Rot
 

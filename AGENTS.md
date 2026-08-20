@@ -82,13 +82,18 @@ question. `proactive-field-agent mode=investigate` runs the bounded analyses
 over stored evidence (model series, peer board signals, the board's own alert
 record) and returns each finding's question, method, sample size, verdict,
 limitations and options. Only a `material_unresolved` verdict may reach the
-farmer; `not_material`, `resolved_local` and `insufficient_data` stay in
-evidence memory. Report findings with their numbers, not as impressions.
+farmer as a question or decision proposal. `not_material`, `resolved_local`
+and `insufficient_data` stay in evidence memory, but changed results may be
+summarized once in a bounded `research_result` bulletin. That bulletin is
+informational: it has no `PF-*` reference, asks no question, and closes itself
+after delivery. Report findings with their numbers, not as impressions.
 
 For board-wide research that is not vineyard-specific, use `research-agent`.
 `mode=cycle` is the scheduled idle-time loop, `mode=reportable` lists the
-findings a human should see, and `mode=findings` returns the stored evidence
-for any subject. It never sends a message: an adapter delivers. When answering
+open findings that require human knowledge, and `mode=findings` returns the
+stored evidence for any subject. The engine never sends a message: an adapter
+delivers decision proposals and a bounded digest of newly completed work.
+When answering
 "what has the board been looking at", read `research-agent mode=findings` and
 `proactive-field-agent mode=status` — never session memory.
 

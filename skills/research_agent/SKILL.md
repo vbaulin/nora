@@ -103,7 +103,7 @@ signals and human feedback
   -> questions (claim + analysis + parameters)
   -> bounded analysis over local evidence
   -> finding (method, sample, verdict, limitations, options)
-  -> only material_unresolved reaches a human, through an adapter
+  -> human decisions and completed-result bulletins are separated by an adapter
   -> the decision is recorded, and may arm a watch for next time
 ```
 
@@ -117,7 +117,9 @@ signals and human feedback
 - `investigate`: run one question (`question_id`), one ad-hoc analysis
   (`analysis` + `params`), or the next few open questions.
 - `questions` / `findings` / `reportable`: read stored state. `reportable`
-  returns only open findings a human should see.
+  returns only open findings that require human knowledge. Completed and
+  negative findings remain available through `findings`; an adapter may place
+  newly changed results in a bounded informational bulletin.
 - `record_decision`: store `accepted`, `rejected`, `deferred` or `corrected`
   for a finding, with the chosen `option_id`. `watch=true` on an acceptance
   arms a watch. An adapter that delivered a finding elsewhere echoes the answer
@@ -128,12 +130,12 @@ signals and human feedback
 
 ## Verdicts
 
-| Verdict | Meaning | Reaches a human |
-| --- | --- | --- |
-| `material_unresolved` | Real, decision-relevant, and not answerable from local evidence | Yes |
-| `not_material` | Real, but it changed no decision | No |
-| `resolved_local` | Already answered by evidence the board holds | No |
-| `insufficient_data` | The analysis could not run | No |
+| Verdict | Meaning | Human-action queue | Result bulletin |
+| --- | --- | --- | --- |
+| `material_unresolved` | Real, decision-relevant, and not answerable from local evidence | Yes, after autonomous deepening | Only when the remaining step is local computation |
+| `not_material` | Real, but it changed no decision | No | May be summarized once as a negative result |
+| `resolved_local` | Already answered by evidence the board holds | No | May be summarized once |
+| `insufficient_data` | The analysis could not conclude | No | May be counted as an explicit data limitation |
 
 An analysis that cannot run is an internal gap. It is never converted into a
 request for hardware, budget, or attention.
@@ -147,9 +149,9 @@ priority. The narrow conclusion and the wide one are stored separately, so a
 pattern that only appears at one scale stays visible as such.
 
 An adapter must remove `deeper_analysis` from farmer-facing choices. If no other
-option remains, it sends no message. A person is contacted only when the wider
-analysis leaves a concrete observation or decision that cannot be supplied by
-the board.
+option remains, it sends no question. The completed result may enter the next
+informational bulletin. A person is asked to act only when the wider analysis
+leaves a concrete observation or decision that cannot be supplied by the board.
 
 ## From understanding to anticipation
 

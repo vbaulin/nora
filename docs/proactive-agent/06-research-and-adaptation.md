@@ -287,13 +287,20 @@ useful or merely busy.
 | Verdict | What happens |
 | --- | --- |
 | `material_unresolved` | Extended locally first; handed to an adapter only when a human observation or decision remains |
-| `not_material` | Stored; the question is marked answered |
-| `resolved_local` | Stored; the evidence already answered it |
-| `insufficient_data` | Stored as an internal gap; never a human message |
+| `not_material` | Stored and marked answered; may enter one changed-results bulletin as a negative result |
+| `resolved_local` | Stored; may enter the bulletin because the evidence already answered it |
+| `insufficient_data` | Stored as an internal gap; it may be counted as a limitation but never becomes a task for the human |
 
 An analysis that could not run is not a discovery. A board that lacks the data
 to check something must not convert its blind spot into a request for
 attention, budget, or hardware.
+
+The proactive adapter publishes a compact `research_result` bulletin at most
+once per 20 hours when this evidence changes. The bulletin gives the number of
+hypotheses tested, records robust negative results, names concrete source-quality
+differences and states which questions still lack enough history. It has no
+reference code and asks for no reply. Findings that need a field observation
+remain separate confirmable proposals.
 
 ## Budget
 

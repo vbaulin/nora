@@ -43,6 +43,8 @@ DEFAULT_NOTIFICATION_THRESHOLD = 70
 # the adapter. Once it becomes a farmer-facing proposal, placing it below the
 # delivery threshold makes the entire research loop observationally silent.
 RESEARCH_NOTIFICATION_PRIORITY = DEFAULT_NOTIFICATION_THRESHOLD
+RESEARCH_RESULT_PRIORITY = DEFAULT_NOTIFICATION_THRESHOLD
+RESEARCH_RESULT_INTERVAL_HOURS = 20
 ALLOWED_DECISIONS = {"accepted", "rejected", "deferred", "corrected"}
 INVESTIGATION_KIND_PREFIX = "investigation:"
 # A rejected proposal is a decision, not a delay. The topic stays closed for a
@@ -1778,6 +1780,227 @@ def research_findings(params, limit=5):
     return findings[:limit]
 
 
+def _research_result_range(values, suffix=""):
+    numbers = [float(value) for value in values if value is not None]
+    if not numbers:
+        return "?"
+
+    def display(value):
+        return str(int(value)) if float(value).is_integer() else f"{value:.1f}"
+
+    low, high = min(numbers), max(numbers)
+    if abs(high - low) < 0.05:
+        return f"{display(low)}{suffix}"
+    return f"{display(low)}-{display(high)}{suffix}"
+
+
+def render_research_result(language, findings):
+    """Turn completed board work into one concise, non-interactive bulletin."""
+    if not findings:
+        return None
+    lang = str(language or "en").lower()[:2]
+    # One changed finding may be written repeatedly for the same standing
+    # question. Count scientific questions rather than database revisions.
+    latest_by_question = {}
+    for finding in sorted(
+        findings, key=lambda item: str(item.get("created_at") or ""), reverse=True,
+    ):
+        key = finding.get("question_id") or finding.get("id")
+        latest_by_question.setdefault(key, finding)
+    selected = list(latest_by_question.values())
+    dated = [
+        str(item.get("created_at") or "")[:10]
+        for item in selected if item.get("created_at")
+    ]
+    start = min(dated) if dated else "?"
+    end = max(dated) if dated else "?"
+
+    source_quality = {}
+    for finding in selected:
+        if finding.get("analysis") != "source_disagreement":
+            continue
+        metrics = finding.get("metrics") or {}
+        if metrics.get("shared_periods") is not None:
+            source_quality[str(finding.get("subject") or finding.get("id"))] = finding
+    quality = list(source_quality.values())
+    lagged_negative = [
+        item for item in selected
+        if item.get("analysis") == "lagged_association"
+        and item.get("verdict") == "not_material"
+    ]
+    resolved = [item for item in selected if item.get("verdict") == "resolved_local"]
+    insufficient = [item for item in selected if item.get("verdict") == "insufficient_data"]
+    other_negative = [
+        item for item in selected
+        if item.get("verdict") == "not_material"
+        and item.get("analysis") != "lagged_association"
+    ]
+
+    texts = {
+        "ca": {
+            "title": "Resultats de recerca autònoma",
+            "intro": "El tauler ha avaluat {count} preguntes noves entre {start} i {end}.",
+            "lagged": "Relacions temporals: s'han provat {count} hipòtesis; cap no ha superat el criteri de consistència. No s'ha incorporat cap predictor nou.",
+            "negative": "Altres proves sense efecte material: {count}. No modifiquen les alertes actuals.",
+            "resolved": "Preguntes resoltes amb les dades locals disponibles: {count}; no cal cap aportació del productor.",
+            "insufficient": "Anàlisis encara sense prou historial per concloure: {count}. Queden obertes fins que s'acumulin més dades.",
+            "quality_hotter": "Control de qualitat meteorològica: en {fields} camps, la temperatura prevista va ser {difference} més alta que l'observada a l'estació; {beyond} de {shared} dies comparables van superar una diferència de {tolerance}. El resultat queda registrat com a limitació de la previsió.",
+            "quality_cooler": "Control de qualitat meteorològica: en {fields} camps, la temperatura prevista va ser {difference} més baixa que l'observada a l'estació; {beyond} de {shared} dies comparables van superar una diferència de {tolerance}. El resultat queda registrat com a limitació de la previsió.",
+            "quality_mixed": "Control de qualitat meteorològica: la temperatura prevista i l'observada a l'estació van diferir típicament {difference}; {beyond} de {shared} dies comparables van superar una diferència de {tolerance}. El resultat queda registrat com a limitació de la previsió.",
+            "closing": "Aquests resultats no canvien automàticament cap model, alerta ni decisió de tractament.",
+        },
+        "es": {
+            "title": "Resultados de investigación autónoma",
+            "intro": "El tablero ha evaluado {count} preguntas nuevas entre {start} y {end}.",
+            "lagged": "Relaciones temporales: se han probado {count} hipótesis; ninguna superó el criterio de consistencia. No se incorporó ningún predictor nuevo.",
+            "negative": "Otras pruebas sin efecto material: {count}. No modifican las alertas actuales.",
+            "resolved": "Preguntas resueltas con los datos locales disponibles: {count}; no se necesita información del productor.",
+            "insufficient": "Análisis todavía sin historial suficiente para concluir: {count}. Permanecen abiertos hasta acumular más datos.",
+            "quality_hotter": "Control de calidad meteorológica: en {fields} campos, la temperatura prevista fue {difference} más alta que la observada en la estación; {beyond} de {shared} días comparables superaron una diferencia de {tolerance}. El resultado queda registrado como limitación de la previsión.",
+            "quality_cooler": "Control de calidad meteorológica: en {fields} campos, la temperatura prevista fue {difference} más baja que la observada en la estación; {beyond} de {shared} días comparables superaron una diferencia de {tolerance}. El resultado queda registrado como limitación de la previsión.",
+            "quality_mixed": "Control de calidad meteorológica: la temperatura prevista y la observada en la estación difirieron típicamente {difference}; {beyond} de {shared} días comparables superaron una diferencia de {tolerance}. El resultado queda registrado como limitación de la previsión.",
+            "closing": "Estos resultados no cambian automáticamente ningún modelo, alerta ni decisión de tratamiento.",
+        },
+        "en": {
+            "title": "Autonomous research results",
+            "intro": "The board evaluated {count} new questions between {start} and {end}.",
+            "lagged": "Time-lag relationships: {count} hypotheses were tested; none passed the consistency criterion. No new predictor was promoted.",
+            "negative": "Other tests with no material effect: {count}. They do not alter current alerts.",
+            "resolved": "Questions resolved from available local evidence: {count}; no producer input is needed.",
+            "insufficient": "Analyses still lacking enough history for a conclusion: {count}. They remain open while evidence accumulates.",
+            "quality_hotter": "Weather quality control: across {fields} fields, forecast temperature was {difference} higher than the later station observation; {beyond} of {shared} comparable days exceeded a difference of {tolerance}. The result is retained as a forecast limitation.",
+            "quality_cooler": "Weather quality control: across {fields} fields, forecast temperature was {difference} lower than the later station observation; {beyond} of {shared} comparable days exceeded a difference of {tolerance}. The result is retained as a forecast limitation.",
+            "quality_mixed": "Weather quality control: forecast and later station temperature typically differed by {difference}; {beyond} of {shared} comparable days exceeded a difference of {tolerance}. The result is retained as a forecast limitation.",
+            "closing": "These results do not automatically change a model, alert, or treatment decision.",
+        },
+    }
+    text = texts.get(lang, texts["en"])
+    lines = [text["intro"].format(count=len(selected), start=start, end=end)]
+    if quality:
+        metrics = [item.get("metrics") or {} for item in quality]
+        unit = str(next((item.get("unit") for item in metrics if item.get("unit")), "°C"))
+        signed = [item.get("median_difference") for item in metrics]
+        signed = [float(value) for value in signed if value is not None]
+        direction = "mixed"
+        if signed and all(value >= 0 for value in signed):
+            direction = "hotter"
+        elif signed and all(value <= 0 for value in signed):
+            direction = "cooler"
+        lines.append(text[f"quality_{direction}"].format(
+            fields=len(quality),
+            difference=_research_result_range(
+                [item.get("median_absolute_difference") for item in metrics], f" {unit}",
+            ),
+            beyond=_research_result_range(
+                [item.get("periods_beyond_tolerance") for item in metrics],
+            ),
+            shared=_research_result_range([item.get("shared_periods") for item in metrics]),
+            tolerance=_research_result_range(
+                [item.get("tolerance") for item in metrics], f" {unit}",
+            ),
+        ))
+    if lagged_negative:
+        lines.append(text["lagged"].format(count=len(lagged_negative)))
+    if other_negative:
+        lines.append(text["negative"].format(count=len(other_negative)))
+    if resolved:
+        lines.append(text["resolved"].format(count=len(resolved)))
+    if insufficient:
+        lines.append(text["insufficient"].format(count=len(insufficient)))
+    lines.append(text["closing"])
+    return {
+        "title": text["title"],
+        "message": "\n\n".join(lines),
+        "finding_ids": sorted(
+            int(item["id"]) for item in selected if item.get("id") is not None
+        ),
+        "counts": {
+            "analyses": len(selected),
+            "source_quality": len(quality),
+            "lagged_negative": len(lagged_negative),
+            "other_negative": len(other_negative),
+            "resolved": len(resolved),
+            "insufficient": len(insufficient),
+        },
+    }
+
+
+def research_result_findings(params, since, limit=400):
+    state_dir = (
+        params.get("research_state_dir")
+        or os.environ.get("NORA_STATE_DIR")
+        or "/root/.picoclaw/workspace/research"
+    )
+    if not Path(state_dir, "research.db").exists():
+        return []
+    try:
+        import engine as research_engine
+        research_connection = research_engine.connect(state_dir)
+        try:
+            findings = research_engine.list_findings(
+                research_connection, limit=limit,
+            )
+        finally:
+            research_connection.close()
+    except Exception:
+        return []
+    selected = []
+    for finding in findings:
+        created = parse_datetime(finding.get("created_at"))
+        if created and created <= since:
+            continue
+        verdict = str(finding.get("verdict") or "")
+        if verdict in {"not_material", "resolved_local", "insufficient_data"}:
+            selected.append(finding)
+        elif verdict == "material_unresolved" and research_engine.autonomous_only_finding(finding):
+            selected.append(finding)
+    return selected
+
+
+def research_result_candidate(connection, profiles, params):
+    """Publish new completed work at most once per board day."""
+    if not profiles:
+        return None
+    now = utcnow()
+    row = connection.execute(
+        "SELECT created_at FROM proposals WHERE kind='research_result' "
+        "ORDER BY created_at DESC LIMIT 1"
+    ).fetchone()
+    last = parse_datetime(row["created_at"]) if row else None
+    interval = float(
+        params.get("research_result_interval_hours")
+        or RESEARCH_RESULT_INTERVAL_HOURS
+    )
+    if last and (now - last).total_seconds() < interval * 3600:
+        return None
+    since = last or (now - dt.timedelta(days=7))
+    findings = research_result_findings(params, since)
+    rendered = render_research_result(profiles[0]["language"], findings)
+    if not rendered:
+        return None
+    return {
+        "field_id": profiles[0]["field_id"],
+        "kind": "research_result",
+        "target": "farmer",
+        "priority": RESEARCH_RESULT_PRIORITY,
+        "title": rendered["title"],
+        "message": rendered["message"],
+        "rationale": (
+            "A bounded synthesis makes completed local research visible without "
+            "turning internal computation into a question for the producer."
+        ),
+        "evidence": [{
+            "research_finding_ids": rendered["finding_ids"],
+            "counts": rendered["counts"],
+            "window_start": since.isoformat(),
+            "window_end": now.isoformat(),
+        }],
+        "confidence": 1.0,
+        "requires_confirmation": False,
+        "cooldown_days": 0,
+    }
+
+
 def research_candidates(connection, profile, params, include_board_wide=False):
     """Turn engine findings into one confirmable message each."""
     language = profile["language"]
@@ -1997,6 +2220,11 @@ def generate_proposals(connection, profiles, investigation_records=None, params=
                     connection.commit()
                 created.append(proposal)
                 break
+    research_result = research_result_candidate(connection, profiles, params)
+    if research_result:
+        proposal = create_proposal(connection, research_result)
+        if proposal:
+            created.append(proposal)
     return created
 
 
@@ -2612,11 +2840,11 @@ def recent_daily_notification_cover(proposal, outbox_dir):
     return None
 
 
-def mark_proposal_notified(connection, proposal_id):
+def mark_proposal_notified(connection, proposal_id, completed=False):
     now = iso_now()
     connection.execute(
-        "UPDATE proposals SET status='notified', notified_at=?, updated_at=? WHERE id=?",
-        (now, now, proposal_id),
+        "UPDATE proposals SET status=?, notified_at=?, updated_at=? WHERE id=?",
+        ("completed" if completed else "notified", now, now, proposal_id),
     )
     connection.commit()
 
@@ -2636,7 +2864,9 @@ def notify_proposal(
     outbox_dir = os.environ.get("PICOCLAW_OUTBOX", "/tmp/picoclaw_outbox")
     covered_by = recent_daily_notification_cover(proposal, outbox_dir)
     if covered_by:
-        mark_proposal_notified(connection, proposal["id"])
+        mark_proposal_notified(
+            connection, proposal["id"], completed=not proposal["requires_confirmation"],
+        )
         return {
             "status": "skipped_covered",
             "reason": "today's disease briefing already covers this field and signal",
@@ -2646,7 +2876,9 @@ def notify_proposal(
     notify_script = Path(__file__).resolve().parents[1] / "farmer_notify" / "run.py"
     if not notify_script.exists():
         return {"status": "error", "reason": f"farmer-notify missing: {notify_script}"}
-    message = proposal["message"] + f"\n\nRef: PF-{proposal['id']}"
+    message = proposal["message"]
+    if proposal["requires_confirmation"]:
+        message += f"\n\nRef: PF-{proposal['id']}"
     media = proposal_media(proposal)
     alert_diseases = proposal_alert_diseases(proposal)
     payload = {
@@ -2655,7 +2887,11 @@ def notify_proposal(
         "text_after_photo": message if media else "",
         "attachments": media,
         "media": media,
-        "dispatch_role": "proactive_field_proposal", "field": proposal.get("field_id"),
+        "dispatch_role": (
+            "proactive_field_proposal"
+            if proposal["requires_confirmation"] else "proactive_research_result"
+        ),
+        "field": proposal.get("field_id"),
         "alert_diseases": alert_diseases,
         "outbox_dir": outbox_dir,
         "dedupe_minutes": 1440,
@@ -2674,7 +2910,9 @@ def notify_proposal(
     except ValueError:
         result = {"raw_stdout": proc.stdout.decode("utf-8", "replace")}
     if proc.returncode == 0 and result.get("status") in {"success", "skipped_duplicate"}:
-        mark_proposal_notified(connection, proposal["id"])
+        mark_proposal_notified(
+            connection, proposal["id"], completed=not proposal["requires_confirmation"],
+        )
         return {"status": result.get("status"), "proposal_id": proposal["id"], "outbox": result}
     trace(state_dir, "notification_error", {"proposal_id": proposal["id"], "stderr": proc.stderr.decode("utf-8", "replace")})
     return {"status": "error", "proposal_id": proposal["id"], "stderr": proc.stderr.decode("utf-8", "replace"), "result": result}

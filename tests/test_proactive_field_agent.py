@@ -808,6 +808,118 @@ class ProactiveFieldAgentTest(unittest.TestCase):
         self.assertEqual(candidates, [])
         render.assert_not_called()
 
+    def test_completed_research_is_rendered_as_a_bounded_result_not_a_question(self):
+        findings = [
+            {
+                "id": 31,
+                "question_id": 101,
+                "subject": "vineyard:field_1",
+                "analysis": "source_disagreement",
+                "verdict": "material_unresolved",
+                "created_at": "2026-08-18T08:00:00+00:00",
+                "metrics": {
+                    "shared_periods": 65,
+                    "periods_beyond_tolerance": 61,
+                    "median_difference": 3.4,
+                    "median_absolute_difference": 3.4,
+                    "tolerance": 2.0,
+                    "unit": "°C",
+                },
+                "options": [{"id": "deeper_analysis", "cost": "none"}],
+            },
+            {
+                "id": 32,
+                "question_id": 102,
+                "subject": "vineyard:field_2",
+                "analysis": "source_disagreement",
+                "verdict": "material_unresolved",
+                "created_at": "2026-08-18T08:01:00+00:00",
+                "metrics": {
+                    "shared_periods": 65,
+                    "periods_beyond_tolerance": 63,
+                    "median_difference": 4.2,
+                    "median_absolute_difference": 4.2,
+                    "tolerance": 2.0,
+                    "unit": "°C",
+                },
+                "options": [{"id": "deeper_analysis", "cost": "none"}],
+            },
+            {
+                "id": 33,
+                "question_id": 103,
+                "subject": "vineyard:field_1",
+                "analysis": "lagged_association",
+                "verdict": "not_material",
+                "created_at": "2026-08-19T08:00:00+00:00",
+            },
+            {
+                "id": 34,
+                "question_id": 104,
+                "subject": "vineyard:field_1",
+                "analysis": "baseline_deviation",
+                "verdict": "insufficient_data",
+                "created_at": "2026-08-19T08:01:00+00:00",
+            },
+        ]
+        rendered = MODULE.render_research_result("ca", findings)
+        self.assertEqual(rendered["title"], "Resultats de recerca autònoma")
+        self.assertIn("4 preguntes noves", rendered["message"])
+        self.assertIn("3.4-4.2 °C", rendered["message"])
+        self.assertIn("61-63 de 65 dies", rendered["message"])
+        self.assertIn("cap predictor nou", rendered["message"])
+        self.assertIn("sense prou historial", rendered["message"])
+        self.assertNotIn("Voleu", rendered["message"])
+        self.assertNotIn("Ref:", rendered["message"])
+
+    def test_research_result_notification_is_informational_and_closes_itself(self):
+        connection = self.connection()
+        proposal = MODULE.create_proposal(connection, {
+            "field_id": "field_1",
+            "kind": "research_result",
+            "target": "farmer",
+            "priority": MODULE.RESEARCH_RESULT_PRIORITY,
+            "title": "Resultats de recerca autònoma",
+            "message": "Cap de les relacions provades ha superat el criteri de consistència.",
+            "rationale": "A completed local result should be visible.",
+            "evidence": [{"research_finding_ids": [31, 32]}],
+            "confidence": 1.0,
+            "requires_confirmation": False,
+            "cooldown_days": 0,
+        })
+        outbox = self.root / "research-outbox"
+        with mock.patch.dict(os.environ, {"PICOCLAW_OUTBOX": str(outbox)}):
+            result = MODULE.notify_proposal(connection, proposal, str(self.state))
+        self.assertEqual(result["status"], "success")
+        package = json.loads(next(outbox.glob("*.json")).read_text(encoding="utf-8"))
+        self.assertEqual(package["dispatch_role"], "proactive_research_result")
+        self.assertNotIn("Ref:", package["message"])
+        stored = MODULE.proposal_by_id(connection, proposal["id"])
+        self.assertEqual(stored["status"], "completed")
+        self.assertIsNone(MODULE.next_proposal(connection, only_unnotified=True))
+
+    def test_research_result_bulletin_has_a_bounded_delivery_interval(self):
+        connection = self.connection()
+        profiles = MODULE.field_profiles(str(self.repo))
+        finding = {
+            "id": 41,
+            "question_id": 201,
+            "subject": "vineyard:field_1",
+            "analysis": "lagged_association",
+            "verdict": "not_material",
+            "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        }
+        with mock.patch.object(MODULE, "research_result_findings", return_value=[finding]):
+            candidate = MODULE.research_result_candidate(
+                connection, profiles, self.params(),
+            )
+            self.assertIsNotNone(candidate)
+            self.assertFalse(candidate["requires_confirmation"])
+            self.assertIsNotNone(MODULE.create_proposal(connection, candidate))
+            repeated = MODULE.research_result_candidate(
+                connection, profiles, self.params(),
+            )
+        self.assertIsNone(repeated)
+
     def test_source_comparison_names_values_and_units(self):
         rendered = MODULE.investigations.render_anomaly("ca", "N2 Chardonnay", {
             "subject": "vineyard:field_2",

@@ -822,12 +822,17 @@ class ProactiveFieldAgentTest(unittest.TestCase):
                 "rain_total_mm": 2.2,
                 "longest_dry_spell_days": 25,
                 "temperature_mean_c": 27.5,
+                "temperature_max_c": 36.2,
+                "mean_daily_max_c": 32.1,
+                "mean_diurnal_range_c": 10.2,
                 "heat_days_ge_30c": 27,
+                "heat_days_ge_35c": 2,
                 "tropical_nights_ge_20c": 28,
                 "solar_energy_mean_daily_mj_m2": 22.8,
             },
             "preharvest_or_recent_30d_hourly": {
                 "night_temperature_mean_c": 24.5,
+                "night_temperature_min_c": 17.3,
                 "night_humidity_mean_pct": 82.0,
             },
             "comparison_windows": {
@@ -837,10 +842,10 @@ class ProactiveFieldAgentTest(unittest.TestCase):
                         "humidity_pct": 96.0,
                         "precipitation_pct": 100.0,
                     },
-                    "daily": {"temperature_mean_c": 24.0, "rain_total_mm": 18.0},
+                    "daily": {"temperature_mean_c": 31.5, "rain_total_mm": 18.0},
                     "hourly": {
-                        "night_temperature_mean_c": 21.5,
-                        "night_humidity_mean_pct": 76.0,
+                        "night_temperature_mean_c": 23.8,
+                        "night_humidity_mean_pct": 73.8,
                     },
                 },
                 "same_30d_previous_year": {
@@ -849,7 +854,7 @@ class ProactiveFieldAgentTest(unittest.TestCase):
                         "humidity_pct": 95.0,
                         "precipitation_pct": 100.0,
                     },
-                    "daily": {"temperature_mean_c": 25.0, "rain_total_mm": 12.0},
+                    "daily": {"temperature_mean_c": 28.9, "rain_total_mm": 12.0},
                     "hourly": {
                         "night_temperature_mean_c": 22.0,
                         "night_humidity_mean_pct": 78.0,
@@ -883,15 +888,24 @@ class ProactiveFieldAgentTest(unittest.TestCase):
         self.assertIn("Camp Nord", message)
         self.assertIn("2.2 mm de pluja", message)
         self.assertIn("25 dies", message)
-        self.assertIn("24.5 °C", message)
+        self.assertIn("màxima diürna registrada 36.2 °C", message)
+        self.assertIn("mínima nocturna registrada 17.3 °C", message)
+        self.assertIn("amplitud tèrmica diària mitjana 10.2 °C", message)
         self.assertIn("maduració", message)
-        self.assertIn("acidesa", message)
+        self.assertIn("Acidesa", message)
         self.assertIn("Respecte als 30 dies anteriors", message)
+        self.assertIn("temperatura mitjana 4 °C més baixa", message)
+        self.assertIn("temperatura nocturna 0.7 °C més alta", message)
+        self.assertIn("humitat nocturna 8.2 punts més alta", message)
         self.assertIn("pluja 2.2 mm davant de 18 mm", message)
         self.assertIn("mateix període de l'any passat", message)
         self.assertIn("Evolució mensual", message)
-        self.assertIn("Brix", message)
-        self.assertIn("pes mitjà de baia", message)
+        self.assertIn("agost", message)
+        self.assertIn("fins al dia", message)
+        self.assertNotIn("no pot", message)
+        self.assertNotIn("no substitueix", message)
+        self.assertNotIn("perquè no hi ha", message)
+        self.assertNotIn("Dada de camp més útil", message)
         self.assertNotIn("hipòtesis", message)
         self.assertNotIn("preguntes", message)
         self.assertNotIn("Control de qualitat", message)

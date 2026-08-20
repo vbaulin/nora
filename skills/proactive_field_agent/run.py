@@ -1848,6 +1848,18 @@ def condition_interpretation(language, reports):
         report_metric(report, recent, "heat_days_ge_30c") or 0
         for report in reports
     )
+    extreme_heat_days = max(
+        report_metric(report, recent, "heat_days_ge_35c") or 0
+        for report in reports
+    )
+    maximum_temperature = max(
+        report_metric(report, recent, "temperature_max_c") or -99
+        for report in reports
+    )
+    diurnal_range = max(
+        report_metric(report, recent, "mean_diurnal_range_c") or -99
+        for report in reports
+    )
     tropical_nights = max(
         report_metric(report, recent, "tropical_nights_ge_20c") or 0
         for report in reports
@@ -1868,28 +1880,37 @@ def condition_interpretation(language, reports):
     humid_nights = night_humidity >= 80.0
     texts = {
         "ca": {
-            "dry_hot": "El període ha estat sec i càlid. En secà, és compatible amb una maduració ràpida i amb menys creixement de la baia si la vinya pateix estrès hídric; el clima sol no confirma aquest estrès.",
-            "dry": "El període ha estat molt sec. En secà, la manca d'aigua pot limitar el creixement de la baia si la vinya mostra estrès; cal comprovar-ho al camp.",
-            "hot": "El període ha estat càlid i pot accelerar la maduració. Cal comprovar sucre i acidesa a la baia abans de concloure que el raïm està més madur.",
-            "warm_nights": "Les nits han estat càlides; això pot dificultar la conservació de l'acidesa, però no substitueix una mesura d'acidesa i pH.",
-            "humid_nights": "Les nits han estat humides i poden mantenir un microclima favorable als fongs dins del dosser; les alertes de malaltia es calculen per separat.",
-            "neutral": "Les dades no mostren una pressió climàtica extrema en els darrers 30 dies. La condició real del raïm encara s'ha de comprovar amb mostres de baia.",
+            "dry_hot": "Maduració i mida de la baia: la sequedat i la calor afavoreixen la concentració i l'avanç de la maduració mentre la vinya manté activitat. Si l'estrès hídric s'intensifica, pot frenar la fotosíntesi, el creixement de la baia i l'acumulació de sucre.",
+            "dry": "Maduració i mida de la baia: l'aigua disponible és el principal factor limitant; una sequedat prolongada redueix l'expansió de la baia i, si l'estrès s'intensifica, també pot alentir l'acumulació de sucre.",
+            "hot": "Maduració: la calor afavoreix una maduració més ràpida i una concentració més primerenca del raïm.",
+            "extreme_heat": "Calor extrema: les màximes elevades augmenten el risc de cremada, deshidratació de la baia i aturada fotosintètica durant les hores més càlides.",
+            "warm_nights": "Acidesa: les nits càlides augmenten la respiració de la baia i afavoreixen una pèrdua més ràpida d'àcids.",
+            "humid_nights": "Sanitat del dosser: la humitat nocturna alta prolonga el microclima humit entre fulles i raïms i augmenta la pressió potencial de fongs.",
+            "wide_range": "Equilibri tèrmic: una amplitud marcada entre dia i nit afavoreix la conservació d'acidesa i aromes respecte d'un règim de nits igualment càlides.",
+            "narrow_range": "Equilibri tèrmic: la baixa amplitud entre dia i nit, combinada amb nits càlides, afavoreix una respiració sostinguda i una pèrdua més ràpida d'acidesa.",
+            "neutral": "Maduració: la temperatura i l'aigua dels darrers 30 dies no mostren una pressió extrema sobre el desenvolupament de la baia.",
         },
         "es": {
-            "dry_hot": "El periodo ha sido seco y cálido. En secano, es compatible con una maduración rápida y con menor crecimiento de la baya si la vid sufre estrés hídrico; el clima por sí solo no confirma ese estrés.",
-            "dry": "El periodo ha sido muy seco. En secano, la falta de agua puede limitar el crecimiento de la baya si la vid muestra estrés; debe comprobarse en campo.",
-            "hot": "El periodo ha sido cálido y puede acelerar la maduración. Hay que comprobar azúcar y acidez en la baya antes de concluir que la uva está más madura.",
-            "warm_nights": "Las noches han sido cálidas; esto puede dificultar la conservación de la acidez, pero no sustituye una medida de acidez y pH.",
-            "humid_nights": "Las noches han sido húmedas y pueden mantener un microclima favorable a hongos en el dosel; las alertas de enfermedad se calculan por separado.",
-            "neutral": "Los datos no muestran una presión climática extrema en los últimos 30 días. La condición real de la uva debe comprobarse con muestras de baya.",
+            "dry_hot": "Maduración y tamaño de baya: la sequedad y el calor favorecen la concentración y el avance de la maduración mientras la vid mantiene actividad. Si el estrés hídrico se intensifica, puede frenar la fotosíntesis, el crecimiento de la baya y la acumulación de azúcar.",
+            "dry": "Maduración y tamaño de baya: el agua disponible es el principal factor limitante; una sequedad prolongada reduce la expansión de la baya y, si el estrés se intensifica, también puede ralentizar la acumulación de azúcar.",
+            "hot": "Maduración: el calor favorece una maduración más rápida y una concentración más temprana de la uva.",
+            "extreme_heat": "Calor extremo: las máximas elevadas aumentan el riesgo de quemadura, deshidratación de la baya y parada fotosintética durante las horas más cálidas.",
+            "warm_nights": "Acidez: las noches cálidas aumentan la respiración de la baya y favorecen una pérdida más rápida de ácidos.",
+            "humid_nights": "Sanidad del dosel: la humedad nocturna alta prolonga el microclima húmedo entre hojas y racimos y aumenta la presión potencial de hongos.",
+            "wide_range": "Equilibrio térmico: una amplitud marcada entre día y noche favorece la conservación de acidez y aromas respecto a un régimen de noches igualmente cálidas.",
+            "narrow_range": "Equilibrio térmico: la baja amplitud entre día y noche, combinada con noches cálidas, favorece una respiración sostenida y una pérdida más rápida de acidez.",
+            "neutral": "Maduración: la temperatura y el agua de los últimos 30 días no muestran una presión extrema sobre el desarrollo de la baya.",
         },
         "en": {
-            "dry_hot": "The period was dry and warm. In a dry-farmed parcel this is consistent with faster ripening and reduced berry growth if vines are water-stressed; weather alone does not confirm that stress.",
-            "dry": "The period was very dry. In a dry-farmed parcel, limited water can restrict berry growth if vines show stress; this requires a field check.",
-            "hot": "The period was warm and may accelerate ripening. Berry sugar and acidity must be measured before concluding that grapes are more mature.",
-            "warm_nights": "Nights were warm; this may constrain acid retention, but it does not replace acidity and pH measurements.",
-            "humid_nights": "Nights were humid and may sustain a fungal microclimate within the canopy; disease alerts are calculated separately.",
-            "neutral": "The observations show no extreme climate pressure over the last 30 days. Actual grape condition still requires berry measurements.",
+            "dry_hot": "Ripening and berry size: dry, warm conditions favour concentration and faster ripening while vines remain active. If water stress intensifies, it can slow photosynthesis, berry growth, and sugar accumulation.",
+            "dry": "Ripening and berry size: available water is the main limiting factor; prolonged dryness reduces berry expansion and, under stronger stress, can also slow sugar accumulation.",
+            "hot": "Ripening: warm conditions favour faster ripening and earlier grape concentration.",
+            "extreme_heat": "Extreme heat: high maxima increase the risk of sunburn, berry dehydration, and photosynthetic shutdown during the hottest hours.",
+            "warm_nights": "Acidity: warm nights increase berry respiration and favour faster acid loss.",
+            "humid_nights": "Canopy health: high night humidity prolongs the humid microclimate around leaves and clusters and raises potential fungal pressure.",
+            "wide_range": "Thermal balance: a marked day-night range favours acid and aroma retention compared with a regime of equally warm nights.",
+            "narrow_range": "Thermal balance: a narrow day-night range combined with warm nights favours sustained respiration and faster acid loss.",
+            "neutral": "Ripening: temperature and water conditions over the last 30 days show no extreme pressure on berry development.",
         },
     }
     text = texts.get(lang, texts["en"])
@@ -1900,10 +1921,16 @@ def condition_interpretation(language, reports):
         messages.append(text["dry"])
     elif hot:
         messages.append(text["hot"])
+    if extreme_heat_days > 0 or maximum_temperature >= 35.0:
+        messages.append(text["extreme_heat"])
     if warm_nights:
         messages.append(text["warm_nights"])
     if humid_nights:
         messages.append(text["humid_nights"])
+    if diurnal_range >= 12.0:
+        messages.append(text["wide_range"])
+    elif warm_nights and 0 <= diurnal_range <= 8.0:
+        messages.append(text["narrow_range"])
     return " ".join(messages or [text["neutral"]])
 
 
@@ -1919,9 +1946,19 @@ def comparison_metric(report, window_name, section, key, coverage_key):
     return as_float(section_data.get(key))
 
 
-def signed_change(value, digits=1):
+def directional_change(language, value, unit, digits=1):
+    lang = str(language or "en").lower()[:2]
     shown = display_measurement(abs(value), digits)
-    return f"+{shown}" if value > 0 else (f"-{shown}" if value < 0 else "0")
+    if abs(value) < 10 ** (-digits):
+        stable = {"ca": "sense canvi", "es": "sin cambios", "en": "unchanged"}
+        return stable.get(lang, stable["en"])
+    directions = {
+        "ca": ("més alta", "més baixa"),
+        "es": ("más alta", "más baja"),
+        "en": ("higher", "lower"),
+    }
+    direction = directions.get(lang, directions["en"])[0 if value > 0 else 1]
+    return f"{shown} {unit} {direction}"
 
 
 def render_comparison(language, report, window_name):
@@ -1943,26 +1980,26 @@ def render_comparison(language, report, window_name):
         "ca": {
             "preceding_30d": "Respecte als 30 dies anteriors",
             "same_30d_previous_year": "Respecte al mateix període de l'any passat",
-            "temperature": "temperatura mitjana {change} °C",
+            "temperature": "temperatura mitjana {change}",
             "rain": "pluja {current} mm davant de {baseline} mm",
-            "night_temperature": "temperatura nocturna {change} °C",
-            "night_humidity": "humitat nocturna {change} punts",
+            "night_temperature": "temperatura nocturna {change}",
+            "night_humidity": "humitat nocturna {change}",
         },
         "es": {
             "preceding_30d": "Respecto a los 30 días anteriores",
             "same_30d_previous_year": "Respecto al mismo periodo del año pasado",
-            "temperature": "temperatura media {change} °C",
+            "temperature": "temperatura media {change}",
             "rain": "lluvia {current} mm frente a {baseline} mm",
-            "night_temperature": "temperatura nocturna {change} °C",
-            "night_humidity": "humedad nocturna {change} puntos",
+            "night_temperature": "temperatura nocturna {change}",
+            "night_humidity": "humedad nocturna {change}",
         },
         "en": {
             "preceding_30d": "Compared with the preceding 30 days",
             "same_30d_previous_year": "Compared with the same period last year",
-            "temperature": "mean temperature {change} °C",
+            "temperature": "mean temperature {change}",
             "rain": "rain {current} mm versus {baseline} mm",
-            "night_temperature": "night temperature {change} °C",
-            "night_humidity": "night humidity {change} points",
+            "night_temperature": "night temperature {change}",
+            "night_humidity": "night humidity {change}",
         },
     }
     text = labels.get(lang, labels["en"])
@@ -1975,7 +2012,14 @@ def render_comparison(language, report, window_name):
                 baseline=display_measurement(baseline),
             ))
         else:
-            metrics.append(text[name].format(change=signed_change(current - baseline)))
+            unit = "percentage points" if name == "night_humidity" and lang == "en" else (
+                "puntos" if name == "night_humidity" and lang == "es" else (
+                    "punts" if name == "night_humidity" else "°C"
+                )
+            )
+            metrics.append(text[name].format(
+                change=directional_change(language, current - baseline, unit),
+            ))
     if not metrics:
         return None
     return text[window_name] + ": " + "; ".join(metrics) + "."
@@ -1983,6 +2027,17 @@ def render_comparison(language, report, window_name):
 
 def render_monthly_context(language, report):
     lang = str(language or "en").lower()[:2]
+    month_names = {
+        "ca": ("gener", "febrer", "març", "abril", "maig", "juny", "juliol", "agost", "setembre", "octubre", "novembre", "desembre"),
+        "es": ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"),
+        "en": ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"),
+    }
+    partial_labels = {
+        "ca": "fins al dia {day}",
+        "es": "hasta el día {day}",
+        "en": "through day {day}",
+    }
+    report_end = parse_date(report.get("end"))
     rows = []
     for month, values in sorted((report.get("monthly") or {}).items())[-3:]:
         if not isinstance(values, dict):
@@ -1998,8 +2053,17 @@ def render_monthly_context(language, report):
             or (as_float(values.get("days_with_precipitation")) or 0) / days < 0.7
         ):
             continue
+        try:
+            year, month_number = (int(part) for part in month.split("-", 1))
+            month_label = f"{month_names.get(lang, month_names['en'])[month_number - 1]} {year}"
+            if report_end and report_end.year == year and report_end.month == month_number:
+                month_label += " (" + partial_labels.get(lang, partial_labels["en"]).format(
+                    day=report_end.day,
+                ) + ")"
+        except (ValueError, IndexError):
+            month_label = month
         rows.append(
-            f"{month}: {display_measurement(temperature)} °C, "
+            f"{month_label}: {display_measurement(temperature)} °C, "
             f"{display_measurement(rain)} mm"
         )
     if len(rows) < 2:
@@ -2021,29 +2085,38 @@ def render_field_condition_result(language, reports):
         "ca": {
             "title": "Condicions de maduració de la vinya",
             "observed": "Dades observades fins al {end}.",
-            "group": "{fields} ({varieties}; estació {station})\nDarrers 30 dies: {rain} mm de pluja; ratxa seca màxima de {dry_spell} dies; temperatura mitjana de {temperature} °C; {heat_days} dies amb màxima >=30 °C; temperatura nocturna mitjana de {night_temperature} °C ({tropical_nights} nits tropicals); humitat nocturna mitjana del {night_humidity}%.{solar}",
+            "group": "{fields} ({varieties}; estació {station})",
+            "recent": "Darrers 30 dies:",
+            "water": "Aigua: {rain} mm de pluja; ratxa seca màxima de {dry_spell} dies.",
+            "thermal": "Perfil tèrmic: temperatura mitjana {temperature} °C; màxima diürna registrada {maximum} °C (mitjana de les màximes {mean_maximum} °C); mínima nocturna registrada {night_minimum} °C; amplitud tèrmica diària mitjana {diurnal_range} °C; {heat_days} dies amb màxima >=30 °C; {tropical_nights} nits tropicals.",
+            "humidity": "Humitat nocturna mitjana: {night_humidity}%.",
             "solar": " Radiació solar mitjana: {value} MJ/m²/dia.",
-            "shared": "Aquests camps comparteixen la mateixa estació; el resum climàtic és comú. Les diferències de vigor o maduració s'han de mesurar per camp.",
-            "composition": "Condició real del raïm: el tauler no pot afirmar sucre, acidesa o data de verema perquè no hi ha mostres recents de baia. La meteorologia descriu la pressió de maduració, no la composició del raïm.",
-            "next": "Dada de camp més útil: una mostra per camp amb Brix, pH, acidesa total i pes mitjà de baia, amb data. Això permetrà relacionar aquestes condicions amb la maduració real.",
+            "effect": "Efecte probable sobre el raïm: {interpretation}",
+            "shared": "Aquests camps comparteixen la mateixa estació; el clima és comú. Les diferències entre camps poden reflectir sòl, orientació, vigor i maneig.",
         },
         "es": {
             "title": "Condiciones de maduración del viñedo",
             "observed": "Datos observados hasta el {end}.",
-            "group": "{fields} ({varieties}; estación {station})\nÚltimos 30 días: {rain} mm de lluvia; racha seca máxima de {dry_spell} días; temperatura media de {temperature} °C; {heat_days} días con máxima >=30 °C; temperatura nocturna media de {night_temperature} °C ({tropical_nights} noches tropicales); humedad nocturna media del {night_humidity}%.{solar}",
+            "group": "{fields} ({varieties}; estación {station})",
+            "recent": "Últimos 30 días:",
+            "water": "Agua: {rain} mm de lluvia; racha seca máxima de {dry_spell} días.",
+            "thermal": "Perfil térmico: temperatura media {temperature} °C; máxima diurna registrada {maximum} °C (media de las máximas {mean_maximum} °C); mínima nocturna registrada {night_minimum} °C; amplitud térmica diaria media {diurnal_range} °C; {heat_days} días con máxima >=30 °C; {tropical_nights} noches tropicales.",
+            "humidity": "Humedad nocturna media: {night_humidity}%.",
             "solar": " Radiación solar media: {value} MJ/m²/día.",
-            "shared": "Estos campos comparten la misma estación; el resumen climático es común. Las diferencias de vigor o maduración deben medirse por campo.",
-            "composition": "Condición real de la uva: el tablero no puede afirmar azúcar, acidez o fecha de vendimia porque no hay muestras recientes de baya. La meteorología describe la presión de maduración, no la composición de la uva.",
-            "next": "Dato de campo más útil: una muestra por campo con Brix, pH, acidez total y peso medio de baya, con fecha. Esto permitirá relacionar estas condiciones con la maduración real.",
+            "effect": "Efecto probable sobre la uva: {interpretation}",
+            "shared": "Estos campos comparten la misma estación; el clima es común. Las diferencias entre campos pueden reflejar suelo, orientación, vigor y manejo.",
         },
         "en": {
             "title": "Vineyard ripening conditions",
             "observed": "Observed data through {end}.",
-            "group": "{fields} ({varieties}; station {station})\nLast 30 days: {rain} mm rain; longest dry spell {dry_spell} days; mean temperature {temperature} °C; {heat_days} days with maximum >=30 °C; mean night temperature {night_temperature} °C ({tropical_nights} tropical nights); mean night humidity {night_humidity}%.{solar}",
+            "group": "{fields} ({varieties}; station {station})",
+            "recent": "Last 30 days:",
+            "water": "Water: {rain} mm rain; longest dry spell {dry_spell} days.",
+            "thermal": "Thermal profile: mean temperature {temperature} °C; recorded daytime maximum {maximum} °C (mean daily maximum {mean_maximum} °C); recorded night minimum {night_minimum} °C; mean daily thermal range {diurnal_range} °C; {heat_days} days with maximum >=30 °C; {tropical_nights} tropical nights.",
+            "humidity": "Mean night humidity: {night_humidity}%.",
             "solar": " Mean solar exposure: {value} MJ/m²/day.",
-            "shared": "These fields share one station, so their climate summary is common. Differences in vigour or ripening must be measured by field.",
-            "composition": "Actual grape condition: the board cannot state sugar, acidity, or harvest date because no recent berry samples are stored. Weather describes ripening pressure, not grape composition.",
-            "next": "Most useful field evidence: one dated sample per field with Brix, pH, titratable acidity, and mean berry weight. This would link these conditions to actual ripening.",
+            "effect": "Likely effect on grapes: {interpretation}",
+            "shared": "These fields share one station, so their climate is common. Differences among fields may reflect soil, aspect, vigour, and management.",
         },
     }
     text = texts.get(lang, texts["en"])
@@ -2070,20 +2143,57 @@ def render_field_condition_result(language, reports):
             text["solar"].format(value=solar_value)
             if solar_value is not None and 8.0 <= solar_number <= 35.0 else ""
         )
-        lines.append(text["group"].format(
+        group_lines = [text["group"].format(
             fields=", ".join(names),
             varieties=", ".join(varieties) or "?",
             station=station,
-            rain=metric_range(grouped, "preharvest_or_recent_30d", "rain_total_mm"),
-            dry_spell=metric_range(grouped, "preharvest_or_recent_30d", "longest_dry_spell_days", 0),
-            temperature=metric_range(grouped, "preharvest_or_recent_30d", "temperature_mean_c"),
-            heat_days=metric_range(grouped, "preharvest_or_recent_30d", "heat_days_ge_30c", 0),
-            night_temperature=metric_range(grouped, "preharvest_or_recent_30d_hourly", "night_temperature_mean_c"),
-            tropical_nights=metric_range(grouped, "preharvest_or_recent_30d", "tropical_nights_ge_20c", 0),
-            night_humidity=metric_range(grouped, "preharvest_or_recent_30d_hourly", "night_humidity_mean_pct"),
-            solar=solar,
+        ), text["recent"]]
+        water_values = {
+            "rain": metric_range(
+                grouped, "preharvest_or_recent_30d", "rain_total_mm",
+            ),
+            "dry_spell": metric_range(
+                grouped, "preharvest_or_recent_30d", "longest_dry_spell_days", 0,
+            ),
+        }
+        if all(value is not None for value in water_values.values()):
+            group_lines.append(text["water"].format(**water_values))
+        thermal_values = {
+            "temperature": metric_range(
+                grouped, "preharvest_or_recent_30d", "temperature_mean_c",
+            ),
+            "maximum": metric_range(
+                grouped, "preharvest_or_recent_30d", "temperature_max_c",
+            ),
+            "mean_maximum": metric_range(
+                grouped, "preharvest_or_recent_30d", "mean_daily_max_c",
+            ),
+            "night_minimum": metric_range(
+                grouped, "preharvest_or_recent_30d_hourly", "night_temperature_min_c",
+            ),
+            "diurnal_range": metric_range(
+                grouped, "preharvest_or_recent_30d", "mean_diurnal_range_c",
+            ),
+            "heat_days": metric_range(
+                grouped, "preharvest_or_recent_30d", "heat_days_ge_30c", 0,
+            ),
+            "tropical_nights": metric_range(
+                grouped, "preharvest_or_recent_30d", "tropical_nights_ge_20c", 0,
+            ),
+        }
+        if all(value is not None for value in thermal_values.values()):
+            group_lines.append(text["thermal"].format(**thermal_values))
+        night_humidity = metric_range(
+            grouped, "preharvest_or_recent_30d_hourly", "night_humidity_mean_pct",
+        )
+        if night_humidity is not None:
+            group_lines.append(text["humidity"].format(night_humidity=night_humidity))
+        if solar:
+            group_lines[-1] += solar
+        lines.append("\n".join(group_lines))
+        lines.append(text["effect"].format(
+            interpretation=condition_interpretation(language, grouped),
         ))
-        lines.append(condition_interpretation(language, grouped))
         for window_name in ("preceding_30d", "same_30d_previous_year"):
             comparison = render_comparison(language, grouped[0], window_name)
             if comparison:
@@ -2093,7 +2203,6 @@ def render_field_condition_result(language, reports):
             lines.append(monthly)
         if len(grouped) > 1:
             lines.append(text["shared"])
-    lines.extend([text["composition"], text["next"]])
     return {
         "title": text["title"],
         "message": "\n\n".join(lines),
